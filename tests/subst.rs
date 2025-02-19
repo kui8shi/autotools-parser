@@ -1,10 +1,10 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::ComplexWord::*;
-use conch_parser::ast::Parameter::*;
-use conch_parser::ast::ParameterSubstitution::*;
-use conch_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
-use conch_parser::parse::ParseError::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::Parameter::*;
+use autoconf_parser::ast::ParameterSubstitution::*;
+use autoconf_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
+use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;

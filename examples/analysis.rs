@@ -2,9 +2,9 @@
 //! we traverse the parsed AST and count up how many times an "echo"
 //! command appears in the source.
 
-use conch_parser::ast;
-use conch_parser::lexer::Lexer;
-use conch_parser::parse::DefaultParser;
+use autoconf_parser::ast;
+use autoconf_parser::lexer::Lexer;
+use autoconf_parser::parse::DefaultParser;
 use owned_chars::OwnedCharsExt;
 
 use std::io::{stdin, BufRead, BufReader};
@@ -96,6 +96,10 @@ fn count_echo_compound(cmd: &ast::DefaultCompoundCommand) -> usize {
             .iter()
             .map(|pat| count_echo_top_level_array(&pat.body))
             .sum(),
+
+        // @kui8shi
+        // Skip macro calls for now
+        ast::CompoundCommandKind::Macro(_) => 0,
     }
 }
 

@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::builder::*;
-use conch_parser::parse::ParseError::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::builder::*;
+use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;

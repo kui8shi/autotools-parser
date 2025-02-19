@@ -1,9 +1,9 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::Arithmetic::*;
-use conch_parser::ast::DefaultArithmetic as Arithmetic;
-use conch_parser::ast::ParameterSubstitution::Arith;
-use conch_parser::parse::ParseError::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::Arithmetic::*;
+use autoconf_parser::ast::DefaultArithmetic as Arithmetic;
+use autoconf_parser::ast::ParameterSubstitution::Arith;
+use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;

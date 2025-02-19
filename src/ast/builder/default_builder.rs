@@ -67,6 +67,8 @@ macro_rules! default_builder {
             type Word            = $Word<T>;
             type Redirect        = Redirect<Self::Word>;
             type Error           = Void;
+            type M4Macro         = M4Macro<Self::Word, Self::Command>;
+            type M4Argument      = M4Argument<Self::Word, Self::Command>;
 
             fn complete_command(&mut self,
                                 pre_cmd_comments: Vec<Newline>,
@@ -168,6 +170,22 @@ macro_rules! default_builder {
                 self.0.function_declaration(name, post_name_comments, body)
             }
 
+            fn macro_to_commands(
+                &mut self,
+                macro_call: M4Macro<Self::Word, Self::Command>,
+                redirects: Vec<Self::Redirect>,
+            ) -> Result<Self::CompoundCommand, Self::Error> {
+                self.0.macro_to_commands(macro_call, redirects)
+            }
+
+            fn macro_call(
+                &mut self,
+                name: String,
+                args: Vec<M4Argument<Self::Word, Self::Command>>,
+            ) -> Result<Self::M4Macro, Self::Error> {
+                self.0.macro_call(name, args)
+            }
+
             fn comments(&mut self,
                         comments: Vec<Newline>)
                 -> Result<(), Self::Error>
@@ -176,7 +194,7 @@ macro_rules! default_builder {
             }
 
             fn word(&mut self,
-                    kind: ComplexWordKind<Self::Command>)
+                    kind: ComplexWordKind<Self::Word, Self::Command>)
                 -> Result<Self::Word, Self::Error>
             {
                 self.0.word(kind)
@@ -284,6 +302,8 @@ where
     type Word = W;
     type Redirect = Redirect<Self::Word>;
     type Error = Void;
+    type M4Macro = M4Macro<Self::Word, Self::Command>;
+    type M4Argument = M4Argument<Self::Word, Self::Command>;
 
     /// Constructs a `Command::Job` node with the provided inputs if the command
     /// was delimited by an ampersand or the command itself otherwise.
@@ -533,13 +553,35 @@ where
         Ok(PipeableCommand::FunctionDef(name.into(), body.into()))
     }
 
+    fn macro_to_commands(
+        &mut self,
+        macro_call: M4Macro<Self::Word, Self::Command>,
+        redirects: Vec<Self::Redirect>,
+    ) -> Result<Self::CompoundCommand, Self::Error> {
+        Ok(CompoundCommand {
+            kind: CompoundCommandKind::Macro(macro_call),
+            io: redirects,
+        })
+    }
+
+    fn macro_call(
+        &mut self,
+        name: String,
+        args: Vec<M4Argument<Self::Word, Self::Command>>,
+    ) -> Result<Self::M4Macro, Self::Error> {
+        Ok(M4Macro { name, args })
+    }
+
     /// Ignored by the builder.
     fn comments(&mut self, _comments: Vec<Newline>) -> Result<(), Self::Error> {
         Ok(())
     }
 
     /// Constructs a `ast::Word` from the provided input.
-    fn word(&mut self, kind: ComplexWordKind<Self::Command>) -> Result<Self::Word, Self::Error> {
+    fn word(
+        &mut self,
+        kind: ComplexWordKind<Self::Word, Self::Command>,
+    ) -> Result<Self::Word, Self::Error> {
         macro_rules! map {
             ($pat:expr) => {
                 match $pat {
@@ -619,6 +661,7 @@ where
                 SimpleWordKind::SquareClose => SimpleWord::SquareClose,
                 SimpleWordKind::Tilde => SimpleWord::Tilde,
                 SimpleWordKind::Colon => SimpleWord::Colon,
+                SimpleWordKind::Macro(m) => SimpleWord::Macro(m.into()),
 
                 SimpleWordKind::CommandSubst(c) => {
                     SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
@@ -758,15 +801,15 @@ where
     }
 }
 
-fn compress<C>(word: ComplexWordKind<C>) -> ComplexWordKind<C> {
+fn compress<W, C>(word: ComplexWordKind<W, C>) -> ComplexWordKind<W, C> {
     use crate::ast::builder::ComplexWordKind::*;
     use crate::ast::builder::SimpleWordKind::*;
     use crate::ast::builder::WordKind::*;
 
-    fn coalesce_simple<C>(
-        a: SimpleWordKind<C>,
-        b: SimpleWordKind<C>,
-    ) -> CoalesceResult<SimpleWordKind<C>> {
+    fn coalesce_simple<W, C>(
+        a: SimpleWordKind<W, C>,
+        b: SimpleWordKind<W, C>,
+    ) -> CoalesceResult<SimpleWordKind<W, C>> {
         match (a, b) {
             (Literal(mut a), Literal(b)) => {
                 a.push_str(&b);
@@ -776,7 +819,7 @@ fn compress<C>(word: ComplexWordKind<C>) -> ComplexWordKind<C> {
         }
     }
 
-    fn coalesce_word<C>(a: WordKind<C>, b: WordKind<C>) -> CoalesceResult<WordKind<C>> {
+    fn coalesce_word<W, C>(a: WordKind<W, C>, b: WordKind<W, C>) -> CoalesceResult<WordKind<W, C>> {
         match (a, b) {
             (Simple(a), Simple(b)) => coalesce_simple(a, b)
                 .map(Simple)

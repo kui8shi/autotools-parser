@@ -1,9 +1,9 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::ComplexWord::*;
-use conch_parser::ast::SimpleWord::*;
-use conch_parser::ast::*;
-use conch_parser::parse::ParseError::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::SimpleWord::*;
+use autoconf_parser::ast::*;
+use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -268,17 +268,38 @@ fn test_word_special_words_recognized_as_such() {
         Ok(Some(TopLevelWord(Single(Word::Simple(Tilde))))),
         make_parser("~").word()
     );
+    // @kui8shi
+    // By default the outermost '[' must have the corresponding ']'
+    // and is skipped, since it's a quoting characters in autoconf language.
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(SquareOpen))))),
+        Ok(None),
         make_parser("[").word()
     );
+    // @kui8shi
+    // By default the outermost ']' must have the corresponding '[',
+    // and skipped, since it's a quoting characters in autoconf language.
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(SquareClose))))),
+        Ok(None),
         make_parser("]").word()
     );
     assert_eq!(
         Ok(Some(TopLevelWord(Single(Word::Simple(Colon))))),
         make_parser(":").word()
+    );
+}
+
+#[test]
+fn test_word_quotes() {
+    assert_eq!(Ok(None), make_parser("[]").word());
+    // @kui8shi
+    // By default the outermost '[' and ']' are ignored,
+    // but inner quoting pairs aren't.
+    assert_eq!(
+        Ok(Some(TopLevelWord(Concat(vec![
+            Word::Simple(SquareOpen),
+            Word::Simple(SquareClose)
+        ])))),
+        make_parser("[[]]").word()
     );
 }
 

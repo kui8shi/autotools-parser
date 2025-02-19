@@ -1,5 +1,5 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::token::Positional;
+use autoconf_parser::token::Positional;
 
 #[test]
 fn test_positional_conversions() {

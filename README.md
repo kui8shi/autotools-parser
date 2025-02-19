@@ -1,10 +1,4 @@
-# conch-parser
-
-[![Crates.io](https://img.shields.io/crates/v/conch-parser.svg)](https://crates.io/crates/conch-parser)
-[![Documentation](https://docs.rs/conch-parser/badge.svg)](https://docs.rs/conch-parser)
-[![Build Status](https://travis-ci.org/ipetkov/conch-parser.svg?branch=master)](https://travis-ci.org/ipetkov/conch-parser)
-[![Build Status](https://img.shields.io/appveyor/ci/ipetkov/conch-parser/master.svg)](https://ci.appveyor.com/project/ipetkov/conch-parser)
-[![Coverage](https://img.shields.io/codecov/c/github/ipetkov/conch-parser/master.svg)](https://codecov.io/gh/ipetkov/conch-parser)
+# autoconf-parser
 
 A Rust library for parsing Unix shell commands.
 
@@ -13,14 +7,14 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-conch-parser = "0.1.0"
+autoconf-parser = "0.1.0"
 ```
 
 Next, you can get started with:
 
 ```rust
-use conch_parser::lexer::Lexer;
-use conch_parser::parse::DefaultParser;
+use autoconf_parser::lexer::Lexer;
+use autoconf_parser::parse::DefaultParser;
 
 fn main() {
     // Initialize our token lexer and shell parser with the program's input

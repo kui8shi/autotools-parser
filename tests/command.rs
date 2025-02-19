@@ -1,11 +1,11 @@
 #![deny(rust_2018_idioms)]
 use std::rc::Rc;
 
-use conch_parser::ast::Command::*;
-use conch_parser::ast::CompoundCommandKind::*;
-use conch_parser::ast::PipeableCommand::*;
-use conch_parser::ast::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::Command::*;
+use autoconf_parser::ast::CompoundCommandKind::*;
+use autoconf_parser::ast::PipeableCommand::*;
+use autoconf_parser::ast::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -192,8 +192,11 @@ fn test_command_delegates_valid_commands_function() {
         "function foo        { echo body; }",
         "foo()               { echo body; }",
         "foo ()              { echo body; }",
-        "foo (    )          { echo body; }",
-        "foo(    )           { echo body; }",
+        // @kui8shi
+        // Disallow non empty parentheses in 
+        // function declarations without funciton keyword
+        // "foo (    )          { echo body; }",
+        // "foo(    )           { echo body; }",
     ];
 
     let correct = FunctionDef(

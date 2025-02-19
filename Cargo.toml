@@ -1,33 +1,34 @@
 [package]
-name = "conch-parser"
+name = "autoconf-parser"
 version = "0.1.1"
-edition = "2018"
-authors = ["Ivan Petkov <ivanppetkov@gmail.com>"]
+edition = "2021"
+authors = ["Ivan Petkov <ivanppetkov@gmail.com>", "kui8shi <gbiifvrc517@gmail.com>"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/ipetkov/conch-parser"
-homepage = "https://github.com/ipetkov/conch-parser"
-documentation = "https://docs.rs/conch-parser/"
-keywords = ["shell", "parser", "parsing"]
+repository = "https://github.com/kui8shi/autoconf-parser"
+homepage = "https://github.com/kui8shi/autoconf-parser"
+documentation = "https://docs.rs/autoconf-parser/"
+keywords = ["shell", "parser", "parsing", "autoconf"]
 categories = ["parser-implementations"]
 description = """
-A library for parsing programs written in the shell programming language.
+A library for parsing configure.ac written in autoconf language (shell + m4).
 """
 
 [features]
 # FIXME(breaking): technically breaking if we remove any features
-nightly = []
+# nightly = []
 clippy = []
 
 [dependencies]
+lazy_static = "1.5.0"
 void = "1"
 
 [dev-dependencies]
 owned_chars = "0.3"
 
 [badges]
-travis-ci = { repository = "ipetkov/conch-parser" }
-appveyor = { repository = "ipetkov/conch-parser" }
-is-it-maintained-issue-resolution = { repository = "ipetkov/conch-parser" }
-is-it-maintained-open-issues = { repository = "ipetkov/conch-parser" }
-codecov = { repository = "ipetkov/conch-parser" }
+travis-ci = { repository = "kui8shi/autoconf-parser" }
+appveyor = { repository = "kui8shi/autoconf-parser" }
+is-it-maintained-issue-resolution = { repository = "kui8shi/autoconf-parser" }
+is-it-maintained-open-issues = { repository = "kui8shi/autoconf-parser" }
+codecov = { repository = "kui8shi/autoconf-parser" }

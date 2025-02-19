@@ -87,7 +87,13 @@ pub enum ParameterSubstitution<P, W, C, A> {
 pub type ShellWord<T, W, C> = ComplexWord<
     Word<
         T,
-        SimpleWord<T, Parameter<T>, Box<ParameterSubstitution<Parameter<T>, W, C, Arithmetic<T>>>>,
+        SimpleWord<
+            T,
+            Parameter<T>,
+            Box<ParameterSubstitution<Parameter<T>, W, C, Arithmetic<T>>>,
+            W,
+            C,
+        >,
     >,
 >;
 
@@ -123,14 +129,19 @@ pub enum Word<L, W> {
 }
 
 /// Type alias for the default `SimpleWord` representation.
-pub type DefaultSimpleWord =
-    SimpleWord<String, DefaultParameter, Box<DefaultParameterSubstitution>>;
+pub type DefaultSimpleWord = SimpleWord<
+    String,
+    DefaultParameter,
+    Box<DefaultParameterSubstitution>,
+    TopLevelWord<String>,
+    TopLevelCommand<String>,
+>;
 
 /// Represents the smallest fragment of any text.
 ///
 /// Generic over the representation of a literals, parameters, and substitutions.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleWord<L, P, S> {
+pub enum SimpleWord<L, P, S, W, C> {
     /// A non-special literal word.
     Literal(L),
     /// A token which normally has a special meaning is treated as a literal
@@ -152,6 +163,61 @@ pub enum SimpleWord<L, P, S> {
     Tilde,
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
+    /// m4 macro call to be expanded to a literal
+    Macro(M4Macro<W, C>),
+}
+
+/// Specify types of arguments or expansion of m4 macro calls.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum M4Type {
+    /// maybe it's equivalent to a top level word in this program
+    Lit,
+    /// array of literals separated by whitespace
+    Arr,
+    /// represents a program to be used for checking by compiling it
+    Prog,
+    /// list of shell script or m4 macro
+    Cmds,
+    /// related to macro definition
+    Def,
+    /// repeat begins from the next argument
+    RepBegin,
+    /// repeat ends to the last argument
+    RepEnd,
+}
+
+/// Type alias for the default `M4Argument` representation.
+pub type DefaultM4Argument = M4Argument<String, DefaultCommand>;
+
+/// Represents an argument of m4 macro call.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum M4Argument<W, C> {
+    /// word
+    Literal(W),
+    /// array of words
+    Array(Vec<W>),
+    /// program string
+    Prog(String),
+    /// list of commands.
+    Command(Vec<C>),
+}
+
+/// Type alias for the default `M4Macro` representation.
+pub type DefaultM4Macro = M4Macro<TopLevelWord<String>, TopLevelCommand<String>>;
+
+// @kui8shi
+/// Represents a m4 macro call.
+///
+/// M4 macros can be inserted at literally anywhere.
+/// However, we only support 2 places:
+/// 1. CompoundCommand
+/// 2. SimpleWord
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct M4Macro<W, C> {
+    /// m4 macro name
+    pub name: String,
+    /// m4 macro arguments
+    pub args: Vec<M4Argument<W, C>>,
 }
 
 /// Type alias for the default `Redirect` representation.
@@ -203,6 +269,9 @@ pub struct PatternBodyPair<W, C> {
 pub type DefaultCommand = Command<DefaultAndOrList>;
 
 /// Represents any valid shell command.
+///
+/// @kui8shi
+/// Or, a m4 macro call which will be expanded to commands.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command<T> {
     /// A command that runs asynchronously, that is, the shell will not wait
@@ -364,6 +433,12 @@ pub enum CompoundCommandKind<V, W, C> {
         /// The arms to match against.
         arms: Vec<PatternBodyPair<W, C>>,
     },
+    /// @kui8shi
+    /// Actually the commands expanded by m4 macro call is not pipeable nor listable in most cases.
+    /// But if we were going to place this variant on the higher layers, we have to bypass
+    /// the complex type relationships, especially the part that abstracts away words
+    /// and commands generics from `Command` struct. I think here is the best position.
+    Macro(M4Macro<W, C>),
 }
 
 /// Represents a parsed redirect or a defined environment variable at the start

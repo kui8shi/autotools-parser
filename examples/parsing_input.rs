@@ -1,5 +1,5 @@
-use conch_parser::lexer::Lexer;
-use conch_parser::parse::DefaultParser;
+use autoconf_parser::lexer::Lexer;
+use autoconf_parser::parse::DefaultParser;
 use owned_chars::OwnedCharsExt;
 
 use std::io::{stdin, BufRead, BufReader};

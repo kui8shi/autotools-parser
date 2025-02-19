@@ -35,6 +35,14 @@ const THEN: &str = "then";
 const UNTIL: &str = "until";
 const WHILE: &str = "while";
 
+mod predefined {
+    use super::ast::M4Type::{self, *};
+    use std::collections::HashMap;
+    lazy_static::lazy_static! {
+        pub static ref MACROS: HashMap<&'static str, &'static [M4Type]> = HashMap::from([("AC", [Lit].as_ref())]);
+    }
+}
+
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
 pub type DefaultParser<I> = Parser<I, builder::StringBuilder>;
@@ -190,7 +198,7 @@ impl fmt::Display for SourcePos {
 }
 
 /// Used to indicate what kind of compound command could be parsed next.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum CompoundCmdKeyword {
     For,
     Case,
@@ -199,6 +207,7 @@ enum CompoundCmdKeyword {
     Until,
     Brace,
     Subshell,
+    Macro(String),
 }
 
 /// Used to configure when `Parser::command_group` stops parsing commands.
@@ -310,9 +319,9 @@ where
 /// library provides both a default `Token` lexer, as well as an AST `Builder`.
 ///
 /// ```
-/// use conch_parser::ast::builder::{Builder, RcBuilder};
-/// use conch_parser::lexer::Lexer;
-/// use conch_parser::parse::Parser;
+/// use autoconf_parser::ast::builder::{Builder, RcBuilder};
+/// use autoconf_parser::lexer::Lexer;
+/// use autoconf_parser::parse::Parser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
@@ -324,8 +333,8 @@ where
 /// you can also use the `DefaultParser` type alias for a simpler setup.
 ///
 /// ```
-/// use conch_parser::lexer::Lexer;
-/// use conch_parser::parse::DefaultParser;
+/// use autoconf_parser::lexer::Lexer;
+/// use autoconf_parser::parse::DefaultParser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
@@ -362,6 +371,7 @@ where
 pub struct Parser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
+    quotes: (Token, Token),
 }
 
 impl<I: Iterator<Item = Token>, B: Builder + Default> Parser<I, B> {
@@ -453,6 +463,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         Parser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
+            quotes: (SquareOpen, SquareClose),
         }
     }
 
@@ -691,8 +702,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
-        fn could_be_numeric<C>(word: &WordKind<C>) -> bool {
-            let simple_could_be_numeric = |word: &SimpleWordKind<C>| match *word {
+        fn could_be_numeric<W, C>(word: &WordKind<W, C>) -> bool {
+            let simple_could_be_numeric = |word: &SimpleWordKind<W, C>| match *word {
                 SimpleWordKind::Star
                 | SimpleWordKind::Question
                 | SimpleWordKind::SquareOpen
@@ -710,6 +721,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 SimpleWordKind::Param(_)
                 | SimpleWordKind::Subst(_)
                 | SimpleWordKind::CommandSubst(_) => true,
+
+                // @kui8shi
+                // The only macro that I know to be a file descriptor, is AC_FD_CC.
+                // It's too specific but good for remembering it in the code.
+                SimpleWordKind::Macro(ref m) => m.name != "AC_FD_CC",
             };
 
             match *word {
@@ -719,7 +735,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
         }
 
-        fn as_num<C>(word: &ComplexWordKind<C>) -> Option<u16> {
+        fn as_num<W, C>(word: &ComplexWordKind<W, C>) -> Option<u16> {
             match *word {
                 Single(Simple(SimpleWordKind::Literal(ref s))) => u16::from_str_radix(s, 10).ok(),
                 Single(_) => None,
@@ -809,6 +825,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         };
 
         Ok(Some(Ok(self.builder.redirect(redirect)?)))
+    }
+
+    fn get_quotes(&self) -> (Token, Token) {
+        self.quotes.clone()
     }
 
     /// Parses a heredoc redirection and the heredoc's body.
@@ -1131,7 +1151,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// not pass the result to the AST builder.
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
         self.word_preserve_trailing_whitespace_raw_with_delim(None)
     }
 
@@ -1140,7 +1160,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn word_preserve_trailing_whitespace_raw_with_delim(
         &mut self,
         delim: Option<Token>,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
         self.skip_whitespace();
 
         // Make sure we don't consume comments,
@@ -1150,6 +1170,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         }
 
         let mut words = Vec::new();
+        let mut in_quote = 0;
+        let (quote_open, quote_end) = self.get_quotes();
         loop {
             if delim.is_some() && self.iter.peek() == delim.as_ref() {
                 break;
@@ -1178,6 +1200,25 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
                 | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber) | Some(&LessGreat)
                 | Some(&Whitespace(_)) | None => break,
+            }
+
+            if let Some(ref token) = self.iter.peek().cloned() {
+                // @kui8shi
+                // Skip the outermost quoting tokens.
+                // By default, the quoting tokens are '[' and ']' in autoconf language.
+                if token == &quote_open {
+                    in_quote += 1;
+                    if in_quote == 1 {
+                        self.iter.next();
+                        continue;
+                    }
+                } else if token == &quote_end {
+                    in_quote -= 1;
+                    if in_quote == 0 {
+                        self.iter.next();
+                        continue;
+                    }
+                }
             }
 
             let start_pos = self.iter.pos();
@@ -1243,7 +1284,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             words.push(w);
         }
 
-        let ret = if words.is_empty() {
+        let ret = if in_quote != 0 {
+            // @kui8shi
+            // We do not accept words with unmatched quotes.
+            None
+        } else if words.is_empty() {
             None
         } else if words.len() == 1 {
             Some(Single(words.pop().unwrap()))
@@ -1272,7 +1317,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         delim: Option<(Token, Token)>,
         start_pos: SourcePos,
-    ) -> ParseResult<Vec<SimpleWordKind<B::Command>>, B::Error> {
+    ) -> ParseResult<Vec<SimpleWordKind<B::Word, B::Command>>, B::Error> {
         let (delim_open, delim_close) = match delim {
             Some((o, c)) => (Some(o), Some(c)),
             None => (None, None),
@@ -1360,7 +1405,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Identical to `Parser::backticked_command_substitution`, except but does not pass the
     /// result to the AST builder.
-    fn backticked_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command>, B::Error> {
+    fn backticked_raw(&mut self) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
         let backtick_pos = self.iter.pos();
         eat!(self, { Backtick => {} });
 
@@ -1396,7 +1441,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     }
 
     /// Identical to `Parser::parameter()` but does not pass the result to the AST builder.
-    fn parameter_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command>, B::Error> {
+    fn parameter_raw(&mut self) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
@@ -1427,7 +1472,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn parameter_substitution_word_raw(
         &mut self,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
         let mut words = Vec::new();
         'capture_words: loop {
             'capture_literals: loop {
@@ -1543,7 +1588,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         param: DefaultParameter,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<SimpleWordKind<B::Command>, B::Error> {
+    ) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -1585,7 +1630,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Parses a parameter substitution in the form of `${...}`, `$(...)`, or `$((...))`.
     /// Nothing is passed to the builder.
-    fn parameter_substitution_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command>, B::Error> {
+    fn parameter_substitution_raw(
+        &mut self,
+    ) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -1786,6 +1833,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             Some(CompoundCmdKeyword::Subshell)
         } else if self.peek_reserved_token(&[CurlyOpen]).is_some() {
             Some(CompoundCmdKeyword::Brace)
+        } else if let Some(name) = self.maybe_macro_call() {
+            dbg!(&name);
+            Some(CompoundCmdKeyword::Macro(name))
         } else {
             match self.peek_reserved_word(&[FOR, CASE, IF, WHILE, UNTIL]) {
                 Some(FOR) => Some(CompoundCmdKeyword::For),
@@ -1845,6 +1895,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 let cmds = self.subshell()?;
                 let io = self.redirect_list()?;
                 self.builder.subshell(cmds, io)?
+            }
+
+            Some(CompoundCmdKeyword::Macro(name)) => {
+                let cmds = self.macro_call(&[&name])?;
+                let io = self.redirect_list()?;
+                self.builder.macro_to_commands(cmds, io)?
             }
 
             None => return Err(self.make_unexpected_err()),
@@ -2060,13 +2116,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         macro_rules! missing_in {
             () => {
-                |_| ParseError::IncompleteCmd(CASE, start_pos, IN, self.iter.pos());
+                |_| ParseError::IncompleteCmd(CASE, start_pos, IN, self.iter.pos())
             };
         }
 
         macro_rules! missing_esac {
             () => {
-                |_| ParseError::IncompleteCmd(CASE, start_pos, ESAC, self.iter.pos());
+                |_| ParseError::IncompleteCmd(CASE, start_pos, ESAC, self.iter.pos())
             };
         }
 
@@ -2177,6 +2233,110 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         })
     }
 
+    /// Parses a m4 macro call if present. If no macro call is present,
+    /// nothing is consumed from the token stream.
+    pub fn maybe_macro_call(&mut self) -> Option<String> {
+        if let Some(name) =
+            self.peek_reserved_word(&predefined::MACROS.keys().copied().collect::<Vec<&str>>())
+        {
+            Some(name.to_string())
+        } else {
+            let mut peeked = self.iter.multipeek();
+            if let Some(&Name(ref name)) = peeked.peek_next() {
+                let name = name.to_string();
+                // @kui8shi
+                // We disallow user-defined macros with lower-case names to
+                // distinct the macro calls and shell command/function calls without any arguments.
+                // It is just a heuristic.
+                // They are indistinguishable especially in the case of no arguments.
+                let is_macro_name = name
+                    .chars()
+                    .all(|c| (c.is_alphabetic() && c.is_uppercase()) || c.is_numeric() || c == '_');
+                if is_macro_name {
+                    match peeked.peek_next() {
+                        // @kui8shi
+                        // We disallow empty parentheses in order to distinct the m4 macro calls from the function declarations.
+                        // It's just an easy way and won't work when there is a user-defined macro call with empty parentheses.
+                        // But I'm ok with it for now.
+                        Some(&ParenOpen) => {
+                            (peeked.peek_next() != Some(&ParenClose)).then_some(name)
+                        }
+                        Some(&Newline) => Some(name), // macro call with no arguments
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Crafts a macro call
+    pub fn macro_call(&mut self, name_candidates: &[&str]) -> ParseResult<B::M4Macro, B::Error> {
+        use ast::{M4Argument, M4Type};
+        let name = self
+            .reserved_word(name_candidates)
+            .map_err(|()| self.make_unexpected_err())?;
+        let macro_signature = predefined::MACROS.get(name).map(|m| *m);
+        if Some(&ParenOpen) == self.iter.peek() {
+            eat!(self, { ParenOpen => {} });
+        } else {
+            return Ok(self.builder.macro_call(name.to_string(), Vec::new())?);
+        }
+        let args = {
+            let num_args = self.count_macro_args()?;
+            let arg_types =
+                macro_signature.unwrap_or([M4Type::RepBegin, M4Type::Lit, M4Type::RepEnd].as_ref());
+            let mut args = Vec::new();
+            let mut idx_arg_type = 0;
+            let mut idx_rep_start = None;
+            for _ in 0..num_args {
+                match arg_types[idx_arg_type] {
+                    M4Type::RepBegin => idx_rep_start = Some(idx_arg_type + 1),
+                    M4Type::RepEnd => idx_arg_type = idx_rep_start.unwrap(),
+                    _ => (),
+                }
+                let arg = match arg_types[idx_arg_type] {
+                    M4Type::Lit => M4Argument::Literal(self.word()?.unwrap()),
+                    M4Type::Arr => M4Argument::Array(vec![self.word()?.unwrap()]),
+                    M4Type::Cmds => M4Argument::Command(
+                        self.command_group(CommandGroupDelimiters {
+                            reserved_tokens: &[ParenClose, SquareClose, Comma],
+                            ..Default::default()
+                        })?
+                        .commands,
+                    ),
+                    _ => return Err(self.make_unexpected_err()),
+                };
+                args.push(arg);
+            }
+            args
+        };
+        // A whitespace is not allowed between m4 macro name and the opening parenthesis
+        // eat!(self, { ParenOpen => {} });
+        return Ok(self.builder.macro_call(name.to_string(), args)?);
+    }
+
+    fn count_macro_args(&mut self) -> ParseResult<usize, B::Error> {
+        let (quote_open, quote_end) = self.get_quotes();
+        let mut peeked = self.iter.multipeek();
+        let mut in_quote = 0;
+        let mut num_args = 1;
+        loop {
+            match peeked.peek_next() {
+                Some(&Comma) if in_quote == 0 => num_args += 1,
+                Some(&ParenClose) if in_quote == 0 => break,
+                Some(tok) if tok == &quote_open => in_quote += 1,
+                Some(tok) if tok == &quote_end => in_quote -= 1,
+                Some(_) => (),
+                None => return Err(ParseError::UnexpectedEOF),
+            }
+        }
+        Ok(num_args)
+    }
+
     /// Parses a single function declaration if present. If no function is present,
     /// nothing is consumed from the token stream.
     pub fn maybe_function_declaration(
@@ -2190,8 +2350,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let mut peeked = self.iter.multipeek();
             if let Some(&Name(_)) = peeked.peek_next() {
                 match peeked.peek_next() {
-                    Some(&Whitespace(_)) => Some(&ParenOpen) == peeked.peek_next(),
-                    Some(&ParenOpen) => true,
+                    // @kui8shi
+                    // We disallow whitespaces between the parentheses in order to distinct the function declaration from m4 macro calls.
+                    // It does not adhere to the GNU standard but I think this simple distinction works in most cases.
+                    Some(&Whitespace(_)) => {
+                        Some(&ParenOpen) == peeked.peek_next()
+                            && Some(&ParenClose) == peeked.peek_next()
+                    }
+                    Some(&ParenOpen) => Some(&ParenClose) == peeked.peek_next(),
                     _ => false,
                 }
             } else {
@@ -2211,6 +2377,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// A function declaration must either begin with the `function` reserved word, or
     /// the name of the function must be followed by `()`. Whitespace is allowed between
     /// the name and `(`, and whitespace is allowed between `()`.
+    /// @kui8shi
+    /// We disallowed whitespace between '()' for the distinction from m4 macro calls.
     pub fn function_declaration(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
         let (name, post_name_comments, body) = self.function_declaration_internal()?;
         Ok(self
@@ -2326,6 +2494,17 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         match self.iter.peek() {
             Some(&Pound) => {
+                let comment = self
+                    .iter
+                    .by_ref()
+                    .take_while(|t| t != &Newline)
+                    .collect::<Vec<_>>();
+                Some(builder::Newline(Some(concat_tokens(&comment))))
+            }
+
+            // @kui8shi
+            // Treats any line which starts with the word "dnl" as a comment.
+            Some(&Literal(ref s)) if s == "dnl" => {
                 let comment = self
                     .iter
                     .by_ref()
@@ -3023,7 +3202,7 @@ mod tests {
 
     #[test]
     fn test_parameter_substitution_command_can_contain_comments() {
-        let param_subst = builder::SimpleWordKind::Subst(Box::new(
+        let param_subst = SimpleWordKind::Subst(Box::new(
             builder::ParameterSubstitutionKind::Command(builder::CommandGroup {
                 commands: vec![cmd("foo")],
                 trailing_comments: vec![Newline(Some("#comment".into()))],
@@ -3037,7 +3216,7 @@ mod tests {
 
     #[test]
     fn test_backticked_command_can_contain_comments() {
-        let cmd_subst = builder::SimpleWordKind::CommandSubst(builder::CommandGroup {
+        let cmd_subst = SimpleWordKind::CommandSubst(builder::CommandGroup {
             commands: vec![cmd("foo")],
             trailing_comments: vec![Newline(Some("#comment".into()))],
         });
@@ -3045,5 +3224,16 @@ mod tests {
             Ok(cmd_subst),
             make_parser("`foo\n#comment\n`").backticked_raw()
         );
+    }
+    #[test]
+    fn test_macro_call() {
+        let macro_call: DefaultM4Macro = M4Macro {
+            name: "AC_INIT".to_string(),
+            args: Vec::new(),
+        };
+        assert_eq!(
+            Ok(macro_call),
+            make_parser("AC_INIT").macro_call(&["AC_INIT"])
+        )
     }
 }

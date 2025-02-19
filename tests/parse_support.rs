@@ -3,14 +3,14 @@
 // see our intent
 #![allow(dead_code)]
 
-use conch_parser::ast::Command::*;
-use conch_parser::ast::ComplexWord::*;
-use conch_parser::ast::PipeableCommand::*;
-use conch_parser::ast::SimpleWord::*;
-use conch_parser::ast::*;
-use conch_parser::lexer::Lexer;
-use conch_parser::parse::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::Command::*;
+use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::PipeableCommand::*;
+use autoconf_parser::ast::SimpleWord::*;
+use autoconf_parser::ast::*;
+use autoconf_parser::lexer::Lexer;
+use autoconf_parser::parse::*;
+use autoconf_parser::token::Token;
 
 pub fn lit(s: &str) -> DefaultWord {
     Word::Simple(Literal(String::from(s)))

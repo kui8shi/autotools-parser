@@ -1,10 +1,10 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::ComplexWord::*;
-use conch_parser::ast::PipeableCommand::*;
-use conch_parser::ast::SimpleWord::*;
-use conch_parser::ast::*;
-use conch_parser::parse::ParseError::*;
-use conch_parser::token::Token;
+use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::PipeableCommand::*;
+use autoconf_parser::ast::SimpleWord::*;
+use autoconf_parser::ast::*;
+use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;

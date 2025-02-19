@@ -1,8 +1,8 @@
 #![deny(rust_2018_idioms)]
 #![recursion_limit = "128"]
 
-use conch_parser::ast::builder::*;
-use conch_parser::parse::*;
+use autoconf_parser::ast::builder::*;
+use autoconf_parser::parse::*;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -162,7 +162,7 @@ fn ensure_parse_errors_are_send_and_sync() {
 
 #[test]
 fn ensure_parser_could_be_send_and_sync() {
-    use conch_parser::token::Token;
+    use autoconf_parser::token::Token;
 
     fn send_and_sync<T: Send + Sync>() {}
     send_and_sync::<Parser<std::vec::IntoIter<Token>, ArcBuilder>>();

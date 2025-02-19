@@ -31,6 +31,8 @@ impl Builder for EmptyBuilder {
     type Word = ();
     type Redirect = ();
     type Error = Void;
+    type M4Macro = ();
+    type M4Argument = ();
 
     fn complete_command(
         &mut self,
@@ -124,11 +126,27 @@ impl Builder for EmptyBuilder {
         Ok(())
     }
 
+    fn macro_to_commands(
+        &mut self,
+        _macro_call: Self::M4Macro,
+        _redirects: Vec<Self::Redirect>,
+    ) -> Result<Self::CompoundCommand, Self::Error> {
+        Ok(())
+    }
+
+    fn macro_call(
+        &mut self,
+        _name: String,
+        _args: Vec<M4Argument<Self::Word, Self::Command>>,
+    ) -> Result<Self::M4Macro, Self::Error> {
+        Ok(())
+    }
+
     fn comments(&mut self, _comments: Vec<Newline>) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn word(&mut self, _kind: ComplexWordKind<Self::Command>) -> Result<Self::Word, Self::Error> {
+    fn word(&mut self, _kind: ComplexWordKind<Self::Word, Self::Command>) -> Result<Self::Word, Self::Error> {
         Ok(())
     }
 

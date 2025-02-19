@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use conch_parser::ast::PipeableCommand::*;
-use conch_parser::ast::Redirect::*;
-use conch_parser::ast::*;
+use autoconf_parser::ast::PipeableCommand::*;
+use autoconf_parser::ast::Redirect::*;
+use autoconf_parser::ast::*;
 
 mod parse_support;
 use crate::parse_support::*;
