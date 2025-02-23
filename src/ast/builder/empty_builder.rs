@@ -126,12 +126,19 @@ impl Builder for EmptyBuilder {
         Ok(())
     }
 
-    fn macro_to_commands(
+    fn macro_into_compound_command(
         &mut self,
         _macro_call: Self::M4Macro,
         _redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
         Ok(())
+    }
+
+    fn macro_into_word(
+        &mut self,
+        _macro_call: Self::M4Macro,
+    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        Ok(WordKind::Simple(SimpleWordKind::Macro("".to_owned(),())))
     }
 
     fn macro_call(
@@ -146,7 +153,10 @@ impl Builder for EmptyBuilder {
         Ok(())
     }
 
-    fn word(&mut self, _kind: ComplexWordKind<Self::Word, Self::Command>) -> Result<Self::Word, Self::Error> {
+    fn word(
+        &mut self,
+        _kind: ComplexWordKind<Self::Word, Self::Command>,
+    ) -> Result<Self::Word, Self::Error> {
         Ok(())
     }
 

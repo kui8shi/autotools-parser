@@ -15,6 +15,7 @@ use crate::ast::builder::ComplexWordKind::{self, Concat, Single};
 use crate::ast::builder::WordKind::{self, DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, Builder, SimpleWordKind};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
+use crate::m4_macro;
 use crate::token::Token;
 use crate::token::Token::*;
 
@@ -34,14 +35,6 @@ const IN: &str = "in";
 const THEN: &str = "then";
 const UNTIL: &str = "until";
 const WHILE: &str = "while";
-
-mod predefined {
-    use super::ast::M4Type::{self, *};
-    use std::collections::HashMap;
-    lazy_static::lazy_static! {
-        pub static ref MACROS: HashMap<&'static str, &'static [M4Type]> = HashMap::from([("AC", [Lit].as_ref())]);
-    }
-}
 
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
@@ -499,19 +492,37 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         pre_cmd_comments: Vec<builder::Newline>,
     ) -> ParseResult<B::Command, B::Error> {
+        let (quote_open, quote_close) = self.get_quotes();
+        let mut in_quote = 0;
+        if Some(&quote_open) == self.iter.peek() {
+            in_quote += 1;
+            self.iter.next();
+        }
         let cmd = self.and_or_list()?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
-            Semi => { (builder::SeparatorKind::Semi, self.newline()) },
-            Amp  => { (builder::SeparatorKind::Amp , self.newline()) };
+            Semi => {
+                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                    self.iter.next();
+                }
+                (builder::SeparatorKind::Semi, self.newline())
+            },
+            Amp  => {
+                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                    self.iter.next();
+                }
+                (builder::SeparatorKind::Amp , self.newline())
+            };
             _ => {
+                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                    self.iter.next();
+                }
                 match self.newline() {
                     n@Some(_) => (builder::SeparatorKind::Newline, n),
                     None => (builder::SeparatorKind::Other, None),
                 }
             }
         });
-
         Ok(self
             .builder
             .complete_command(pre_cmd_comments, cmd, sep, cmd_comment)?)
@@ -702,8 +713,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
-        fn could_be_numeric<W, C>(word: &WordKind<W, C>) -> bool {
-            let simple_could_be_numeric = |word: &SimpleWordKind<W, C>| match *word {
+        fn could_be_numeric<C, M>(word: &WordKind<C, M>) -> bool {
+            let simple_could_be_numeric = |word: &SimpleWordKind<C, M>| match *word {
                 SimpleWordKind::Star
                 | SimpleWordKind::Question
                 | SimpleWordKind::SquareOpen
@@ -725,7 +736,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 // @kui8shi
                 // The only macro that I know to be a file descriptor, is AC_FD_CC.
                 // It's too specific but good for remembering it in the code.
-                SimpleWordKind::Macro(ref m) => m.name != "AC_FD_CC",
+                SimpleWordKind::Macro(ref name, _) => name != "AC_FD_CC",
             };
 
             match *word {
@@ -735,7 +746,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
         }
 
-        fn as_num<W, C>(word: &ComplexWordKind<W, C>) -> Option<u16> {
+        fn as_num<C, M>(word: &ComplexWordKind<C, M>) -> Option<u16> {
             match *word {
                 Single(Simple(SimpleWordKind::Literal(ref s))) => u16::from_str_radix(s, 10).ok(),
                 Single(_) => None,
@@ -1151,7 +1162,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// not pass the result to the AST builder.
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
-    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
         self.word_preserve_trailing_whitespace_raw_with_delim(None)
     }
 
@@ -1160,7 +1171,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn word_preserve_trailing_whitespace_raw_with_delim(
         &mut self,
         delim: Option<Token>,
-    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
         self.skip_whitespace();
 
         // Make sure we don't consume comments,
@@ -1171,9 +1182,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         let mut words = Vec::new();
         let mut in_quote = 0;
-        let (quote_open, quote_end) = self.get_quotes();
+        let (quote_open, quote_close) = self.get_quotes();
         loop {
-            if delim.is_some() && self.iter.peek() == delim.as_ref() {
+            if in_quote == 0 && delim.is_some() && self.iter.peek() == delim.as_ref() {
                 break;
             }
 
@@ -1212,10 +1223,18 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.iter.next();
                         continue;
                     }
-                } else if token == &quote_end {
+                } else if token == &quote_close {
                     in_quote -= 1;
                     if in_quote == 0 {
                         self.iter.next();
+                        continue;
+                    } else if in_quote < 0 {
+                        break;
+                    }
+                } else if let Name(_) = token {
+                    if let Some(name) = self.maybe_macro_call() {
+                        let macro_call = self.macro_call(&[&name])?;
+                        words.push(self.builder.macro_into_word(macro_call)?);
                         continue;
                     }
                 }
@@ -1242,7 +1261,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | tok @ CurlyClose => Simple(SimpleWordKind::Literal(tok.to_string())),
 
                 Name(s) | Literal(s) => Simple(SimpleWordKind::Literal(s)),
-
                 Star => Simple(SimpleWordKind::Star),
                 Question => Simple(SimpleWordKind::Question),
                 Tilde => Simple(SimpleWordKind::Tilde),
@@ -1284,11 +1302,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             words.push(w);
         }
 
-        let ret = if in_quote != 0 {
-            // @kui8shi
-            // We do not accept words with unmatched quotes.
-            None
-        } else if words.is_empty() {
+        let ret = if words.is_empty() {
             None
         } else if words.len() == 1 {
             Some(Single(words.pop().unwrap()))
@@ -1317,7 +1331,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         delim: Option<(Token, Token)>,
         start_pos: SourcePos,
-    ) -> ParseResult<Vec<SimpleWordKind<B::Word, B::Command>>, B::Error> {
+    ) -> ParseResult<Vec<SimpleWordKind<B::Command, B::M4Macro>>, B::Error> {
         let (delim_open, delim_close) = match delim {
             Some((o, c)) => (Some(o), Some(c)),
             None => (None, None),
@@ -1405,7 +1419,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Identical to `Parser::backticked_command_substitution`, except but does not pass the
     /// result to the AST builder.
-    fn backticked_raw(&mut self) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
+    fn backticked_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
         let backtick_pos = self.iter.pos();
         eat!(self, { Backtick => {} });
 
@@ -1441,7 +1455,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     }
 
     /// Identical to `Parser::parameter()` but does not pass the result to the AST builder.
-    fn parameter_raw(&mut self) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
+    fn parameter_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
@@ -1472,7 +1486,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn parameter_substitution_word_raw(
         &mut self,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<Option<ComplexWordKind<B::Word, B::Command>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
         let mut words = Vec::new();
         'capture_words: loop {
             'capture_literals: loop {
@@ -1588,7 +1602,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         param: DefaultParameter,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
+    ) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -1632,7 +1646,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// Nothing is passed to the builder.
     fn parameter_substitution_raw(
         &mut self,
-    ) -> ParseResult<SimpleWordKind<B::Word, B::Command>, B::Error> {
+    ) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -1834,7 +1848,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         } else if self.peek_reserved_token(&[CurlyOpen]).is_some() {
             Some(CompoundCmdKeyword::Brace)
         } else if let Some(name) = self.maybe_macro_call() {
-            dbg!(&name);
             Some(CompoundCmdKeyword::Macro(name))
         } else {
             match self.peek_reserved_word(&[FOR, CASE, IF, WHILE, UNTIL]) {
@@ -1900,7 +1913,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             Some(CompoundCmdKeyword::Macro(name)) => {
                 let cmds = self.macro_call(&[&name])?;
                 let io = self.redirect_list()?;
-                self.builder.macro_to_commands(cmds, io)?
+                self.builder.macro_into_compound_command(cmds, io)?
             }
 
             None => return Err(self.make_unexpected_err()),
@@ -2142,6 +2155,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let mut arms = Vec::new();
         loop {
             let pre_pattern_comments = self.linebreak();
+            dbg!(self.peek_reserved_word(&[ESAC]));
             if self.peek_reserved_word(&[ESAC]).is_some() {
                 // Make sure we don't lose the captured comments if there are no body
                 debug_assert_eq!(pre_esac_comments, None);
@@ -2236,9 +2250,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// Parses a m4 macro call if present. If no macro call is present,
     /// nothing is consumed from the token stream.
     pub fn maybe_macro_call(&mut self) -> Option<String> {
-        if let Some(name) =
-            self.peek_reserved_word(&predefined::MACROS.keys().copied().collect::<Vec<&str>>())
-        {
+        if let Some(name) = self.peek_reserved_word(
+            &m4_macro::MACROS
+                .keys()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
+        ) {
             Some(name.to_string())
         } else {
             let mut peeked = self.iter.multipeek();
@@ -2254,14 +2271,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     .all(|c| (c.is_alphabetic() && c.is_uppercase()) || c.is_numeric() || c == '_');
                 if is_macro_name {
                     match peeked.peek_next() {
-                        // @kui8shi
-                        // We disallow empty parentheses in order to distinct the m4 macro calls from the function declarations.
-                        // It's just an easy way and won't work when there is a user-defined macro call with empty parentheses.
-                        // But I'm ok with it for now.
-                        Some(&ParenOpen) => {
-                            (peeked.peek_next() != Some(&ParenClose)).then_some(name)
-                        }
-                        Some(&Newline) => Some(name), // macro call with no arguments
+                        Some(&ParenOpen) | Some(&Newline) | None => Some(name),
                         _ => None,
                     }
                 } else {
@@ -2275,66 +2285,182 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Crafts a macro call
     pub fn macro_call(&mut self, name_candidates: &[&str]) -> ParseResult<B::M4Macro, B::Error> {
-        use ast::{M4Argument, M4Type};
+        use m4_macro::{M4Argument, M4Type};
         let name = self
             .reserved_word(name_candidates)
             .map_err(|()| self.make_unexpected_err())?;
-        let macro_signature = predefined::MACROS.get(name).map(|m| *m);
+        let macro_signature = m4_macro::MACROS.get(name).cloned();
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
             return Ok(self.builder.macro_call(name.to_string(), Vec::new())?);
         }
-        let args = {
-            let num_args = self.count_macro_args()?;
-            let arg_types =
-                macro_signature.unwrap_or([M4Type::RepBegin, M4Type::Lit, M4Type::RepEnd].as_ref());
-            let mut args = Vec::new();
+        let peeked_args = self.peek_macro_args()?;
+        dbg!(&peeked_args, &macro_signature);
+        {
+            let mut peeked = self.iter.multipeek();
+            dbg!(peeked.peek_next());
+            dbg!(peeked.peek_next());
+            dbg!(peeked.peek_next());
+        }
+        let num_args = peeked_args.len();
+        let args = if let Some((arg_types, _ret_type, repeat)) = macro_signature {
+            let mut parsed_args = Vec::new();
             let mut idx_arg_type = 0;
-            let mut idx_rep_start = None;
-            for _ in 0..num_args {
-                match arg_types[idx_arg_type] {
-                    M4Type::RepBegin => idx_rep_start = Some(idx_arg_type + 1),
-                    M4Type::RepEnd => idx_arg_type = idx_rep_start.unwrap(),
-                    _ => (),
+            for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
+                if let Some((start, end)) = repeat {
+                    if (idx_arg_type == end) && (num_args - i) >= (end - start) {
+                        idx_arg_type = start
+                    }
+                }
+                dbg!(&name, arg_types[idx_arg_type]);
+                {
+                    let mut peeked = self.iter.multipeek();
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
                 }
                 let arg = match arg_types[idx_arg_type] {
-                    M4Type::Lit => M4Argument::Literal(self.word()?.unwrap()),
+                    M4Type::Lit => {
+                        self.skip_macro_arg()?;
+                        M4Argument::Literal(peeked_arg.clone())
+                    }
                     M4Type::Arr => M4Argument::Array(vec![self.word()?.unwrap()]),
-                    M4Type::Cmds => M4Argument::Command(
-                        self.command_group(CommandGroupDelimiters {
-                            reserved_tokens: &[ParenClose, SquareClose, Comma],
-                            ..Default::default()
-                        })?
-                        .commands,
-                    ),
-                    _ => return Err(self.make_unexpected_err()),
+                    M4Type::Cmds => {
+                        let cmds = self
+                            .command_group(CommandGroupDelimiters {
+                                reserved_tokens: &[ParenClose, Comma],
+                                ..Default::default()
+                            })?
+                            .commands;
+                        M4Argument::Command(cmds)
+                    }
+                    _ => {
+                        eprintln!("Unexpected M4Type for arguments");
+                        return Err(self.make_unexpected_err());
+                    }
                 };
-                args.push(arg);
+                self.linebreak();
+                if i < num_args - 1 {
+                    eat!(self, { Comma => {} });
+                } else {
+                    eat!(self, { ParenClose => {} });
+                }
+                {
+                    println!("+++++++++++++++++++++++++++++++++++++++++++++");
+                    let mut peeked = self.iter.multipeek();
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    dbg!(peeked.peek_next());
+                    println!("+++++++++++++++++++++++++++++++++++++++++++++");
+                }
+                idx_arg_type += 1;
+                parsed_args.push(arg);
             }
-            args
+            parsed_args
+        } else {
+            while let Comma = self.skip_macro_arg()? {
+                eat!(self, {Comma => {}});
+            }
+            self.linebreak();
+            eat!(self, {ParenClose => {}});
+            {
+                println!("+++++++++++++++++++++++++++++++++++++++++++++");
+                let mut peeked = self.iter.multipeek();
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                dbg!(peeked.peek_next());
+                println!("+++++++++++++++++++++++++++++++++++++++++++++");
+            }
+            peeked_args
+                .into_iter()
+                .map(|s| M4Argument::Literal(s))
+                .collect()
         };
         // A whitespace is not allowed between m4 macro name and the opening parenthesis
         // eat!(self, { ParenOpen => {} });
         return Ok(self.builder.macro_call(name.to_string(), args)?);
     }
 
-    fn count_macro_args(&mut self) -> ParseResult<usize, B::Error> {
-        let (quote_open, quote_end) = self.get_quotes();
+    fn skip_macro_arg(&mut self) -> ParseResult<Token, B::Error> {
+        let (quote_open, quote_close) = self.get_quotes();
+        let mut in_quote = 0;
+        loop {
+            {
+                println!("=====[{}]======", in_quote);
+                let mut peeked = self.iter.multipeek();
+                let a = peeked.peek_next().unwrap().as_str().to_string();
+                let b = peeked.peek_next().unwrap().as_str().to_string();
+                let c = peeked.peek_next().unwrap().as_str().to_string();
+                println!("{} {} {}", a, b, c);
+                println!("============");
+            }
+            match self.iter.peek() {
+                tok @ Some(&Comma) | tok @ Some(&ParenClose) if in_quote == 0 => {
+                    return Ok(tok.unwrap().clone())
+                }
+                Some(tok) => {
+                    if tok == &quote_open {
+                        in_quote += 1;
+                    } else if tok == &quote_close {
+                        in_quote -= 1;
+                    }
+                }
+                None => return Err(ParseError::UnexpectedEOF),
+            }
+            // consume token
+            self.iter.next();
+        }
+    }
+
+    /// Parse arbitrary arguments of m4 macro call as raw literals,
+    /// The literal contains all chracters except leading/trailing whitespaces.
+    fn peek_macro_args(&mut self) -> ParseResult<Vec<String>, B::Error> {
+        let (quote_open, quote_close) = self.get_quotes();
         let mut peeked = self.iter.multipeek();
         let mut in_quote = 0;
-        let mut num_args = 1;
+        let mut literals = Vec::new();
+        let mut buf = String::new();
         loop {
             match peeked.peek_next() {
-                Some(&Comma) if in_quote == 0 => num_args += 1,
-                Some(&ParenClose) if in_quote == 0 => break,
-                Some(tok) if tok == &quote_open => in_quote += 1,
-                Some(tok) if tok == &quote_end => in_quote -= 1,
-                Some(_) => (),
+                Some(&Comma) if in_quote == 0 => {
+                    literals.push(buf.trim().to_string());
+                    buf = String::new();
+                }
+                Some(&ParenClose) if in_quote == 0 => {
+                    literals.push(buf.trim().to_string());
+                    return Ok(literals);
+                }
+                Some(tok) => {
+                    if tok == &quote_open {
+                        in_quote += 1;
+                        if in_quote == 1 {
+                            // The quote is outermost
+                            continue;
+                        }
+                    } else if tok == &quote_close {
+                        in_quote -= 1;
+                        if in_quote == 0 {
+                            // The quote is outermost
+                            continue;
+                        }
+                    }
+                    buf.push_str(tok.as_str());
+                }
                 None => return Err(ParseError::UnexpectedEOF),
             }
         }
-        Ok(num_args)
     }
 
     /// Parses a single function declaration if present. If no function is present,
@@ -2350,14 +2476,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let mut peeked = self.iter.multipeek();
             if let Some(&Name(_)) = peeked.peek_next() {
                 match peeked.peek_next() {
+                    Some(&Whitespace(_)) => Some(&ParenOpen) == peeked.peek_next(),
                     // @kui8shi
-                    // We disallow whitespaces between the parentheses in order to distinct the function declaration from m4 macro calls.
-                    // It does not adhere to the GNU standard but I think this simple distinction works in most cases.
-                    Some(&Whitespace(_)) => {
-                        Some(&ParenOpen) == peeked.peek_next()
-                            && Some(&ParenClose) == peeked.peek_next()
-                    }
-                    Some(&ParenOpen) => Some(&ParenClose) == peeked.peek_next(),
+                    // We expect whitespaces between the function name and the parentheses to distinct the function declaration from m4 macro calls.
+                    // It does not adhere to the standard but I think this simple distinction works in most cases.
                     _ => false,
                 }
             } else {
@@ -3104,6 +3226,7 @@ mod tests {
     use crate::ast::Command::*;
     use crate::ast::CompoundCommandKind::*;
     use crate::ast::*;
+    use crate::m4_macro::*;
     use crate::lexer::Lexer;
     use crate::parse::*;
 
@@ -3225,15 +3348,16 @@ mod tests {
             make_parser("`foo\n#comment\n`").backticked_raw()
         );
     }
+
     #[test]
-    fn test_macro_call() {
+    fn test_macro_call_without_arguments() {
         let macro_call: DefaultM4Macro = M4Macro {
-            name: "AC_INIT".to_string(),
+            name: "TEST_MACRO".to_string(),
             args: Vec::new(),
         };
         assert_eq!(
             Ok(macro_call),
-            make_parser("AC_INIT").macro_call(&["AC_INIT"])
+            make_parser("TEST_MACRO").macro_call(&["TEST_MACRO"])
         )
     }
 }

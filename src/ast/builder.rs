@@ -10,7 +10,7 @@
 //! struct to the parser if you wish to use the default AST implementation.
 
 use crate::ast::{
-    AndOr, DefaultArithmetic, DefaultParameter, M4Argument, M4Macro, RedirectOrCmdWord,
+    AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord,
     RedirectOrEnvVar,
 };
 
@@ -134,20 +134,20 @@ pub struct CasePatternFragments<W> {
 
 /// An indicator to the builder what kind of complex word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ComplexWordKind<W, C> {
+pub enum ComplexWordKind<C, M> {
     /// Several distinct words concatenated together.
-    Concat(Vec<WordKind<W, C>>),
+    Concat(Vec<WordKind<C, M>>),
     /// A regular word.
-    Single(WordKind<W, C>),
+    Single(WordKind<C, M>),
 }
 
 /// An indicator to the builder what kind of word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum WordKind<W, C> {
+pub enum WordKind<C, M> {
     /// A regular word.
-    Simple(SimpleWordKind<W, C>),
+    Simple(SimpleWordKind<C, M>),
     /// List of words concatenated within double quotes.
-    DoubleQuoted(Vec<SimpleWordKind<W, C>>),
+    DoubleQuoted(Vec<SimpleWordKind<C, M>>),
     /// List of words concatenated within single quotes. Virtually
     /// identical as a literal, but makes a distinction between the two.
     // @kui8shi
@@ -157,13 +157,13 @@ pub enum WordKind<W, C> {
 
 /// An indicator to the builder what kind of simple word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleWordKind<W, C> {
+pub enum SimpleWordKind<C, M> {
     /// A non-special literal word.
     Literal(String),
     /// Access of a value inside a parameter, e.g. `$foo` or `$$`.
     Param(DefaultParameter),
     /// A parameter substitution, e.g. `${param-word}`.
-    Subst(Box<ParameterSubstitutionKind<ComplexWordKind<W, C>, C>>),
+    Subst(Box<ParameterSubstitutionKind<ComplexWordKind<C, M>, C>>),
     /// Represents the standard output of some command, e.g. \`echo foo\`.
     CommandSubst(CommandGroup<C>),
     /// A token which normally has a special meaning is treated as a literal
@@ -182,7 +182,8 @@ pub enum SimpleWordKind<W, C> {
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
     /// m4 macro call to be expanded to a literal
-    Macro(M4Macro<W, C>),
+    // FIXME: we exported name field of M to the variant's field. but it's not good.
+    Macro(String, M),
 }
 
 /// Represents redirecting a command's file descriptors.
@@ -445,11 +446,21 @@ pub trait Builder {
     ///
     /// # Arguments
     /// * macro_call: a m4 macro call
-    fn macro_to_commands(
+    fn macro_into_compound_command(
         &mut self,
         macro_call: Self::M4Macro,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error>;
+
+    /// @kui8shi
+    /// Invoked when a parsed m4 macro call is to be expanded to words.
+    ///
+    /// # Arguments
+    /// * macro_call: a m4 macro call
+    fn macro_into_word(
+        &mut self,
+        macro_call: Self::M4Macro,
+    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error>;
 
     /// @kui8shi
     /// Invoked when a m4 macro call is parsed.
@@ -476,7 +487,7 @@ pub trait Builder {
     /// * kind: the type of word that was parsed
     fn word(
         &mut self,
-        kind: ComplexWordKind<Self::Word, Self::Command>,
+        kind: ComplexWordKind<Self::Command, Self::M4Macro>,
     ) -> Result<Self::Word, Self::Error>;
 
     /// Invoked when a redirect is parsed.
@@ -589,12 +600,19 @@ macro_rules! impl_builder_body {
             (**self).compound_command_into_pipeable(cmd)
         }
 
-        fn macro_to_commands(
+        fn macro_into_compound_command(
             &mut self,
             macro_call: Self::M4Macro,
             redirects: Vec<Self::Redirect>,
         ) -> Result<Self::CompoundCommand, Self::Error> {
-            (**self).macro_to_commands(macro_call, redirects)
+            (**self).macro_into_compound_command(macro_call, redirects)
+        }
+
+        fn macro_into_word(
+            &mut self,
+            macro_call: Self::M4Macro,
+        ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+            (**self).macro_into_word(macro_call)
         }
 
         fn macro_call(
@@ -620,7 +638,7 @@ macro_rules! impl_builder_body {
 
         fn word(
             &mut self,
-            kind: ComplexWordKind<Self::Word, Self::Command>,
+            kind: ComplexWordKind<Self::Command, Self::M4Macro>,
         ) -> Result<Self::Word, Self::Error> {
             (**self).word(kind)
         }

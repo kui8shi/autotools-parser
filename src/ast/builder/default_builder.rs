@@ -170,12 +170,16 @@ macro_rules! default_builder {
                 self.0.function_declaration(name, post_name_comments, body)
             }
 
-            fn macro_to_commands(
+            fn macro_into_compound_command(
                 &mut self,
                 macro_call: M4Macro<Self::Word, Self::Command>,
                 redirects: Vec<Self::Redirect>,
             ) -> Result<Self::CompoundCommand, Self::Error> {
-                self.0.macro_to_commands(macro_call, redirects)
+                self.0.macro_into_compound_command(macro_call, redirects)
+            }
+
+            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+                self.0.macro_into_word(macro_call)
             }
 
             fn macro_call(
@@ -194,7 +198,7 @@ macro_rules! default_builder {
             }
 
             fn word(&mut self,
-                    kind: ComplexWordKind<Self::Word, Self::Command>)
+                    kind: ComplexWordKind<Self::Command, Self::M4Macro>)
                 -> Result<Self::Word, Self::Error>
             {
                 self.0.word(kind)
@@ -553,7 +557,7 @@ where
         Ok(PipeableCommand::FunctionDef(name.into(), body.into()))
     }
 
-    fn macro_to_commands(
+    fn macro_into_compound_command(
         &mut self,
         macro_call: M4Macro<Self::Word, Self::Command>,
         redirects: Vec<Self::Redirect>,
@@ -564,11 +568,19 @@ where
         })
     }
 
+    fn macro_into_word(
+        &mut self,
+        macro_call: Self::M4Macro,
+    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        Ok(WordKind::Simple(SimpleWordKind::Macro(macro_call.name.to_string(), macro_call)))
+    }
+
     fn macro_call(
         &mut self,
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
     ) -> Result<Self::M4Macro, Self::Error> {
+        dbg!(&name);
         Ok(M4Macro { name, args })
     }
 
@@ -580,7 +592,7 @@ where
     /// Constructs a `ast::Word` from the provided input.
     fn word(
         &mut self,
-        kind: ComplexWordKind<Self::Word, Self::Command>,
+        kind: ComplexWordKind<Self::Command, Self::M4Macro>,
     ) -> Result<Self::Word, Self::Error> {
         macro_rules! map {
             ($pat:expr) => {
@@ -661,7 +673,7 @@ where
                 SimpleWordKind::SquareClose => SimpleWord::SquareClose,
                 SimpleWordKind::Tilde => SimpleWord::Tilde,
                 SimpleWordKind::Colon => SimpleWord::Colon,
-                SimpleWordKind::Macro(m) => SimpleWord::Macro(m.into()),
+                SimpleWordKind::Macro(_, m) => SimpleWord::Macro(m),
 
                 SimpleWordKind::CommandSubst(c) => {
                     SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))

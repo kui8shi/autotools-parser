@@ -197,13 +197,15 @@ impl Token {
     /// when the token is **not** quoted or escaped.
     pub fn is_word_delimiter(&self) -> bool {
         match *self {
+            // @kui8shi moved SquareOpen and Square Close from non-delimiters to delimiters.
+            // it may break some of the shell syntax.
             Newline | ParenOpen | ParenClose | Semi | Amp | Less | Great | Pipe | AndIf | OrIf
             | DSemi | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber | LessGreat
-            | Whitespace(_) => true,
+            | Whitespace(_) | SquareOpen | SquareClose => true,
 
             Bang | Star | Question | Backslash | SingleQuote | DoubleQuote | Backtick | Percent
             | Dash | Equals | Plus | Colon | At | Caret | Slash | Comma | CurlyOpen
-            | CurlyClose | SquareOpen | SquareClose | Dollar | Tilde | Pound | Name(_)
+            | CurlyClose | Dollar | Tilde | Pound | Name(_)
             | Literal(_) | ParamPositional(_) => false,
         }
     }

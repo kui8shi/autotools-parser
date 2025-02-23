@@ -184,18 +184,17 @@ fn test_command_delegates_valid_simple_commands() {
 
 #[test]
 fn test_command_delegates_valid_commands_function() {
+    // @kui8shi
+    // Disallow non whitespaces before parentheses without funciton keyword
     let commands = [
         "function foo()      { echo body; }",
         "function foo ()     { echo body; }",
         "function foo (    ) { echo body; }",
         "function foo(    )  { echo body; }",
         "function foo        { echo body; }",
-        "foo()               { echo body; }",
+        // "foo()               { echo body; }",
         "foo ()              { echo body; }",
-        // @kui8shi
-        // Disallow non empty parentheses in 
-        // function declarations without funciton keyword
-        // "foo (    )          { echo body; }",
+        "foo (    )          { echo body; }",
         // "foo(    )           { echo body; }",
     ];
 
