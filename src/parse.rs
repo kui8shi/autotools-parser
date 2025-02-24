@@ -1210,7 +1210,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf) | Some(&DSemi)
                 | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
                 | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber) | Some(&LessGreat)
-                | Some(&Whitespace(_)) | None => break,
+                | Some(&Whitespace(_)) | Some(&EmptyQuotes) | None => break,
             }
 
             if let Some(ref token) = self.iter.peek().cloned() {
@@ -1296,7 +1296,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 // broken the loop while peeking above.
                 Newline | ParenOpen | ParenClose | Semi | Amp | Pipe | AndIf | OrIf | DSemi
                 | Less | Great | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber
-                | LessGreat | Whitespace(_) => unreachable!(),
+                | LessGreat | Whitespace(_) | EmptyQuotes => unreachable!(),
             };
 
             words.push(w);
@@ -1515,6 +1515,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     | Some(t @ &DLessDash)
                     | Some(t @ &Clobber)
                     | Some(t @ &LessGreat)
+                    | Some(t @ &EmptyQuotes)
                     | Some(t @ &Whitespace(_))
                     | Some(t @ &Newline) => {
                         words.push(Simple(SimpleWordKind::Literal(t.as_str().to_owned())));
@@ -2155,7 +2156,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let mut arms = Vec::new();
         loop {
             let pre_pattern_comments = self.linebreak();
-            dbg!(self.peek_reserved_word(&[ESAC]));
             if self.peek_reserved_word(&[ESAC]).is_some() {
                 // Make sure we don't lose the captured comments if there are no body
                 debug_assert_eq!(pre_esac_comments, None);
@@ -2250,19 +2250,24 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// Parses a m4 macro call if present. If no macro call is present,
     /// nothing is consumed from the token stream.
     pub fn maybe_macro_call(&mut self) -> Option<String> {
-        if let Some(name) = self.peek_reserved_word(
-            &m4_macro::MACROS
-                .keys()
-                .map(|s| s.as_str())
-                .collect::<Vec<&str>>(),
-        ) {
+        let names = m4_macro::MACROS
+            .keys()
+            .map(|s| s.as_str())
+            .collect::<Vec<&str>>();
+        let (quote_open, _) = self.get_quotes();
+        if let Some(name) = self.peek_reserved_word_with_prefix(&names, Some(&quote_open)) {
             Some(name.to_string())
         } else {
+            // check if user-defined macro call
+            let found_quote_open = self.iter.peek() == Some(&quote_open);
             let mut peeked = self.iter.multipeek();
+            if found_quote_open {
+                peeked.peek_next();
+            }
             if let Some(&Name(ref name)) = peeked.peek_next() {
                 let name = name.to_string();
                 // @kui8shi
-                // We disallow user-defined macros with lower-case names to
+                // We disallow user-defined macro names with lower-case characters to
                 // distinct the macro calls and shell command/function calls without any arguments.
                 // It is just a heuristic.
                 // They are indistinguishable especially in the case of no arguments.
@@ -2296,34 +2301,28 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             return Ok(self.builder.macro_call(name.to_string(), Vec::new())?);
         }
         let peeked_args = self.peek_macro_args()?;
-        dbg!(&peeked_args, &macro_signature);
-        {
-            let mut peeked = self.iter.multipeek();
-            dbg!(peeked.peek_next());
-            dbg!(peeked.peek_next());
-            dbg!(peeked.peek_next());
-        }
         let num_args = peeked_args.len();
         let args = if let Some((arg_types, _ret_type, repeat)) = macro_signature {
             let mut parsed_args = Vec::new();
             let mut idx_arg_type = 0;
             for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
+                self.linebreak();
                 if let Some((start, end)) = repeat {
                     if (idx_arg_type == end) && (num_args - i) >= (end - start) {
                         idx_arg_type = start
                     }
                 }
-                dbg!(&name, arg_types[idx_arg_type]);
-                {
-                    let mut peeked = self.iter.multipeek();
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                }
-                let arg = match arg_types[idx_arg_type] {
+                let found_macro = self
+                    .maybe_macro_call()
+                    .and_then(|name| m4_macro::MACROS.get(&name))
+                    .map(|(_, ret_type, _)| ret_type == &arg_types[idx_arg_type])
+                    .unwrap_or(false);
+                let arg_type = if found_macro {
+                    M4Type::Cmds
+                } else {
+                    arg_types[idx_arg_type]
+                };
+                let arg = match arg_type {
                     M4Type::Lit => {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
@@ -2349,43 +2348,35 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 } else {
                     eat!(self, { ParenClose => {} });
                 }
-                {
-                    println!("+++++++++++++++++++++++++++++++++++++++++++++");
-                    let mut peeked = self.iter.multipeek();
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    dbg!(peeked.peek_next());
-                    println!("+++++++++++++++++++++++++++++++++++++++++++++");
-                }
                 idx_arg_type += 1;
                 parsed_args.push(arg);
             }
             parsed_args
         } else {
+            // let mut args = Vec::new();
+            // for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
+            //     let mut words = Vec::new();
+            //     while let (Some(word), Some(tok)) = (
+            //         self.word_preserve_trailing_whitespace_raw_with_delim(Some(Comma))?,
+            //         self.iter.next(),
+            //     ) {
+            //         words.push(self.builder.word(word)?);
+            //         if tok == ParenClose {
+            //             break;
+            //         }
+            //     }
+            //     let arg = M4Argument::Words(words);
+            //     args.push(arg);
+            // }
+            // args
             while let Comma = self.skip_macro_arg()? {
                 eat!(self, {Comma => {}});
             }
             self.linebreak();
             eat!(self, {ParenClose => {}});
-            {
-                println!("+++++++++++++++++++++++++++++++++++++++++++++");
-                let mut peeked = self.iter.multipeek();
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                dbg!(peeked.peek_next());
-                println!("+++++++++++++++++++++++++++++++++++++++++++++");
-            }
             peeked_args
                 .into_iter()
-                .map(|s| M4Argument::Literal(s))
+                .map(|s| M4Argument::Unknown(s))
                 .collect()
         };
         // A whitespace is not allowed between m4 macro name and the opening parenthesis
@@ -2396,19 +2387,19 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn skip_macro_arg(&mut self) -> ParseResult<Token, B::Error> {
         let (quote_open, quote_close) = self.get_quotes();
         let mut in_quote = 0;
+        let mut unquoted_paren_depth = 0;
         loop {
-            {
-                println!("=====[{}]======", in_quote);
-                let mut peeked = self.iter.multipeek();
-                let a = peeked.peek_next().unwrap().as_str().to_string();
-                let b = peeked.peek_next().unwrap().as_str().to_string();
-                let c = peeked.peek_next().unwrap().as_str().to_string();
-                println!("{} {} {}", a, b, c);
-                println!("============");
-            }
             match self.iter.peek() {
-                tok @ Some(&Comma) | tok @ Some(&ParenClose) if in_quote == 0 => {
-                    return Ok(tok.unwrap().clone())
+                Some(tok @ &Comma | tok @ &ParenClose)
+                    if in_quote == 0 && unquoted_paren_depth == 0 =>
+                {
+                    return Ok(tok.clone())
+                }
+                Some(&ParenOpen) if in_quote == 0 => {
+                    unquoted_paren_depth += 1;
+                }
+                Some(&ParenClose) if in_quote == 0 && unquoted_paren_depth > 0 => {
+                    unquoted_paren_depth -= 1;
                 }
                 Some(tok) => {
                     if tok == &quote_open {
@@ -2430,6 +2421,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let (quote_open, quote_close) = self.get_quotes();
         let mut peeked = self.iter.multipeek();
         let mut in_quote = 0;
+        let mut unquoted_paren_depth = 0;
         let mut literals = Vec::new();
         let mut buf = String::new();
         loop {
@@ -2438,9 +2430,20 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     literals.push(buf.trim().to_string());
                     buf = String::new();
                 }
-                Some(&ParenClose) if in_quote == 0 => {
-                    literals.push(buf.trim().to_string());
-                    return Ok(literals);
+                Some(tok @ &ParenOpen) if in_quote == 0 => {
+                    unquoted_paren_depth += 1;
+                    if unquoted_paren_depth >= 1 {
+                        buf.push_str(tok.as_str());
+                    }
+                }
+                Some(tok @ &ParenClose) if in_quote == 0 => {
+                    if unquoted_paren_depth < 1 {
+                        literals.push(buf.trim().to_string());
+                        return Ok(literals);
+                    } else {
+                        buf.push_str(tok.as_str());
+                    }
+                    unquoted_paren_depth -= 1;
                 }
                 Some(tok) => {
                     if tok == &quote_open {
@@ -2582,7 +2585,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     #[inline]
     pub fn skip_whitespace(&mut self) {
         loop {
-            while let Some(&Whitespace(_)) = self.iter.peek() {
+            while matches!(self.iter.peek(), Some(&Whitespace(_)) | Some(&EmptyQuotes)) {
                 self.iter.next();
             }
 
@@ -2626,7 +2629,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
             // @kui8shi
             // Treats any line which starts with the word "dnl" as a comment.
-            Some(&Literal(ref s)) if s == "dnl" => {
+            Some(&Name(ref s)) if s == "dnl" => {
                 let comment = self
                     .iter
                     .by_ref()
@@ -2713,12 +2716,26 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// If a reserved word is found, the string which it matches will be
     /// returned in case the caller cares which specific reserved word was found.
     pub fn peek_reserved_word<'a>(&mut self, words: &'a [&str]) -> Option<&'a str> {
+        self.peek_reserved_word_with_prefix(words, None)
+    }
+
+    /// It is identical to peek_reserved_word.
+    /// But allow a prefix token before the reserved word appears.
+    pub fn peek_reserved_word_with_prefix<'a>(
+        &mut self,
+        words: &'a [&str],
+        prefix: Option<&Token>,
+    ) -> Option<&'a str> {
         if words.is_empty() {
             return None;
         }
 
         self.skip_whitespace();
+        let found_prefix = self.iter.peek() == prefix;
         let mut peeked = self.iter.multipeek();
+        if found_prefix {
+            peeked.peek_next();
+        }
         let found_tok = match peeked.peek_next() {
             Some(&Name(ref kw)) | Some(&Literal(ref kw)) => {
                 words.iter().find(|&w| w == kw).copied()
@@ -3226,8 +3243,8 @@ mod tests {
     use crate::ast::Command::*;
     use crate::ast::CompoundCommandKind::*;
     use crate::ast::*;
-    use crate::m4_macro::*;
     use crate::lexer::Lexer;
+    use crate::m4_macro::*;
     use crate::parse::*;
 
     fn make_parser(src: &str) -> DefaultParser<Lexer<std::str::Chars<'_>>> {

@@ -1,9 +1,9 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::Command::*;
-use autoconf_parser::m4_macro::M4Argument::*;
-use autoconf_parser::m4_macro::M4Macro;
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::*;
+use autoconf_parser::m4_macro::M4Argument::*;
+use autoconf_parser::m4_macro::M4Macro;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -85,5 +85,56 @@ fn test_macro_complex() {
     //         "feature=false",
     //     ],
     // );
-    assert!(p.compound_command().is_ok());
+    dbg!(p.compound_command().unwrap());
+}
+
+#[test]
+fn test_macro_with_trailing_comments() {
+    let input = r#"
+dnl  GMP_FAT_SUFFIX(DSTVAR, DIRECTORY)
+dnl  ---------------------------------
+dnl  Emit code to set shell variable DSTVAR to the suffix for a fat binary
+dnl  routine from DIRECTORY.  DIRECTORY can be a shell expression like $foo
+dnl  etc.
+dnl
+dnl  The suffix is directory separators / or \ changed to underscores, and
+dnl  if there's more than one directory part, then the first is dropped.
+dnl
+dnl  For instance,
+dnl
+dnl      x86         ->  x86
+dnl      x86/k6      ->  k6
+dnl      x86/k6/mmx  ->  k6_mmx
+
+define(GMP_FAT_SUFFIX,
+[[$1=`echo $2 | sed -e '/\//s:^[^/]*/::' -e 's:[\\/]:_:g'`]])
+
+"#;
+    let mut p = make_parser(input);
+    dbg!(p.complete_command().unwrap());
+}
+
+#[test]
+fn test_macro_unusual_style_of_newline() {
+    let input = r#"dnl  GMP_VERSION
+dnl  -----------
+dnl  The gmp version number, extracted from the #defines in gmp-h.in at
+dnl  autoconf time.  Two digits like 3.0 if patchlevel <= 0, or three digits
+dnl  like 3.0.1 if patchlevel > 0.
+
+define(GMP_VERSION,
+[GMP_HEADER_GETVAL(__GNU_MP_VERSION,gmp-h.in)[]dnl
+.GMP_HEADER_GETVAL(__GNU_MP_VERSION_MINOR,gmp-h.in)[]dnl
+.GMP_HEADER_GETVAL(__GNU_MP_VERSION_PATCHLEVEL,gmp-h.in)])
+"#;
+    let mut p = make_parser(input);
+    dbg!(p.complete_command().unwrap());
+}
+
+#[test]
+fn test_macro_t() {
+    let input =
+        r#"GMP_DEFINE_RAW("define_not_for_expansion(\`HAVE_DOUBLE_IEEE_BIG_ENDIAN')", POST)"#;
+    let mut p = make_parser(input);
+    dbg!(p.complete_command().unwrap());
 }

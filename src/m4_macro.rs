@@ -15,8 +15,10 @@ pub enum M4Type {
     Prog,
     /// list of shell script or m4 macro
     Cmds,
-    /// related to macro definition
+    /// result of macro definition
     Def,
+    /// body of macro definition
+    Body,
 }
 
 /// Represents an argument of m4 macro call.
@@ -30,6 +32,10 @@ pub enum M4Argument<W, C> {
     Prog(String),
     /// list of commands.
     Command(Vec<C>),
+    /// list of words
+    Words(Vec<W>),
+    /// unknown argument type when the macro is user-defined
+    Unknown(String),
 }
 
 // @kui8shi
@@ -362,6 +368,7 @@ lazy_static::lazy_static! {
         ("m4_decr", (vec![Lit], Cmds, None)),
         ("m4_define", (vec![Lit, Lit], Def, None)), // The command parsing is delayed till expandsion
         ("m4_defun", (vec![Lit, Lit], Def, None)),  // The command parsing is delayed till expandsion
+        ("define", (vec![Lit, Lit], Def, None)),  // The command parsing is delayed till expandsion
         ("m4_divnum", (vec![Lit], Cmds, None)),
         ("m4_errprint", (vec![Lit], Cmds, None)),
         ("m4_esyscmd", (vec![Lit], Cmds, None)),

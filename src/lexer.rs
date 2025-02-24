@@ -3,6 +3,7 @@
 use self::TokenOrLiteral::*;
 use super::token::Token::*;
 use super::token::{Positional, Token};
+use std::io::Empty;
 use std::iter::{Fuse, Peekable};
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -108,7 +109,12 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             ')' => ParenClose,
             '{' => CurlyOpen,
             '}' => CurlyClose,
-            '[' => SquareOpen,
+            '[' => if let Some(&']') = self.inner.peek() {
+                self.inner.next();
+                EmptyQuotes
+            } else {
+                SquareOpen
+            }
             ']' => SquareClose,
 
             '$' => {

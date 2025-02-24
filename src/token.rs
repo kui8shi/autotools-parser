@@ -88,6 +88,10 @@ pub enum Token {
     /// ]
     SquareClose,
 
+    /// []
+    /// FIXME: @kui8shi we only support empty quotes of '[]', which limit the lexer possibility.
+    EmptyQuotes,
+
     /// !
     Bang,
     /// ~
@@ -201,7 +205,7 @@ impl Token {
             // it may break some of the shell syntax.
             Newline | ParenOpen | ParenClose | Semi | Amp | Less | Great | Pipe | AndIf | OrIf
             | DSemi | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber | LessGreat
-            | Whitespace(_) | SquareOpen | SquareClose => true,
+            | Whitespace(_) | SquareOpen | SquareClose | EmptyQuotes => true,
 
             Bang | Star | Question | Backslash | SingleQuote | DoubleQuote | Backtick | Percent
             | Dash | Equals | Plus | Colon | At | Caret | Slash | Comma | CurlyOpen
@@ -220,6 +224,7 @@ impl Token {
             CurlyClose => "}",
             SquareOpen => "[",
             SquareClose => "]",
+            EmptyQuotes => "[]",
             Dollar => "$",
             Bang => "!",
             Semi => ";",
