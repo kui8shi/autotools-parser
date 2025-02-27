@@ -813,7 +813,7 @@ where
     }
 }
 
-fn compress<W, C>(word: ComplexWordKind<W, C>) -> ComplexWordKind<W, C> {
+pub(crate) fn compress<W, C>(word: ComplexWordKind<W, C>) -> ComplexWordKind<W, C> {
     use crate::ast::builder::ComplexWordKind::*;
     use crate::ast::builder::SimpleWordKind::*;
     use crate::ast::builder::WordKind::*;

@@ -16,6 +16,7 @@ use crate::ast::{
 
 mod default_builder;
 mod empty_builder;
+mod minimal_builder;
 
 pub use self::default_builder::*;
 pub use self::empty_builder::EmptyBuilder;

@@ -296,8 +296,8 @@ fn test_word_quotes() {
     // but inner quoting pairs aren't.
     assert_eq!(
         Ok(Some(TopLevelWord(Concat(vec![
-            Word::Simple(SquareOpen),
-            Word::Simple(SquareClose)
+            Word::Simple(SimpleWord::SquareOpen),
+            Word::Simple(SimpleWord::SquareClose)
         ])))),
         make_parser("[[]]").word()
     );

@@ -5,6 +5,7 @@ use std::{fmt, ops};
 use super::m4_macro::{M4Macro, M4Argument};
 
 pub mod builder;
+pub mod minimal;
 
 /// Type alias for the default `Parameter` representation.
 pub type DefaultParameter = Parameter<String>;
