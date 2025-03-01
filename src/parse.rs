@@ -550,36 +550,26 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         pre_cmd_comments: Vec<builder::Newline>,
     ) -> ParseResult<B::Command, B::Error> {
-        let (quote_open, quote_close) = self.get_quotes();
-        let in_quote = if Some(&quote_open) == self.iter.peek() {
-            self.iter.next();
+        let in_quote = self.may_quote_open();
+        if in_quote {
             // @kui8shi
             // Since `pre_cmd_comments` do not include linebreaks after opening quote character,
             // We need to sweep newlines again.
             self.linebreak();
-            true
-        } else {
-            false
-        };
+        }
         let cmd = self.and_or_list()?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
             Semi => {
-                if in_quote && Some(&quote_close) == self.iter.peek() {
-                    self.iter.next();
-                }
+                self.may_quote_close(in_quote);
                 (builder::SeparatorKind::Semi, self.newline())
             },
             Amp  => {
-                if in_quote && Some(&quote_close) == self.iter.peek() {
-                    self.iter.next();
-                }
+                self.may_quote_close(in_quote);
                 (builder::SeparatorKind::Amp , self.newline())
             };
             _ => {
-                if in_quote && Some(&quote_close) == self.iter.peek() {
-                    self.iter.next();
-                }
+                self.may_quote_close(in_quote);
                 match self.newline() {
                     n@Some(_) => (builder::SeparatorKind::Newline, n),
                     None => (builder::SeparatorKind::Other, None),
@@ -901,8 +891,29 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         Ok(Some(Ok(self.builder.redirect(redirect)?)))
     }
 
+    /// Get current quoting tokens.
+    /// The quoting tokens are special to programs using m4.
+    /// For example, '[' and ']' are the quoting tokens in autoconf language.
     fn get_quotes(&self) -> (Token, Token) {
         self.quotes.clone()
+    }
+
+    /// Consume opening quote if exists.
+    fn may_quote_open(&mut self) -> bool {
+        let (quote_open, _quote_close) = self.get_quotes();
+        if self.iter.peek() == Some(&quote_open) {
+            self.iter.next();
+            true
+        } else {
+            false
+        }
+    }
+    /// Consume closing quote token if in quotes.
+    fn may_quote_close(&mut self, in_quote: bool) {
+        let (_quote_open, quote_close) = self.get_quotes();
+        if in_quote && self.iter.peek() == Some(&quote_close) {
+            self.iter.next();
+        }
     }
 
     /// Parses a heredoc redirection and the heredoc's body.
@@ -1269,18 +1280,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     continue;
                 }
 
+                Some(&EmptyQuotes) => {
+                    // Empty quotes work like an empty string while being a delimiter of tokens.
+                    self.iter.next();
+                    continue;
+                }
+
                 Some(&Newline) | Some(&ParenOpen) | Some(&ParenClose) | Some(&Semi)
                 | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf) | Some(&DSemi)
                 | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
                 | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber) | Some(&LessGreat)
-                | Some(&Whitespace(_)) | Some(&EmptyQuotes) | None => break,
+                | Some(&Whitespace(_)) | None => break,
             }
 
             if let Some(ref token) = self.iter.peek().cloned() {
                 // @kui8shi
                 // Skip the outermost quoting tokens.
-                // The quoting tokens are special to programs using m4.
-                // For example, '[' and ']' are the quoting tokens in autoconf language.
                 if token == &quote_open {
                     in_quote += 1;
                     if in_quote == 1 {
@@ -2371,6 +2386,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         } else {
             return Ok(self.builder.macro_call(name.to_string(), Vec::new())?);
         }
+        let (quote_open, quote_close) = self.get_quotes();
         let peeked_args = self.peek_macro_args()?;
         let num_args = peeked_args.len();
         let args = if let Some((arg_types, _ret_type, repeat)) = macro_signature {
@@ -2416,7 +2432,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         // When we have an array like '[word1 word2]',
                         // we will call self.word() twice.
                         // If outer quotes, they are unwrapped for consistentency between the multiple calls.
-                        let (quote_open, quote_close) = self.get_quotes();
                         let mut arr = Vec::new();
                         let end = if self.iter.peek() == Some(&quote_open) {
                             self.iter.next();
@@ -2457,7 +2472,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         } else {
                             let cmds = self
                                 .command_group(CommandGroupDelimiters {
-                                    reserved_tokens: &[ParenClose, Comma],
+                                    reserved_tokens: &[ParenClose, Comma, quote_close.clone()],
                                     ..Default::default()
                                 })?
                                 .commands;
@@ -2942,7 +2957,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         cfg: CommandGroupDelimiters<'_, '_, '_>,
     ) -> ParseResult<builder::CommandGroup<B::Command>, B::Error> {
+        let in_quote = self.may_quote_open();
         let group = self.command_group_internal(cfg)?;
+        self.may_quote_close(in_quote);
         if group.commands.is_empty() {
             Err(self.make_unexpected_err())
         } else {
