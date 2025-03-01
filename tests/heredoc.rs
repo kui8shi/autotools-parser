@@ -3,7 +3,7 @@ use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::Redirect::Heredoc;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -447,7 +447,7 @@ fn test_heredoc_valid_delimiter_can_start_with() {
 #[test]
 fn test_heredoc_invalid_missing_delimeter() {
     assert_eq!(
-        Err(Unexpected(Token::Semi, src(7, 1, 8))),
+        Err(Unexpected(Token::Semi, src(7, 1, 8)).into()),
         make_parser("cat << ;").complete_command()
     );
 }
@@ -455,27 +455,27 @@ fn test_heredoc_invalid_missing_delimeter() {
 #[test]
 fn test_heredoc_invalid_unbalanced_quoting() {
     assert_eq!(
-        Err(Unmatched(Token::SingleQuote, src(6, 1, 7))),
+        Err(Unmatched(Token::SingleQuote, src(6, 1, 7)).into()),
         make_parser("cat <<'eof").complete_command()
     );
     assert_eq!(
-        Err(Unmatched(Token::Backtick, src(6, 1, 7))),
+        Err(Unmatched(Token::Backtick, src(6, 1, 7)).into()),
         make_parser("cat <<`eof").complete_command()
     );
     assert_eq!(
-        Err(Unmatched(Token::DoubleQuote, src(6, 1, 7))),
+        Err(Unmatched(Token::DoubleQuote, src(6, 1, 7)).into()),
         make_parser("cat <<\"eof").complete_command()
     );
     assert_eq!(
-        Err(Unmatched(Token::ParenOpen, src(9, 1, 10))),
+        Err(Unmatched(Token::ParenOpen, src(9, 1, 10)).into()),
         make_parser("cat <<eof(").complete_command()
     );
     assert_eq!(
-        Err(Unmatched(Token::ParenOpen, src(10, 1, 11))),
+        Err(Unmatched(Token::ParenOpen, src(10, 1, 11)).into()),
         make_parser("cat <<eof$(").complete_command()
     );
     assert_eq!(
-        Err(Unmatched(Token::CurlyOpen, src(10, 1, 11))),
+        Err(Unmatched(Token::CurlyOpen, src(10, 1, 11)).into()),
         make_parser("cat <<eof${").complete_command()
     );
 }
@@ -487,7 +487,7 @@ fn test_heredoc_invalid_shows_right_position_of_error() {
         Err(BadSubst(
             Token::Whitespace(String::from(" ")),
             src(25, 3, 10)
-        )),
+        ).into()),
         p.complete_command()
     );
 }
@@ -499,7 +499,7 @@ fn test_heredoc_invalid_shows_right_position_of_error_when_tabs_stripped() {
         Err(BadSubst(
             Token::Whitespace(String::from(" ")),
             src(30, 3, 12)
-        )),
+        ).into()),
         p.complete_command()
     );
 }
@@ -511,7 +511,7 @@ fn test_heredoc_keeps_track_of_correct_position_after_redirect() {
     p.complete_command().unwrap();
     // Fail on the ()
     assert_eq!(
-        Err(Unexpected(Token::ParenClose, src(15, 1, 16))),
+        Err(Unexpected(Token::ParenClose, src(15, 1, 16)).into()),
         p.complete_command()
     );
 }

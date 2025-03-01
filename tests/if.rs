@@ -1,6 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -117,7 +117,7 @@ fn test_if_command_valid_without_else() {
 fn test_if_command_invalid_missing_separator() {
     let mut p = make_parser("if guard; then body1; elif guard2; then body2; else else fi");
     assert_eq!(
-        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(59, 1, 60))),
+        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(59, 1, 60)).into()),
         p.if_command()
     );
 }
@@ -129,12 +129,12 @@ fn test_if_command_invalid_missing_keyword() {
         Err(Unexpected(
             Token::Name(String::from("guard1")),
             src(0, 1, 1)
-        )),
+        ).into()),
         p.if_command()
     );
     let mut p = make_parser("if guard1; then body1; elif guard2; then body2; else else;");
     assert_eq!(
-        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(58, 1, 59))),
+        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(58, 1, 59)).into()),
         p.if_command()
     );
 }
@@ -142,17 +142,17 @@ fn test_if_command_invalid_missing_keyword() {
 #[test]
 fn test_if_command_invalid_missing_guard() {
     let mut p = make_parser("if; then body1; elif guard2; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(2, 1, 3))), p.if_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(2, 1, 3)).into()), p.if_command());
 }
 
 #[test]
 fn test_if_command_invalid_missing_body() {
     let mut p = make_parser("if guard; then; elif guard2; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(14, 1, 15))), p.if_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(14, 1, 15)).into()), p.if_command());
     let mut p = make_parser("if guard1; then body1; elif; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(27, 1, 28))), p.if_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(27, 1, 28)).into()), p.if_command());
     let mut p = make_parser("if guard1; then body1; elif guard2; then body2; else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(52, 1, 53))), p.if_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(52, 1, 53)).into()), p.if_command());
 }
 
 #[test]
@@ -160,19 +160,19 @@ fn test_if_command_invalid_quoted() {
     let cmds = [
         (
             "'if' guard1; then body1; elif guard2; then body2; else else; fi",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "if guard1; then body1; elif guard2; then body2; else else; 'fi'",
-            IncompleteCmd("if", src(0, 1, 1), "fi", src(63, 1, 64)),
+            IncompleteCmd("if", src(0, 1, 1), "fi", src(63, 1, 64)).into(),
         ),
         (
             "\"if\" guard1; then body1; elif guard2; then body2; else else; fi",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "if guard1; then body1; elif guard2; then body2; else else; \"fi\"",
-            IncompleteCmd("if", src(0, 1, 1), "fi", src(63, 1, 64)),
+            IncompleteCmd("if", src(0, 1, 1), "fi", src(63, 1, 64)).into(),
         ),
     ];
 
@@ -218,7 +218,7 @@ fn test_if_command_invalid_concat() {
         Token::Literal(String::from("fi")),
     ]);
     assert_eq!(
-        Err(Unexpected(Token::Literal(String::from("i")), src(0, 1, 1))),
+        Err(Unexpected(Token::Literal(String::from("i")), src(0, 1, 1)).into()),
         p.if_command()
     );
 
@@ -251,7 +251,7 @@ fn test_if_command_invalid_concat() {
         Token::Literal(String::from("i")),
     ]);
     assert_eq!(
-        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(61, 11, 3))),
+        Err(IncompleteCmd("if", src(0, 1, 1), "fi", src(61, 11, 3)).into()),
         p.if_command()
     );
 }

@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -39,7 +39,7 @@ fn test_and_or_invalid_with_newlines_before_operator() {
     p.and_or_list().unwrap(); // Successful parse Or(foo, bar)
                               // Fail to parse "&& baz" which is an error
     assert_eq!(
-        Err(Unexpected(Token::AndIf, src(12, 3, 1))),
+        Err(Unexpected(Token::AndIf, src(12, 3, 1)).into()),
         p.complete_command()
     );
 }

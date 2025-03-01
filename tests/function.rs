@@ -2,7 +2,7 @@
 use autoconf_parser::ast::CompoundCommandKind::*;
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 use std::rc::Rc;
@@ -155,7 +155,7 @@ fn test_function_declaration_valid_body_need_not_be_a_compound_command() {
     ];
 
     for (s, p) in src {
-        let correct = Unexpected(Token::Name(String::from("echo")), p);
+        let correct = Unexpected(Token::Name(String::from("echo")), p).into();
         match make_parser(s).function_declaration() {
             Ok(w) => panic!("Unexpectedly parsed the source \"{}\" as\n{:?}", s, w),
             Err(ref err) => {
@@ -210,14 +210,14 @@ fn test_function_declaration_parens_can_be_subshell_if_function_keyword_present(
 fn test_function_declaration_invalid_newline_in_declaration() {
     let mut p = make_parser("function\nname() { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::Newline, src(8, 1, 9))),
+        Err(Unexpected(Token::Newline, src(8, 1, 9)).into()),
         p.function_declaration()
     );
     // If the function keyword is present the () are optional, and at this particular point
     // they become an empty subshell (which is invalid)
     let mut p = make_parser("function name\n() { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::ParenClose, src(15, 2, 2))),
+        Err(Unexpected(Token::ParenClose, src(15, 2, 2)).into()),
         p.function_declaration()
     );
 }
@@ -226,7 +226,7 @@ fn test_function_declaration_invalid_newline_in_declaration() {
 fn test_function_declaration_invalid_missing_space_after_fn_keyword_and_no_parens() {
     let mut p = make_parser("functionname { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::CurlyOpen, src(13, 1, 14))),
+        Err(Unexpected(Token::CurlyOpen, src(13, 1, 14)).into()),
         p.function_declaration()
     );
 }
@@ -235,7 +235,7 @@ fn test_function_declaration_invalid_missing_space_after_fn_keyword_and_no_paren
 fn test_function_declaration_invalid_missing_fn_keyword_and_parens() {
     let mut p = make_parser("name { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::CurlyOpen, src(5, 1, 6))),
+        Err(Unexpected(Token::CurlyOpen, src(5, 1, 6)).into()),
         p.function_declaration()
     );
 }
@@ -244,7 +244,7 @@ fn test_function_declaration_invalid_missing_fn_keyword_and_parens() {
 fn test_function_declaration_invalid_missing_space_after_name_no_parens() {
     let mut p = make_parser("function name{ echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::CurlyOpen, src(13, 1, 14))),
+        Err(Unexpected(Token::CurlyOpen, src(13, 1, 14)).into()),
         p.function_declaration()
     );
     let mut p = make_parser("function name( echo body; )");
@@ -252,7 +252,7 @@ fn test_function_declaration_invalid_missing_space_after_name_no_parens() {
         Err(Unexpected(
             Token::Name(String::from("echo")),
             src(15, 1, 16)
-        )),
+        ).into()),
         p.function_declaration()
     );
 }
@@ -261,17 +261,17 @@ fn test_function_declaration_invalid_missing_space_after_name_no_parens() {
 fn test_function_declaration_invalid_missing_name() {
     let mut p = make_parser("function { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::CurlyOpen, src(9, 1, 10))),
+        Err(Unexpected(Token::CurlyOpen, src(9, 1, 10)).into()),
         p.function_declaration()
     );
     let mut p = make_parser("function () { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::ParenOpen, src(9, 1, 10))),
+        Err(Unexpected(Token::ParenOpen, src(9, 1, 10)).into()),
         p.function_declaration()
     );
     let mut p = make_parser("() { echo body; }");
     assert_eq!(
-        Err(Unexpected(Token::ParenOpen, src(0, 1, 1))),
+        Err(Unexpected(Token::ParenOpen, src(0, 1, 1)).into()),
         p.function_declaration()
     );
 }
@@ -279,11 +279,11 @@ fn test_function_declaration_invalid_missing_name() {
 #[test]
 fn test_function_declaration_invalid_missing_body() {
     let mut p = make_parser("function name");
-    assert_eq!(Err(UnexpectedEOF), p.function_declaration());
+    assert_eq!(Err(UnexpectedEOF.into()), p.function_declaration());
     let mut p = make_parser("function name()");
-    assert_eq!(Err(UnexpectedEOF), p.function_declaration());
+    assert_eq!(Err(UnexpectedEOF.into()), p.function_declaration());
     let mut p = make_parser("name()");
-    assert_eq!(Err(UnexpectedEOF), p.function_declaration());
+    assert_eq!(Err(UnexpectedEOF.into()), p.function_declaration());
 }
 
 #[test]
@@ -291,27 +291,27 @@ fn test_function_declaration_invalid_quoted() {
     let cmds = [
         (
             "'function' name { echo body; }",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "function 'name'() { echo body; }",
-            Unexpected(Token::SingleQuote, src(9, 1, 10)),
+            Unexpected(Token::SingleQuote, src(9, 1, 10)).into(),
         ),
         (
             "name'()' { echo body; }",
-            Unexpected(Token::SingleQuote, src(4, 1, 5)),
+            Unexpected(Token::SingleQuote, src(4, 1, 5)).into(),
         ),
         (
             "\"function\" name { echo body; }",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "function \"name\"() { echo body; }",
-            Unexpected(Token::DoubleQuote, src(9, 1, 10)),
+            Unexpected(Token::DoubleQuote, src(9, 1, 10)).into(),
         ),
         (
             "name\"()\" { echo body; }",
-            Unexpected(Token::DoubleQuote, src(4, 1, 5)),
+            Unexpected(Token::DoubleQuote, src(4, 1, 5)).into(),
         ),
     ];
 
@@ -334,17 +334,17 @@ fn test_function_declaration_invalid_quoted() {
 fn test_function_declaration_invalid_fn_must_be_name() {
     let mut p = make_parser("function 123fn { echo body; }");
     assert_eq!(
-        Err(BadIdent(String::from("123fn"), src(9, 1, 10))),
+        Err(BadIdent(String::from("123fn"), src(9, 1, 10)).into()),
         p.function_declaration()
     );
     let mut p = make_parser("function 123fn() { echo body; }");
     assert_eq!(
-        Err(BadIdent(String::from("123fn"), src(9, 1, 10))),
+        Err(BadIdent(String::from("123fn"), src(9, 1, 10)).into()),
         p.function_declaration()
     );
     let mut p = make_parser("123fn() { echo body; }");
     assert_eq!(
-        Err(BadIdent(String::from("123fn"), src(0, 1, 1))),
+        Err(BadIdent(String::from("123fn"), src(0, 1, 1)).into()),
         p.function_declaration()
     );
 }
@@ -368,7 +368,7 @@ fn test_function_declaration_invalid_fn_name_must_be_name_token() {
         Token::CurlyClose,
     ]);
     assert_eq!(
-        Err(BadIdent(String::from("fn_name"), src(9, 1, 10))),
+        Err(BadIdent(String::from("fn_name"), src(9, 1, 10)).into()),
         p.function_declaration()
     );
 
@@ -410,7 +410,7 @@ fn test_function_declaration_invalid_concat() {
         Token::CurlyClose,
     ]);
     assert_eq!(
-        Err(BadIdent(String::from("func"), src(0, 1, 1))),
+        Err(BadIdent(String::from("func"), src(0, 1, 1)).into()),
         p.function_declaration()
     );
 }

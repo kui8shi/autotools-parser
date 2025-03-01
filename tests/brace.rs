@@ -1,6 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -22,7 +22,7 @@ fn test_brace_group_valid() {
 #[test]
 fn test_brace_group_invalid_missing_separator() {
     assert_eq!(
-        Err(Unmatched(Token::CurlyOpen, src(0, 1, 1))),
+        Err(Unmatched(Token::CurlyOpen, src(0, 1, 1)).into()),
         make_parser("{ foo\nbar; baz }").brace_group()
     );
 }
@@ -31,7 +31,7 @@ fn test_brace_group_invalid_missing_separator() {
 fn test_brace_group_invalid_start_must_be_whitespace_delimited() {
     let mut p = make_parser("{foo\nbar; baz; }");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("foo")), src(1, 1, 2))),
+        Err(Unexpected(Token::Name(String::from("foo")), src(1, 1, 2)).into()),
         p.brace_group()
     );
 }
@@ -60,12 +60,12 @@ fn test_brace_group_valid_keyword_delimited_by_separator() {
 fn test_brace_group_invalid_missing_keyword() {
     let mut p = make_parser("{ foo\nbar; baz");
     assert_eq!(
-        Err(Unmatched(Token::CurlyOpen, src(0, 1, 1))),
+        Err(Unmatched(Token::CurlyOpen, src(0, 1, 1)).into()),
         p.brace_group()
     );
     let mut p = make_parser("foo\nbar; baz; }");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1)).into()),
         p.brace_group()
     );
 }
@@ -75,19 +75,19 @@ fn test_brace_group_invalid_quoted() {
     let cmds = [
         (
             "'{' foo\nbar; baz; }",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "{ foo\nbar; baz; '}'",
-            Unmatched(Token::CurlyOpen, src(0, 1, 1)),
+            Unmatched(Token::CurlyOpen, src(0, 1, 1)).into(),
         ),
         (
             "\"{\" foo\nbar; baz; }",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "{ foo\nbar; baz; \"}\"",
-            Unmatched(Token::CurlyOpen, src(0, 1, 1)),
+            Unmatched(Token::CurlyOpen, src(0, 1, 1)).into(),
         ),
     ];
 
@@ -109,7 +109,7 @@ fn test_brace_group_invalid_quoted() {
 #[test]
 fn test_brace_group_invalid_missing_body() {
     assert_eq!(
-        Err(Unexpected(Token::CurlyClose, src(2, 2, 1))),
+        Err(Unexpected(Token::CurlyClose, src(2, 2, 1)).into()),
         make_parser("{\n}").brace_group()
     );
 }

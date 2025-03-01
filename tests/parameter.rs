@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::Parameter::*;
 use autoconf_parser::ast::ParameterSubstitution::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -16,7 +16,7 @@ fn test_parameter_short() {
     }
 
     assert_eq!(word("$"), p.parameter().unwrap());
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn test_parameter_short_in_curlies() {
         assert_eq!(p.parameter().unwrap(), word_param(param));
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]

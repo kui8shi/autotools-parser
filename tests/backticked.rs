@@ -2,7 +2,7 @@
 use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -203,7 +203,7 @@ fn test_backticked_invalid_missing_closing_backtick() {
     ];
 
     for &(s, p) in &src {
-        let correct = Unmatched(Token::Backtick, p);
+        let correct = Unmatched(Token::Backtick, p).into();
         match make_parser(s).backticked_command_substitution() {
             Ok(w) => panic!("Unexpectedly parsed the source \"{}\" as\n{:?}", s, w),
             Err(ref err) => {
@@ -234,7 +234,7 @@ fn test_backticked_invalid_maintains_accurate_source_positions() {
     ];
 
     for &(s, p) in &src {
-        let correct = BadSubst(Token::Whitespace(String::from(" ")), p);
+        let correct = BadSubst(Token::Whitespace(String::from(" ")), p).into();
         match make_parser(s).backticked_command_substitution() {
             Ok(w) => panic!("Unexpectedly parsed the source \"{}\" as\n{:?}", s, w),
             Err(ref err) => {
@@ -253,7 +253,7 @@ fn test_backticked_invalid_maintains_accurate_source_positions() {
 fn test_backticked_invalid_missing_opening_backtick() {
     let mut p = make_parser("foo`");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1)).into()),
         p.backticked_command_substitution()
     );
 }

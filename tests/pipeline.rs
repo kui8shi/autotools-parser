@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -55,5 +55,5 @@ fn test_pipeline_no_bang_single_cmd_optimize_wrapper_out() {
 #[test]
 fn test_pipeline_invalid_multiple_bangs_in_same_pipeline() {
     let mut p = make_parser("! foo | bar | ! baz");
-    assert_eq!(Err(Unexpected(Token::Bang, src(14, 1, 15))), p.pipeline());
+    assert_eq!(Err(Unexpected(Token::Bang, src(14, 1, 15)).into()), p.pipeline());
 }

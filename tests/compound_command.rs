@@ -2,7 +2,7 @@
 use autoconf_parser::ast::builder::*;
 use autoconf_parser::ast::CompoundCommandKind::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -22,7 +22,7 @@ fn test_do_group_valid() {
 fn test_do_group_invalid_missing_separator() {
     let mut p = make_parser("do foo\nbar; baz done");
     assert_eq!(
-        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(20, 2, 14))),
+        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(20, 2, 14)).into()),
         p.do_group()
     );
 }
@@ -41,12 +41,12 @@ fn test_do_group_valid_keyword_delimited_by_separator() {
 fn test_do_group_invalid_missing_keyword() {
     let mut p = make_parser("foo\nbar; baz; done");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1)).into()),
         p.do_group()
     );
     let mut p = make_parser("do foo\nbar; baz");
     assert_eq!(
-        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(15, 2, 9))),
+        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(15, 2, 9)).into()),
         p.do_group()
     );
 }
@@ -56,19 +56,19 @@ fn test_do_group_invalid_quoted() {
     let cmds = [
         (
             "'do' foo\nbar; baz; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "do foo\nbar; baz; 'done'",
-            IncompleteCmd("do", src(0, 1, 1), "done", src(23, 2, 17)),
+            IncompleteCmd("do", src(0, 1, 1), "done", src(23, 2, 17)).into(),
         ),
         (
             "\"do\" foo\nbar; baz; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "do foo\nbar; baz; \"done\"",
-            IncompleteCmd("do", src(0, 1, 1), "done", src(23, 2, 17)),
+            IncompleteCmd("do", src(0, 1, 1), "done", src(23, 2, 17)).into(),
         ),
     ];
 
@@ -98,7 +98,7 @@ fn test_do_group_invalid_concat() {
         Token::Literal(String::from("done")),
     ]);
     assert_eq!(
-        Err(Unexpected(Token::Literal(String::from("d")), src(0, 1, 1))),
+        Err(Unexpected(Token::Literal(String::from("d")), src(0, 1, 1)).into()),
         p.do_group()
     );
     let mut p = make_parser_from_tokens(vec![
@@ -110,7 +110,7 @@ fn test_do_group_invalid_concat() {
         Token::Literal(String::from("ne")),
     ]);
     assert_eq!(
-        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(11, 3, 5))),
+        Err(IncompleteCmd("do", src(0, 1, 1), "done", src(11, 3, 5)).into()),
         p.do_group()
     );
 }
@@ -141,7 +141,7 @@ fn test_do_group_should_recognize_literals_and_names() {
 fn test_do_group_invalid_missing_body() {
     let mut p = make_parser("do\ndone");
     assert_eq!(
-        Err(Unexpected(Token::Name("done".into()), src(3, 2, 1))),
+        Err(Unexpected(Token::Name("done".into()), src(3, 2, 1)).into()),
         p.do_group()
     );
 }
@@ -271,50 +271,50 @@ fn test_compound_command_errors_on_quoted_commands() {
         // the problematic token instead of {, however, callers who are smart enough
         // to expect a brace command would be aware themselves that no such valid
         // command actually exists. TL;DR: it's okay for `compound_command` to blame {
-        ("{foo; }", Unexpected(Token::CurlyOpen, src(0, 1, 1))),
-        ("'{' foo; }", Unexpected(Token::SingleQuote, src(0, 1, 1))),
-        ("'(' foo; )", Unexpected(Token::SingleQuote, src(0, 1, 1))),
+        ("{foo; }", Unexpected(Token::CurlyOpen, src(0, 1, 1)).into()),
+        ("'{' foo; }", Unexpected(Token::SingleQuote, src(0, 1, 1)).into()),
+        ("'(' foo; )", Unexpected(Token::SingleQuote, src(0, 1, 1)).into()),
         (
             "'while' guard do foo; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "'until' guard do foo; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "'if' guard; then body; fi",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "'for' var in; do foo; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "'case' foo in esac",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
-        ("\"{\" foo; }", Unexpected(Token::DoubleQuote, src(0, 1, 1))),
-        ("\"(\" foo; )", Unexpected(Token::DoubleQuote, src(0, 1, 1))),
+        ("\"{\" foo; }", Unexpected(Token::DoubleQuote, src(0, 1, 1)).into()),
+        ("\"(\" foo; )", Unexpected(Token::DoubleQuote, src(0, 1, 1)).into()),
         (
             "\"while\" guard do foo; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"until\" guard do foo; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"if\" guard; then body; fi",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"for\" var in; do foo; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"case\" foo in esac",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
     ];
 

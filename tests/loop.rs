@@ -1,6 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -52,12 +52,12 @@ fn test_loop_command_until_valid() {
 fn test_loop_command_invalid_missing_separator() {
     let mut p = make_parser("while guard do foo\nbar; baz; done");
     assert_eq!(
-        Err(IncompleteCmd("while", src(0, 1, 1), "do", src(33, 2, 15))),
+        Err(IncompleteCmd("while", src(0, 1, 1), "do", src(33, 2, 15)).into()),
         p.loop_command()
     );
     let mut p = make_parser("while guard; do foo\nbar; baz done");
     assert_eq!(
-        Err(IncompleteCmd("do", src(13, 1, 14), "done", src(33, 2, 14))),
+        Err(IncompleteCmd("do", src(13, 1, 14), "done", src(33, 2, 14)).into()),
         p.loop_command()
     );
 }
@@ -66,7 +66,7 @@ fn test_loop_command_invalid_missing_separator() {
 fn test_loop_command_invalid_missing_keyword() {
     let mut p = make_parser("guard; do foo\nbar; baz; done");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("guard")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("guard")), src(0, 1, 1)).into()),
         p.loop_command()
     );
 }
@@ -75,19 +75,19 @@ fn test_loop_command_invalid_missing_keyword() {
 fn test_loop_command_invalid_missing_guard() {
     // With command separator between loop and do keywords
     let mut p = make_parser("while; do foo\nbar; baz; done");
-    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6))), p.loop_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6)).into()), p.loop_command());
     let mut p = make_parser("until; do foo\nbar; baz; done");
-    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6))), p.loop_command());
+    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6)).into()), p.loop_command());
 
     // Without command separator between loop and do keywords
     let mut p = make_parser("while do foo\nbar; baz; done");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("do")), src(6, 1, 7))),
+        Err(Unexpected(Token::Name(String::from("do")), src(6, 1, 7)).into()),
         p.loop_command()
     );
     let mut p = make_parser("until do foo\nbar; baz; done");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("do")), src(6, 1, 7))),
+        Err(Unexpected(Token::Name(String::from("do")), src(6, 1, 7)).into()),
         p.loop_command()
     );
 }
@@ -97,19 +97,19 @@ fn test_loop_command_invalid_quoted() {
     let cmds = [
         (
             "'while' guard do foo\nbar; baz; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "'until' guard do foo\nbar; baz; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"while\" guard do foo\nbar; baz; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "\"until\" guard do foo\nbar; baz; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
     ];
 
@@ -145,7 +145,7 @@ fn test_loop_command_invalid_concat() {
         Err(Unexpected(
             Token::Literal(String::from("whi")),
             src(0, 1, 1)
-        )),
+        ).into()),
         p.loop_command()
     );
     let mut p = make_parser_from_tokens(vec![
@@ -160,7 +160,7 @@ fn test_loop_command_invalid_concat() {
         Token::Literal(String::from("done")),
     ]);
     assert_eq!(
-        Err(Unexpected(Token::Literal(String::from("un")), src(0, 1, 1))),
+        Err(Unexpected(Token::Literal(String::from("un")), src(0, 1, 1)).into()),
         p.loop_command()
     );
 }

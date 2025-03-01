@@ -3,7 +3,7 @@ use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::Parameter::*;
 use autoconf_parser::ast::ParameterSubstitution::*;
 use autoconf_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -31,7 +31,7 @@ fn test_parameter_substitution() {
         assert_eq!(correct, p.parameter().unwrap());
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn test_parameter_substitution_smallest_suffix() {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_parameter_substitution_largest_suffix() {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn test_parameter_substitution_smallest_prefix() {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn test_parameter_substitution_largest_prefix() {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
 
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn test_parameter_substitution_default() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 
     let substs = vec![
         Default(false, At, Some(word.clone())),
@@ -256,7 +256,7 @@ fn test_parameter_substitution_default() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn test_parameter_substitution_error() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 
     let substs = vec![
         Error(false, At, Some(word.clone())),
@@ -325,7 +325,7 @@ fn test_parameter_substitution_error() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn test_parameter_substitution_assign() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 
     let substs = vec![
         Assign(false, At, Some(word.clone())),
@@ -394,7 +394,7 @@ fn test_parameter_substitution_assign() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn test_parameter_substitution_alternative() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 
     let substs = vec![
         Alternative(false, At, Some(word.clone())),
@@ -463,7 +463,7 @@ fn test_parameter_substitution_alternative() {
     for s in substs {
         assert_eq!(word_subst(s), p.parameter().unwrap());
     }
-    assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+    assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
 }
 
 #[test]
@@ -500,7 +500,7 @@ fn test_parameter_substitution_words_can_have_spaces_and_escaped_curlies() {
         let src = format!("${{foo_bar123{}foo{{\\}} \t\r \\\nbar \t\r }}", src[i]);
         let mut p = make_parser(&src);
         assert_eq!(word_subst(s), p.parameter().unwrap());
-        assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+        assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
     }
 }
 
@@ -539,7 +539,7 @@ fn test_parameter_substitution_words_can_start_with_pound() {
         let src = format!("${{foo_bar123{}#foo{{\\}} \t\r \\\nbar \t\r }}", src[i]);
         let mut p = make_parser(&src);
         assert_eq!(word_subst(s), p.parameter().unwrap());
-        assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+        assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
     }
 }
 
@@ -577,7 +577,7 @@ fn test_parameter_substitution_words_can_be_parameters_or_substitutions_as_well(
         let src = format!("${{foo_bar123{}$@${{foo##bar}}}}", src[i]);
         let mut p = make_parser(&src);
         assert_eq!(word_subst(s), p.parameter().unwrap());
-        assert_eq!(Err(UnexpectedEOF), p.parameter()); // Stream should be exhausted
+        assert_eq!(Err(UnexpectedEOF.into()), p.parameter()); // Stream should be exhausted
     }
 }
 
@@ -602,76 +602,76 @@ fn test_parameter_substitution_command_close_paren_need_not_be_followed_by_word_
 #[test]
 fn test_parameter_substitution_invalid() {
     let cases = vec![
-        ("$(( x", UnexpectedEOF),
-        ("${foo", Unmatched(Token::CurlyOpen, src(1, 1, 2))),
+        ("$(( x", UnexpectedEOF.into()),
+        ("${foo", Unmatched(Token::CurlyOpen, src(1, 1, 2)).into()),
         (
             "${ foo}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(2, 1, 3)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(2, 1, 3)).into(),
         ),
         (
             "${foo }",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo -}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo =}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo ?}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo +}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo :-}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo :=}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo :?}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo :+}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(5, 1, 6)).into(),
         ),
         (
             "${foo: -}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
         (
             "${foo: =}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
         (
             "${foo: ?}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
         (
             "${foo: +}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
         (
             "${foo: %}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
         (
             "${foo: #}",
-            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)),
+            BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
-        ("${foo-bar", Unmatched(Token::CurlyOpen, src(1, 1, 2))),
-        ("${'foo'}", BadSubst(Token::SingleQuote, src(2, 1, 3))),
-        ("${\"foo\"}", BadSubst(Token::DoubleQuote, src(2, 1, 3))),
-        ("${`foo`}", BadSubst(Token::Backtick, src(2, 1, 3))),
+        ("${foo-bar", Unmatched(Token::CurlyOpen, src(1, 1, 2)).into()),
+        ("${'foo'}", BadSubst(Token::SingleQuote, src(2, 1, 3)).into()),
+        ("${\"foo\"}", BadSubst(Token::DoubleQuote, src(2, 1, 3)).into()),
+        ("${`foo`}", BadSubst(Token::Backtick, src(2, 1, 3)).into()),
     ];
 
     for (s, correct) in cases.into_iter() {

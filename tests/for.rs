@@ -1,6 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -114,7 +114,7 @@ fn test_for_command_valid_with_separator() {
 fn test_for_command_invalid_with_in_no_words_no_with_separator() {
     let mut p = make_parser("for var in do echo $var; done");
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(25, 1, 26))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(25, 1, 26)).into()),
         p.for_command()
     );
 }
@@ -123,7 +123,7 @@ fn test_for_command_invalid_with_in_no_words_no_with_separator() {
 fn test_for_command_invalid_missing_separator() {
     let mut p = make_parser("for var in one two three do echo $var; done");
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(39, 1, 40))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(39, 1, 40)).into()),
         p.for_command()
     );
 }
@@ -131,14 +131,14 @@ fn test_for_command_invalid_missing_separator() {
 #[test]
 fn test_for_command_invalid_amp_not_valid_separator() {
     let mut p = make_parser("for var in one two three& do echo $var; done");
-    assert_eq!(Err(Unexpected(Token::Amp, src(24, 1, 25))), p.for_command());
+    assert_eq!(Err(Unexpected(Token::Amp, src(24, 1, 25)).into()), p.for_command());
 }
 
 #[test]
 fn test_for_command_invalid_missing_keyword() {
     let mut p = make_parser("var in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("var")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("var")), src(0, 1, 1)).into()),
         p.for_command()
     );
 }
@@ -147,7 +147,7 @@ fn test_for_command_invalid_missing_keyword() {
 fn test_for_command_invalid_missing_var() {
     let mut p = make_parser("for in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(7, 1, 8))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(7, 1, 8)).into()),
         p.for_command()
     );
 }
@@ -156,7 +156,7 @@ fn test_for_command_invalid_missing_var() {
 fn test_for_command_invalid_missing_body() {
     let mut p = make_parser("for var in one two three\n");
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(25, 2, 1))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "do", src(25, 2, 1)).into()),
         p.for_command()
     );
 }
@@ -166,19 +166,19 @@ fn test_for_command_invalid_quoted() {
     let cmds = [
         (
             "'for' var in one two three\ndo echo $var; done",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "for var 'in' one two three\ndo echo $var; done",
-            IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9)),
+            IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9)).into(),
         ),
         (
             "\"for\" var in one two three\ndo echo $var; done",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "for var \"in\" one two three\ndo echo $var; done",
-            IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9)),
+            IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9)).into(),
         ),
     ];
 
@@ -201,22 +201,22 @@ fn test_for_command_invalid_quoted() {
 fn test_for_command_invalid_var_must_be_name() {
     let mut p = make_parser("for 123var in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(BadIdent(String::from("123var"), src(4, 1, 5))),
+        Err(BadIdent(String::from("123var"), src(4, 1, 5)).into()),
         p.for_command()
     );
     let mut p = make_parser("for 'var' in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(Unexpected(Token::SingleQuote, src(4, 1, 5))),
+        Err(Unexpected(Token::SingleQuote, src(4, 1, 5)).into()),
         p.for_command()
     );
     let mut p = make_parser("for \"var\" in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(Unexpected(Token::DoubleQuote, src(4, 1, 5))),
+        Err(Unexpected(Token::DoubleQuote, src(4, 1, 5)).into()),
         p.for_command()
     );
     let mut p = make_parser("for var*% in one two three\ndo echo $var; done");
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(7, 1, 8))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(7, 1, 8)).into()),
         p.for_command()
     );
 }
@@ -247,7 +247,7 @@ fn test_for_command_invalid_concat() {
         Token::Literal(String::from("done")),
     ]);
     assert_eq!(
-        Err(Unexpected(Token::Literal(String::from("fo")), src(0, 1, 1))),
+        Err(Unexpected(Token::Literal(String::from("fo")), src(0, 1, 1)).into()),
         p.for_command()
     );
 
@@ -275,7 +275,7 @@ fn test_for_command_invalid_concat() {
         Token::Literal(String::from("done")),
     ]);
     assert_eq!(
-        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9))),
+        Err(IncompleteCmd("for", src(0, 1, 1), "in", src(8, 1, 9)).into()),
         p.for_command()
     );
 }

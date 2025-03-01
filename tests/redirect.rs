@@ -3,7 +3,7 @@ use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -94,7 +94,7 @@ fn test_redirect_valid_dst_fd_can_have_escaped_numerics() {
 #[test]
 fn test_redirect_invalid_dup_if_dst_fd_is_definitely_non_numeric() {
     assert_eq!(
-        Err(BadFd(src(2, 1, 3), src(12, 1, 13))),
+        Err(BadFd(src(2, 1, 3), src(12, 1, 13)).into()),
         make_parser(">&123$$'foo'").redirect()
     );
 }
@@ -123,7 +123,7 @@ fn test_redirect_valid_dup_return_redirect_if_dst_fd_is_possibly_numeric() {
 #[test]
 fn test_redirect_invalid_close_without_whitespace() {
     assert_eq!(
-        Err(BadFd(src(2, 1, 3), src(7, 1, 8))),
+        Err(BadFd(src(2, 1, 3), src(7, 1, 8)).into()),
         make_parser(">&-asdf").redirect()
     );
 }
@@ -131,7 +131,7 @@ fn test_redirect_invalid_close_without_whitespace() {
 #[test]
 fn test_redirect_invalid_close_with_whitespace() {
     assert_eq!(
-        Err(BadFd(src(9, 1, 10), src(14, 1, 15))),
+        Err(BadFd(src(9, 1, 10), src(14, 1, 15)).into()),
         make_parser("<&       -asdf").redirect()
     );
 }
@@ -273,15 +273,15 @@ fn test_redirect_list_valid() {
 #[test]
 fn test_redirect_list_rejects_non_fd_words() {
     assert_eq!(
-        Err(BadFd(src(16, 1, 17), src(19, 1, 20))),
+        Err(BadFd(src(16, 1, 17), src(19, 1, 20)).into()),
         make_parser("1>>out <in 2>&- abc").redirect_list()
     );
     assert_eq!(
-        Err(BadFd(src(7, 1, 8), src(10, 1, 11))),
+        Err(BadFd(src(7, 1, 8), src(10, 1, 11)).into()),
         make_parser("1>>out abc<in 2>&-").redirect_list()
     );
     assert_eq!(
-        Err(BadFd(src(7, 1, 8), src(10, 1, 11))),
+        Err(BadFd(src(7, 1, 8), src(10, 1, 11)).into()),
         make_parser("1>>out abc <in 2>&-").redirect_list()
     );
 }

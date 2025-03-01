@@ -1,6 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -186,17 +186,17 @@ fn test_case_command_valid_branch_with_no_command() {
 fn test_case_command_invalid_missing_keyword() {
     let mut p = make_parser("foo in foo) echo foo;; bar) echo bar;; esac");
     assert_eq!(
-        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1))),
+        Err(Unexpected(Token::Name(String::from("foo")), src(0, 1, 1)).into()),
         p.case_command()
     );
     let mut p = make_parser("case foo foo) echo foo;; bar) echo bar;; esac");
     assert_eq!(
-        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10))),
+        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10)).into()),
         p.case_command()
     );
     let mut p = make_parser("case foo in foo) echo foo;; bar) echo bar;;");
     assert_eq!(
-        Err(IncompleteCmd("case", src(0, 1, 1), "esac", src(43, 1, 44))),
+        Err(IncompleteCmd("case", src(0, 1, 1), "esac", src(43, 1, 44)).into()),
         p.case_command()
     );
 }
@@ -205,7 +205,7 @@ fn test_case_command_invalid_missing_keyword() {
 fn test_case_command_invalid_missing_word() {
     let mut p = make_parser("case in foo) echo foo;; bar) echo bar;; esac");
     assert_eq!(
-        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(8, 1, 9))),
+        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(8, 1, 9)).into()),
         p.case_command()
     );
 }
@@ -215,35 +215,35 @@ fn test_case_command_invalid_quoted() {
     let cmds = [
         (
             "'case' foo in foo) echo foo;; bar) echo bar;; esac",
-            Unexpected(Token::SingleQuote, src(0, 1, 1)),
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
         (
             "case foo 'in' foo) echo foo;; bar) echo bar;; esac",
-            IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10)),
+            IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10)).into(),
         ),
         (
             "case foo in foo) echo foo;; bar')' echo bar;; esac",
-            Unexpected(Token::Name(String::from("echo")), src(35, 1, 36)),
+            Unexpected(Token::Name(String::from("echo")), src(35, 1, 36)).into(),
         ),
         (
             "case foo in foo) echo foo;; bar) echo bar;; 'esac'",
-            IncompleteCmd("case", src(0, 1, 1), "esac", src(50, 1, 51)),
+            IncompleteCmd("case", src(0, 1, 1), "esac", src(50, 1, 51)).into(),
         ),
         (
             "\"case\" foo in foo) echo foo;; bar) echo bar;; esac",
-            Unexpected(Token::DoubleQuote, src(0, 1, 1)),
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
         ),
         (
             "case foo \"in\" foo) echo foo;; bar) echo bar;; esac",
-            IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10)),
+            IncompleteCmd("case", src(0, 1, 1), "in", src(9, 1, 10)).into(),
         ),
         (
             "case foo in foo) echo foo;; bar\")\" echo bar;; esac",
-            Unexpected(Token::Name(String::from("echo")), src(35, 1, 36)),
+            Unexpected(Token::Name(String::from("echo")), src(35, 1, 36)).into(),
         ),
         (
             "case foo in foo) echo foo;; bar) echo bar;; \"esac\"",
-            IncompleteCmd("case", src(0, 1, 1), "esac", src(50, 1, 51)),
+            IncompleteCmd("case", src(0, 1, 1), "esac", src(50, 1, 51)).into(),
         ),
     ];
 
@@ -266,7 +266,7 @@ fn test_case_command_invalid_quoted() {
 fn test_case_command_invalid_newline_after_case() {
     let mut p = make_parser("case\nfoo in foo) echo foo;; bar) echo bar;; esac");
     assert_eq!(
-        Err(Unexpected(Token::Newline, src(4, 1, 5))),
+        Err(Unexpected(Token::Newline, src(4, 1, 5)).into()),
         p.case_command()
     );
 }
@@ -293,7 +293,7 @@ fn test_case_command_invalid_concat() {
         Token::Literal(String::from("esac")),
     ]);
     assert_eq!(
-        Err(Unexpected(Token::Literal(String::from("ca")), src(0, 1, 1))),
+        Err(Unexpected(Token::Literal(String::from("ca")), src(0, 1, 1)).into()),
         p.case_command()
     );
 
@@ -317,7 +317,7 @@ fn test_case_command_invalid_concat() {
         Token::Literal(String::from("esac")),
     ]);
     assert_eq!(
-        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(12, 1, 13))),
+        Err(IncompleteCmd("case", src(0, 1, 1), "in", src(12, 1, 13)).into()),
         p.case_command()
     );
 
@@ -342,7 +342,7 @@ fn test_case_command_invalid_concat() {
         Token::Literal(String::from("ac")),
     ]);
     assert_eq!(
-        Err(IncompleteCmd("case", src(0, 1, 1), "esac", src(36, 4, 7))),
+        Err(IncompleteCmd("case", src(0, 1, 1), "esac", src(36, 4, 7)).into()),
         p.case_command()
     );
 }

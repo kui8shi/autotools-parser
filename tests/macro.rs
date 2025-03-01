@@ -132,6 +132,13 @@ define(GMP_VERSION,
 }
 
 #[test]
+fn test_macro_array_argument() {
+    let input = r#"AC_CHECK_DECLS([mmap], [], [], [#include <sys/mman.h>])"#;
+    let mut p = make_parser(input);
+    dbg!(p.complete_command().unwrap());
+}
+
+#[test]
 fn test_macro_t() {
     let input =
         r#"GMP_DEFINE_RAW("define_not_for_expansion(\`HAVE_DOUBLE_IEEE_BIG_ENDIAN')", POST)"#;

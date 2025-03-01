@@ -2,7 +2,7 @@
 use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::parse::ParseError::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;
@@ -32,7 +32,7 @@ fn test_word_single_quote_valid_does_not_quote_single_quotes() {
 #[test]
 fn test_word_single_quote_invalid_missing_close_quote() {
     assert_eq!(
-        Err(Unmatched(Token::SingleQuote, src(0, 1, 1))),
+        Err(Unmatched(Token::SingleQuote, src(0, 1, 1)).into()),
         make_parser("'hello").word()
     );
 }
@@ -161,11 +161,11 @@ fn test_word_double_quote_valid_slash_remains_literal_in_general_case() {
 #[test]
 fn test_word_double_quote_slash_invalid_missing_close_quote() {
     assert_eq!(
-        Err(Unmatched(Token::DoubleQuote, src(0, 1, 1))),
+        Err(Unmatched(Token::DoubleQuote, src(0, 1, 1)).into()),
         make_parser("\"hello").word()
     );
     assert_eq!(
-        Err(Unmatched(Token::DoubleQuote, src(0, 1, 1))),
+        Err(Unmatched(Token::DoubleQuote, src(0, 1, 1)).into()),
         make_parser("\"hello\\\"").word()
     );
 }
