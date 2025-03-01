@@ -3,6 +3,7 @@
 // FIXME: consider parsing out array index syntax? (e.g. ${array[some index]}
 // FIXME: arithmetic substitutions don't currently support param/comand substitutions
 
+use std::backtrace::{Backtrace, BacktraceStatus};
 use std::convert::From;
 use std::error::Error;
 use std::fmt;
@@ -39,6 +40,9 @@ const WHILE: &str = "while";
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
 pub type DefaultParser<I> = Parser<I, builder::StringBuilder>;
+
+/// A parser which will use a minimal set of AST builder implementation.
+pub type MinimalParser<I> = Parser<I, builder::MinimalBuilder<String>>;
 
 /// A specialized `Result` type for parsing shell commands.
 pub type ParseResult<T, E> = Result<T, ParseError<E>>;
@@ -97,9 +101,50 @@ impl SourcePos {
     }
 }
 
+/// Wrapper type of `ParseErrorKind` to manage backtrace.
+#[derive(Debug)]
+pub struct ParseError<T> {
+    /// Internal error field.
+    pub kind: ParseErrorKind<T>,
+    /// Take backtrace when the error happened.
+    backtrace: Backtrace,
+}
+
+impl<T> ParseError<T> {
+    /// Create a new ParseError from the error kind and captured backtrace.
+    pub fn new(kind: ParseErrorKind<T>) -> Self {
+        ParseError {
+            kind,
+            backtrace: Backtrace::capture(),
+        }
+    }
+
+    /// Return reference of backtrace.
+    pub fn backtrace(&self) -> &Backtrace {
+        &self.backtrace
+    }
+}
+
+impl<T> From<ParseErrorKind<T>> for ParseError<T> {
+    fn from(value: ParseErrorKind<T>) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<T> PartialEq for ParseError<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+use ParseErrorKind::*;
+
 /// The error type which is returned from parsing shell commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseError<T> {
+pub enum ParseErrorKind<T> {
     /// Encountered a word that could not be interpreted as a valid file descriptor.
     /// Stores the start and end position of the invalid word.
     BadFd(SourcePos, SourcePos),
@@ -123,64 +168,75 @@ pub enum ParseError<T> {
     Custom(T),
 }
 
-impl<T: Error> Error for ParseError<T> {
-    // FIXME(breaking): change this to be `source`, breaking because it
-    // would require a new 'static bound on T
-    fn cause(&self) -> Option<&dyn Error> {
-        match *self {
-            ParseError::BadFd(..)
-            | ParseError::BadIdent(..)
-            | ParseError::BadSubst(..)
-            | ParseError::Unmatched(..)
-            | ParseError::IncompleteCmd(..)
-            | ParseError::Unexpected(..)
-            | ParseError::UnexpectedEOF => None,
-            ParseError::Custom(ref e) => Some(e),
+impl<T: Error + 'static> Error for ParseError<T> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match &self.kind {
+            Custom(e) => Some(e),
+            _ => None,
         }
     }
+    // FIXME(breaking): change this to be `source`, breaking because it
+    // would require a new 'static bound on T
+    // fn cause(&self) -> Option<&dyn Error> {
+    //     match *self.kind {
+    //         ParseErrorKind::BadFd(..)
+    //         | ParseErrorKind::BadIdent(..)
+    //         | ParseErrorKind::BadSubst(..)
+    //         | ParseErrorKind::Unmatched(..)
+    //         | ParseErrorKind::IncompleteCmd(..)
+    //         | ParseErrorKind::Unexpected(..)
+    //         | ParseErrorKind::UnexpectedEOF => None,
+    //         ParseErrorKind::Custom(ref e) => Some(e),
+    //     }
+    // }
 }
 
 impl<T: fmt::Display> fmt::Display for ParseError<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            ParseError::BadFd(ref start, ref end) => write!(
+        match &self.kind {
+            BadFd(ref start, ref end) => write!(
                 fmt,
                 "file descriptor found between lines {} - {} cannot possibly be a valid",
                 start, end
             ),
-            ParseError::BadIdent(ref id, pos) => {
+            BadIdent(ref id, pos) => {
                 write!(fmt, "not a valid identifier {}: {}", pos, id)
             }
-            ParseError::BadSubst(ref t, pos) => {
+            BadSubst(ref t, pos) => {
                 write!(fmt, "bad substitution {}: invalid token: {}", pos, t)
             }
-            ParseError::Unmatched(ref t, pos) => {
+            Unmatched(ref t, pos) => {
                 write!(fmt, "unmatched `{}` starting on line {}", t, pos)
             }
 
-            ParseError::IncompleteCmd(c, start, kw, kw_pos) => write!(
+            IncompleteCmd(c, start, kw, kw_pos) => write!(
                 fmt,
                 "did not find `{}` keyword on line {}, in `{}` command which starts on line {}",
                 kw, kw_pos, c, start
             ),
 
             // When printing unexpected newlines, print \n instead to avoid confusingly formatted messages
-            ParseError::Unexpected(Newline, pos) => {
+            Unexpected(Newline, pos) => {
                 write!(fmt, "found unexpected token on line {}: \\n", pos)
             }
-            ParseError::Unexpected(ref t, pos) => {
+            Unexpected(ref t, pos) => {
                 write!(fmt, "found unexpected token on line {}: {}", pos, t)
             }
 
-            ParseError::UnexpectedEOF => fmt.write_str("unexpected end of input"),
-            ParseError::Custom(ref e) => write!(fmt, "{}", e),
+            UnexpectedEOF => fmt.write_str("unexpected end of input"),
+            Custom(ref e) => write!(fmt, "{}", e),
+        }?;
+        if self.backtrace().status() == BacktraceStatus::Captured {
+            write!(fmt, "\nBacktrace:\n{}", self.backtrace())
+        } else {
+            Ok(())
         }
     }
 }
 
 impl<T> From<T> for ParseError<T> {
     fn from(err: T) -> Self {
-        ParseError::Custom(err)
+        ParseError::new(Custom(err))
     }
 }
 
@@ -446,9 +502,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     #[inline]
     fn make_unexpected_err(&mut self) -> ParseError<B::Error> {
         let pos = self.iter.pos();
-        self.iter.next().map_or(ParseError::UnexpectedEOF, |t| {
-            ParseError::Unexpected(t, pos)
-        })
+        self.iter
+            .next()
+            .map_or(ParseError::new(UnexpectedEOF), |t| {
+                ParseError::new(Unexpected(t, pos))
+            })
     }
 
     /// Creates a new Parser from a Token iterator and provided AST builder.
@@ -493,28 +551,33 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         pre_cmd_comments: Vec<builder::Newline>,
     ) -> ParseResult<B::Command, B::Error> {
         let (quote_open, quote_close) = self.get_quotes();
-        let mut in_quote = 0;
-        if Some(&quote_open) == self.iter.peek() {
-            in_quote += 1;
+        let in_quote = if Some(&quote_open) == self.iter.peek() {
             self.iter.next();
-        }
+            // @kui8shi
+            // Since `pre_cmd_comments` do not include linebreaks after opening quote character,
+            // We need to sweep newlines again.
+            self.linebreak();
+            true
+        } else {
+            false
+        };
         let cmd = self.and_or_list()?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
             Semi => {
-                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                if in_quote && Some(&quote_close) == self.iter.peek() {
                     self.iter.next();
                 }
                 (builder::SeparatorKind::Semi, self.newline())
             },
             Amp  => {
-                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                if in_quote && Some(&quote_close) == self.iter.peek() {
                     self.iter.next();
                 }
                 (builder::SeparatorKind::Amp , self.newline())
             };
             _ => {
-                if in_quote > 0 && Some(&quote_close) == self.iter.peek() {
+                if in_quote && Some(&quote_close) == self.iter.peek() {
                     self.iter.next();
                 }
                 match self.newline() {
@@ -692,7 +755,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let start_pos = self.iter.pos();
             match self.redirect()? {
                 Some(Ok(io)) => list.push(io),
-                Some(Err(_)) => return Err(ParseError::BadFd(start_pos, self.iter.pos())),
+                Some(Err(_)) => return Err(ParseError::new(BadFd(start_pos, self.iter.pos()))),
                 None => break,
             }
         }
@@ -815,7 +878,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     if is_numeric {
                         path
                     } else {
-                        return Err(ParseError::BadFd(path_start_pos, self.iter.pos()));
+                        return Err(ParseError::new(BadFd(path_start_pos, self.iter.pos())));
                     }
                 };
                 $parser.builder.word(path)?
@@ -872,7 +935,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         macro_rules! try_map {
             ($result:expr) => {
-                $result.map_err(|e: iter::UnmatchedError| ParseError::Unmatched(e.0, e.1))?
+                $result.map_err(|e: iter::UnmatchedError| ParseError::new(Unmatched(e.0, e.1)))?
             };
         }
 
@@ -1216,7 +1279,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             if let Some(ref token) = self.iter.peek().cloned() {
                 // @kui8shi
                 // Skip the outermost quoting tokens.
-                // By default, the quoting tokens are '[' and ']' in autoconf language.
+                // The quoting tokens are special to programs using m4.
+                // For example, '[' and ']' are the quoting tokens in autoconf language.
                 if token == &quote_open {
                     in_quote += 1;
                     if in_quote == 1 {
@@ -1229,6 +1293,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.iter.next();
                         continue;
                     } else if in_quote < 0 {
+                        // @kui8shi
+                        // We found an unmatched quote.
+                        // This break is important because we may encounter quotes that
+                        // surround outer parsing unit such as command, command group, etc...
                         break;
                     }
                 } else if let Name(_) = token {
@@ -1278,7 +1346,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 SingleQuote => {
                     let mut buf = String::new();
                     for t in self.iter.single_quoted(start_pos) {
-                        buf.push_str(t.map_err(|e| ParseError::Unmatched(e.0, e.1))?.as_str())
+                        buf.push_str(
+                            t.map_err(|e| ParseError::new(Unmatched(e.0, e.1)))?
+                                .as_str(),
+                        )
                     }
 
                     SingleQuoted(buf)
@@ -1326,7 +1397,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     ///
     /// `delim` argument structure is Option<(open token, close token)>. The close
     /// token indicates when to stop parsing the word, while the open token will be
-    /// used to construct a `ParseError::Unmatched` error.
+    /// used to construct a `ParseError::new(Unmatched)` error.
     fn word_interpolated_raw(
         &mut self,
         delim: Option<(Token, Token)>,
@@ -1394,7 +1465,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
                 Some(t) => buf.push_str(t.as_str()),
                 None => match delim_open {
-                    Some(delim) => return Err(ParseError::Unmatched(delim, start_pos)),
+                    Some(delim) => return Err(ParseError::new(Unmatched(delim, start_pos))),
                     None => break,
                 },
             }
@@ -1431,7 +1502,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let tok_iter = self
             .iter
             .token_iter_from_backticked_with_removed_backslashes(backtick_pos)
-            .map_err(|e| ParseError::Unmatched(e.0, e.1))?;
+            .map_err(|e| ParseError::new(Unmatched(e.0, e.1)))?;
 
         let mut tok_backup = TokenIterWrapper::Buffered(tok_iter);
 
@@ -1473,8 +1544,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 _ => Ok(SimpleWordKind::Literal(Dollar.to_string())),
             },
 
-            Some(t) => Err(ParseError::Unexpected(t, start_pos)),
-            None => Err(ParseError::UnexpectedEOF),
+            Some(t) => Err(ParseError::new(Unexpected(t, start_pos))),
+            None => Err(ParseError::new(UnexpectedEOF)),
         }
     }
 
@@ -1581,7 +1652,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         eat_maybe!(self, {
             CurlyClose => {};
-            _ => { return Err(ParseError::Unmatched(CurlyOpen, curly_open_pos)); }
+            _ => { return Err(ParseError::new(Unmatched(CurlyOpen, curly_open_pos))); }
         });
 
         if words.is_empty() {
@@ -1618,8 +1689,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
             Some(CurlyClose) => return Ok(SimpleWordKind::Param(param)),
 
-            Some(t) => return Err(ParseError::BadSubst(t, op_pos)),
-            None => return Err(ParseError::Unmatched(CurlyOpen, curly_open_pos)),
+            Some(t) => return Err(ParseError::new(BadSubst(t, op_pos))),
+            None => return Err(ParseError::new(Unmatched(CurlyOpen, curly_open_pos))),
         };
 
         let word = self.parameter_substitution_word_raw(curly_open_pos)?;
@@ -1766,11 +1837,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             Some(Name(n)) => Parameter::Var(n),
             Some(Literal(s)) => match u32::from_str(&s) {
                 Ok(n) => Parameter::Positional(n),
-                Err(_) => return Err(ParseError::BadSubst(Literal(s), start_pos)),
+                Err(_) => return Err(ParseError::new(BadSubst(Literal(s), start_pos))),
             },
 
-            Some(t) => return Err(ParseError::BadSubst(t, start_pos)),
-            None => return Err(ParseError::UnexpectedEOF),
+            Some(t) => return Err(ParseError::new(BadSubst(t, start_pos))),
+            None => return Err(ParseError::new(UnexpectedEOF)),
         };
 
         Ok(param)
@@ -1788,7 +1859,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             ..Default::default()
         })?;
         self.reserved_word(&[DONE])
-            .map_err(|()| ParseError::IncompleteCmd(DO, start_pos, DONE, self.iter.pos()))?;
+            .map_err(|()| ParseError::new(IncompleteCmd(DO, start_pos, DONE, self.iter.pos())))?;
         Ok(result)
     }
 
@@ -1804,7 +1875,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             ..Default::default()
         })?;
         self.reserved_token(&[CurlyClose])
-            .map_err(|_| ParseError::Unmatched(CurlyOpen, start_pos))?;
+            .map_err(|_| ParseError::new(Unmatched(CurlyOpen, start_pos)))?;
         Ok(cmds)
     }
 
@@ -1836,7 +1907,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 Ok(body)
             }
             Some(_) => Err(self.make_unexpected_err()),
-            None => Err(ParseError::Unmatched(ParenOpen, start_pos)),
+            None => Err(ParseError::new(Unmatched(ParenOpen, start_pos))),
         }
     }
 
@@ -1953,12 +2024,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     body: self.do_group()?,
                 },
             )),
-            None => Err(ParseError::IncompleteCmd(
+            None => Err(ParseError::new(IncompleteCmd(
                 WHILE,
                 start_pos,
                 DO,
                 self.iter.pos(),
-            )),
+            ))),
         }
     }
 
@@ -1974,13 +2045,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         macro_rules! missing_fi {
             () => {
-                |_| ParseError::IncompleteCmd(IF, start_pos, FI, self.iter.pos())
+                |_| ParseError::new(IncompleteCmd(IF, start_pos, FI, self.iter.pos()))
             };
         }
 
         macro_rules! missing_then {
             () => {
-                |_| ParseError::IncompleteCmd(IF, start_pos, THEN, self.iter.pos())
+                |_| ParseError::new(IncompleteCmd(IF, start_pos, THEN, self.iter.pos()))
             };
         }
 
@@ -2044,7 +2115,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let var_pos = self.iter.pos();
         let var = match self.iter.next() {
             Some(Name(v)) => v,
-            Some(Literal(s)) => return Err(ParseError::BadIdent(s, var_pos)),
+            Some(Literal(s)) => return Err(ParseError::new(BadIdent(s, var_pos))),
             _ => unreachable!(),
         };
 
@@ -2088,24 +2159,24 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             // If we didn't find an `in` keyword, and we havent hit the body
             // (a `do` keyword), then we can reasonably say the script has
             // words without an `in` keyword.
-            return Err(ParseError::IncompleteCmd(
+            return Err(ParseError::new(IncompleteCmd(
                 FOR,
                 start_pos,
                 IN,
                 self.iter.pos(),
-            ));
+            )));
         } else {
             // `for name \n* do_group`
             (None, post_var_comments)
         };
 
         if self.peek_reserved_word(&[DO]).is_none() {
-            return Err(ParseError::IncompleteCmd(
+            return Err(ParseError::new(IncompleteCmd(
                 FOR,
                 start_pos,
                 DO,
                 self.iter.pos(),
-            ));
+            )));
         }
 
         let body = self.do_group()?;
@@ -2130,13 +2201,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         macro_rules! missing_in {
             () => {
-                |_| ParseError::IncompleteCmd(CASE, start_pos, IN, self.iter.pos())
+                |_| ParseError::new(IncompleteCmd(CASE, start_pos, IN, self.iter.pos()))
             };
         }
 
         macro_rules! missing_esac {
             () => {
-                |_| ParseError::IncompleteCmd(CASE, start_pos, ESAC, self.iter.pos())
+                |_| ParseError::new(IncompleteCmd(CASE, start_pos, ESAC, self.iter.pos()))
             };
         }
 
@@ -2322,31 +2393,103 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 } else {
                     arg_types[idx_arg_type]
                 };
+                {
+                    println!("==============================================");
+                    let mut p = self.iter.multipeek();
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                }
+                dbg!(&arg_type, found_macro, i);
                 let arg = match arg_type {
                     M4Type::Lit => {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
                     }
-                    M4Type::Arr => M4Argument::Array(vec![self.word()?.unwrap()]),
+                    M4Type::Prog => {
+                        self.skip_macro_arg()?;
+                        M4Argument::Program(peeked_arg.clone())
+                    }
+                    M4Type::Arr => {
+                        // @kui8shi
+                        // When we have an array like '[word1 word2]',
+                        // we will call self.word() twice.
+                        // If outer quotes, they are unwrapped for consistentency between the multiple calls.
+                        let (quote_open, quote_close) = self.get_quotes();
+                        let mut arr = Vec::new();
+                        let end = if self.iter.peek() == Some(&quote_open) {
+                            self.iter.next();
+                            // array should end with closing quote char
+                            quote_close.clone()
+                        } else if i < num_args - 1 {
+                            // array should end with comma
+                            Comma
+                        } else {
+                            // array should end with ')'
+                            ParenClose
+                        };
+                        while self.iter.peek() != Some(&end) {
+                            // @kui8shi
+                            // For brevity of the implementation, we include any tokens
+                            // that is taken to be an end of shell word
+                            // to the delimiters of the array.
+                            if let Some(word) = self
+                                .word_preserve_trailing_whitespace_raw_with_delim(Some(
+                                    end.clone(),
+                                ))?
+                            {
+                                // we ignore empty words (: None).
+                                arr.push(self.builder.word(word)?);
+                            }
+                            dbg!("next array token", self.iter.peek());
+                        }
+                        if self.iter.peek() == Some(&quote_close) {
+                            self.iter.next();
+                        }
+                        M4Argument::Array(arr)
+                    }
                     M4Type::Cmds => {
-                        let cmds = self
-                            .command_group(CommandGroupDelimiters {
-                                reserved_tokens: &[ParenClose, Comma],
-                                ..Default::default()
-                            })?
-                            .commands;
-                        M4Argument::Command(cmds)
+                        if let Some(&Comma | &ParenClose) = self.iter.peek() {
+                            // we do not found any effective commands.
+                            // empty arguments like '[]' were already skipped by self.linebreak().
+                            M4Argument::Command(Vec::new())
+                        } else {
+                            let cmds = self
+                                .command_group(CommandGroupDelimiters {
+                                    reserved_tokens: &[ParenClose, Comma],
+                                    ..Default::default()
+                                })?
+                                .commands;
+                            M4Argument::Command(cmds)
+                        }
                     }
                     _ => {
                         eprintln!("Unexpected M4Type for arguments");
                         return Err(self.make_unexpected_err());
                     }
                 };
+                {
+                    println!("----------------------------------------------");
+                    let mut p = self.iter.multipeek();
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                }
                 self.linebreak();
                 if i < num_args - 1 {
                     eat!(self, { Comma => {} });
                 } else {
                     eat!(self, { ParenClose => {} });
+                }
+                {
+                    println!("----------------------------------------------");
+                    let mut p = self.iter.multipeek();
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
+                    dbg!(p.peek_next());
                 }
                 idx_arg_type += 1;
                 parsed_args.push(arg);
@@ -2408,7 +2551,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         in_quote -= 1;
                     }
                 }
-                None => return Err(ParseError::UnexpectedEOF),
+                None => return Err(ParseError::new(UnexpectedEOF)),
             }
             // consume token
             self.iter.next();
@@ -2461,7 +2604,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     }
                     buf.push_str(tok.as_str());
                 }
-                None => return Err(ParseError::UnexpectedEOF),
+                None => return Err(ParseError::new(UnexpectedEOF)),
             }
         }
     }
@@ -2533,7 +2676,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let ident_pos = self.iter.pos();
         let name = match self.iter.next() {
             Some(Name(n)) => n,
-            Some(Literal(s)) => return Err(ParseError::BadIdent(s, ident_pos)),
+            Some(Literal(s)) => return Err(ParseError::new(BadIdent(s, ident_pos))),
             _ => unreachable!(),
         };
 
