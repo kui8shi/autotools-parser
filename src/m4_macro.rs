@@ -29,7 +29,7 @@ pub enum M4Argument<W, C> {
     /// array of words
     Array(Vec<W>),
     /// program string
-    Prog(String),
+    Program(String),
     /// list of commands.
     Command(Vec<C>),
     /// list of words
@@ -95,6 +95,7 @@ lazy_static::lazy_static! {
         // Default prefix
         ("AM_PREFIX_DEFAULT", (vec![Lit], Cmds, None)),
         ("AM_PREFIX_PROGRAM", (vec![Lit], Cmds, None)),
+        ("AM_CONDITIONAL", (vec![Lit, Cmds], Cmds, None)),
         // Default includes
         ("AC_INCLUDES_DEFAULT", (vec![Prog], Prog, None)),
         ("AC_CHECK_INCLUDES_DEFAULT", (vec![], Cmds, None)),

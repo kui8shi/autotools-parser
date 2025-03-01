@@ -1,3 +1,4 @@
+//! Defines minimal representations of the shell source.
 use super::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
 use crate::m4_macro::M4Macro;
 
@@ -5,7 +6,7 @@ use crate::m4_macro::M4Macro;
 ///
 /// Generic over the representation of a literals, parameters, and substitutions.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleWord<L, C> {
+pub enum WordFragment<L, W, C> {
     /// A non-special literal word.
     Literal(L),
     /// A list of simple words concatenated by double quotes.
@@ -17,7 +18,7 @@ pub enum SimpleWord<L, C> {
     /// Access of a value inside a parameter, e.g. `$foo` or `$$`.
     Param(Parameter<L>),
     /// A parameter substitution, e.g. `${param-word}`.
-    Subst(Box<ParameterSubstitution<Parameter<L>, Self, C, Arithmetic<L>>>),
+    Subst(Box<ParameterSubstitution<Parameter<L>, W, C, Arithmetic<L>>>),
     /// Represents `*`, useful for handling pattern expansions.
     Star,
     /// Represents `?`, useful for handling pattern expansions.
@@ -31,11 +32,19 @@ pub enum SimpleWord<L, C> {
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
     /// m4 macro call to be expanded to a literal
-    Macro(M4Macro<Self, C>),
+    Macro(M4Macro<W, C>),
 }
 
-/// A collection of simple words, wrapping a vector of `SimpleWord`.
-pub type Word<T, C> = Vec<SimpleWord<T, C>>;
+/// A collection of simple words, wrapping a vector of `SimpleWord`
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Word<T, C> {
+    /// A word composed of multiple fragments concatenated together
+    Concat(Vec<WordFragment<T, Self, C>>),
+    /// A word containing exactly one fragment
+    Single(WordFragment<T, Self, C>),
+    /// A word which is equivalent to an empty strng, such as '', "".
+    Empty,
+}
 
 /// Operators used to compare words or check file properties.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -72,8 +81,10 @@ pub enum Condition<W, C> {
     And(Box<Self>, Box<Self>),
     /// Logical OR of two conditions.
     Or(Box<Self>, Box<Self>),
-    /// Evaluates a word as a condition.
-    Eval(Box<C>),
+    /// Evaluates the commands first, then treat the result output as a condition.
+    Eval(Vec<C>),
+    /// Evaluates the commands, then take the return code as a boolean condition.
+    ReturnZero(Box<C>),
 }
 
 /// A pairing of a condition (guard) with a block of commands (body).
@@ -131,7 +142,12 @@ pub enum CompoundCommand<W, C> {
     /// A command that is executed in the background.
     Background(Box<C>),
     /// A function declaration
-    FunctionDef { name: String, body: Box<C> },
+    FunctionDef {
+        /// The function name
+        name: String,
+        /// Commands in the body
+        body: Box<C>
+    },
     /// A macro call utilizing M4 macros.
     Macro(M4Macro<W, C>),
 }

@@ -813,15 +813,15 @@ where
     }
 }
 
-pub(crate) fn compress<W, C>(word: ComplexWordKind<W, C>) -> ComplexWordKind<W, C> {
+pub(crate) fn compress<C, M>(word: ComplexWordKind<C, M>) -> ComplexWordKind<C, M> {
     use crate::ast::builder::ComplexWordKind::*;
     use crate::ast::builder::SimpleWordKind::*;
     use crate::ast::builder::WordKind::*;
 
-    fn coalesce_simple<W, C>(
-        a: SimpleWordKind<W, C>,
-        b: SimpleWordKind<W, C>,
-    ) -> CoalesceResult<SimpleWordKind<W, C>> {
+    fn coalesce_simple<C, M>(
+        a: SimpleWordKind<C, M>,
+        b: SimpleWordKind<C, M>,
+    ) -> CoalesceResult<SimpleWordKind<C, M>> {
         match (a, b) {
             (Literal(mut a), Literal(b)) => {
                 a.push_str(&b);
@@ -831,7 +831,7 @@ pub(crate) fn compress<W, C>(word: ComplexWordKind<W, C>) -> ComplexWordKind<W, 
         }
     }
 
-    fn coalesce_word<W, C>(a: WordKind<W, C>, b: WordKind<W, C>) -> CoalesceResult<WordKind<W, C>> {
+    fn coalesce_word<C, M>(a: WordKind<C, M>, b: WordKind<C, M>) -> CoalesceResult<WordKind<C, M>> {
         match (a, b) {
             (Simple(a), Simple(b)) => coalesce_simple(a, b)
                 .map(Simple)

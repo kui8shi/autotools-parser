@@ -20,6 +20,7 @@ mod minimal_builder;
 
 pub use self::default_builder::*;
 pub use self::empty_builder::EmptyBuilder;
+pub use self::minimal_builder::MinimalBuilder;
 
 /// An indicator to the builder of how complete commands are separated.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

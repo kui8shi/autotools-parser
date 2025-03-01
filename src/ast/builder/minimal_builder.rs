@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-
+use std::fmt::Debug;
 use void::Void;
 
 use super::{
@@ -9,21 +9,24 @@ use super::{
 use crate::{
     ast::{
         builder::compress,
-        minimal::{Command, CompoundCommand, Condition, GuardBodyPair, Operator, SimpleWord, Word},
+        minimal::{
+            Command, CompoundCommand, Condition, GuardBodyPair, Operator, Word, WordFragment,
+        },
         AndOr, Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
-        PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar
+        PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
     },
     m4_macro::{M4Argument, M4Macro},
 };
 
+/// TODO: add doc comments
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct MinimalBuilder<T> {
     phantom_data: PhantomData<T>,
 }
 
 impl<T> Builder for MinimalBuilder<T>
 where
-    T: Into<String> + Clone,
-    T: From<String>,
+    T: Into<String> + From<String> + Clone + Debug,
 {
     type Command = Command<T>;
     type CommandList = Self::Command;
@@ -108,7 +111,7 @@ where
             .map(|roev| match roev {
                 RedirectOrEnvVar::Redirect(red) => panic!(), // don't allow redirects before cmd
                 RedirectOrEnvVar::EnvVar(k, v) => {
-                    Command::Assignment(k.into(), v.unwrap_or(Vec::new()))
+                    Command::Assignment(k.into(), v.unwrap_or(Word::Empty))
                 }
             })
             .collect::<Vec<Self::Command>>();
@@ -419,19 +422,19 @@ where
             use crate::ast::builder::ParameterSubstitutionKind::*;
 
             let simple = match kind {
-                SimpleWordKind::Literal(s) => SimpleWord::Literal(s.into()),
-                SimpleWordKind::Escaped(s) => SimpleWord::Escaped(s.into()),
-                SimpleWordKind::Param(p) => SimpleWord::Param(map_param(p)),
-                SimpleWordKind::Star => SimpleWord::Star,
-                SimpleWordKind::Question => SimpleWord::Question,
-                SimpleWordKind::SquareOpen => SimpleWord::SquareOpen,
-                SimpleWordKind::SquareClose => SimpleWord::SquareClose,
-                SimpleWordKind::Tilde => SimpleWord::Tilde,
-                SimpleWordKind::Colon => SimpleWord::Colon,
-                SimpleWordKind::Macro(_, m) => SimpleWord::Macro(m),
+                SimpleWordKind::Literal(s) => WordFragment::Literal(s.into()),
+                SimpleWordKind::Escaped(s) => WordFragment::Escaped(s.into()),
+                SimpleWordKind::Param(p) => WordFragment::Param(map_param(p)),
+                SimpleWordKind::Star => WordFragment::Star,
+                SimpleWordKind::Question => WordFragment::Question,
+                SimpleWordKind::SquareOpen => WordFragment::SquareOpen,
+                SimpleWordKind::SquareClose => WordFragment::SquareClose,
+                SimpleWordKind::Tilde => WordFragment::Tilde,
+                SimpleWordKind::Colon => WordFragment::Colon,
+                SimpleWordKind::Macro(_, m) => WordFragment::Macro(m),
 
                 SimpleWordKind::CommandSubst(c) => {
-                    SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
+                    WordFragment::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
                 }
 
                 SimpleWordKind::Subst(s) => {
@@ -463,7 +466,7 @@ where
                             ParameterSubstitution::RemoveLargestPrefix(map_param(p), map!(w))
                         }
                     };
-                    SimpleWord::Subst(Box::new(subst))
+                    WordFragment::Subst(Box::new(subst))
                 }
             };
             Ok(simple)
@@ -471,22 +474,29 @@ where
 
         let mut map_word = |kind| {
             let word = match kind {
-                WordKind::Simple(s) => vec![map_simple(s)?],
-                WordKind::SingleQuoted(s) => vec![SimpleWord::Literal(s.into())],
-                WordKind::DoubleQuoted(v) => v
-                    .into_iter()
-                    .map(&mut map_simple)
-                    .collect::<Result<Vec<_>, _>>()?,
+                WordKind::Simple(SimpleWordKind::Literal(s)) | WordKind::SingleQuoted(s)
+                    if s.is_empty() =>
+                {
+                    None // empty string
+                }
+                WordKind::Simple(s) => Some(map_simple(s)?),
+                WordKind::SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
+                WordKind::DoubleQuoted(mut v) => match v.len() {
+                    0 => None,                                // empty string
+                    1 => Some(map_simple(v.pop().unwrap())?), // like "foo", "${foo}"
+                    _ => Some(WordFragment::DoubleQuoted(
+                        v.into_iter()
+                            .map(&mut map_simple)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                },
             };
             Ok(word)
         };
 
         let word = match compress(kind) {
-            ComplexWordKind::Single(s) => Word(map_word(s)?),
-            ComplexWordKind::Concat(words) => Word(
-                // @kui8shi
-                // FIXME: It will miss word deliminators via double quotations
-                // E.g. Think of `"double quoted"  "double quoted after space"`.
+            ComplexWordKind::Single(s) => map_word(s)?.map_or(Word::Empty, |w| Word::Single(w)),
+            ComplexWordKind::Concat(words) => Word::Concat(
                 words
                     .into_iter()
                     .map(map_word)
@@ -517,9 +527,10 @@ where
     }
 }
 
-fn parse_condition<T, C>(words: Word<T, C>) -> Result<Operator<Word<T, C>>, Void>
+fn parse_condition<T, C>(words: &[Word<T, C>]) -> Result<Operator<Word<T, C>>, Void>
 where
     T: Into<String> + Clone,
+    Word<T, C>: Clone,
 {
     enum OperatorKind {
         Eq,
@@ -534,34 +545,36 @@ where
         File,
     }
 
-    let mut lhs = Word(Vec::new());
-    let mut rhs = Word(Vec::new());
+    let mut lhs = Word::Empty;
+    let mut rhs = Word::Empty;
     let mut operator_kind = None;
-    for word in words.0 {
+    for word in words {
         if operator_kind.is_none() {
-            if let SimpleWord::Literal(literal) = &word {
-                operator_kind = match literal.clone().into().as_str() {
-                    "!=" | "-ne" => Some(OperatorKind::Neq),
-                    "=" | "-eq" => Some(OperatorKind::Eq),
-                    "-ge" => Some(OperatorKind::Ge),
-                    "-gt" => Some(OperatorKind::Gt),
-                    "-le" => Some(OperatorKind::Le),
-                    "-lt" => Some(OperatorKind::Lt),
-                    "-z" => Some(OperatorKind::Empty),
-                    "-n" => Some(OperatorKind::NonEmpty),
-                    "-d" => Some(OperatorKind::Dir),
-                    "-f" | "-e" => Some(OperatorKind::File),
-                    _ => None,
-                };
-                if operator_kind.is_some() {
-                    continue;
+            if let Word::Single(w) = &word {
+                if let WordFragment::Literal(literal) = w {
+                    operator_kind = match literal.clone().into().as_str() {
+                        "!=" | "-ne" => Some(OperatorKind::Neq),
+                        "=" | "-eq" => Some(OperatorKind::Eq),
+                        "-ge" => Some(OperatorKind::Ge),
+                        "-gt" => Some(OperatorKind::Gt),
+                        "-le" => Some(OperatorKind::Le),
+                        "-lt" => Some(OperatorKind::Lt),
+                        "-z" => Some(OperatorKind::Empty),
+                        "-n" => Some(OperatorKind::NonEmpty),
+                        "-d" => Some(OperatorKind::Dir),
+                        "-f" | "-e" => Some(OperatorKind::File),
+                        _ => None,
+                    };
+                    if operator_kind.is_some() {
+                        continue;
+                    }
                 }
             }
             // before encountering an operator
             // and the word is not an operator
-            lhs.0.push(word);
+            lhs = word.clone();
         } else {
-            rhs.0.push(word);
+            rhs = word.clone();
         }
     }
     let operator = match operator_kind.unwrap() {
@@ -583,42 +596,39 @@ type MinimalWord<V> = Word<V, Command<V>>;
 
 fn make_condition<V>(cmd: Command<V>) -> Result<Condition<MinimalWord<V>, Command<V>>, Void>
 where
-    V: Into<String> + Clone,
+    V: Into<String> + Clone + Debug,
 {
-    match cmd {
-        Command::Cmd(mut words) => {
-            if words.len() == 1 {
-                match words.first().unwrap() {
-                    SimpleWord::Literal(v) if v.clone().into() == "test" => {
-                        words.pop();
-                        Ok(Condition::Cond(parse_condition(words)?))
+    match &cmd {
+        Command::Cmd(words) => {
+            let first_word = words.first().unwrap();
+            if let Word::Single(w) = first_word {
+                dbg!(&w);
+                match w {
+                    WordFragment::Literal(v) if v.clone().into() == "test" => {
+                        Some(Condition::Cond(parse_condition(&words[1..])?))
                     }
-                    SimpleWord::Literal(v) if v.clone().into() == "eval" => {
-                        words.remove(0);
-                        Ok(Condition::Eval(Box::new(Command::Cmd(words))))
+                    WordFragment::Literal(v) if v.clone().into() == "eval" => {
+                        Some(Condition::Eval(vec![Command::Cmd(words[1..].to_owned())]))
                     }
-                    SimpleWord::Subst(s) => match s.as_ref() {
-                        ParameterSubstitution::Command(cmds) if cmds.len() == 1 => {
-                            Ok(Condition::Eval(Box::new(cmds[1].to_owned())))
-                        }
-                        _ => panic!(),
+                    WordFragment::Subst(s) => match s.as_ref() {
+                        ParameterSubstitution::Command(cmds) => Some(Condition::Eval(cmds.clone())),
+                        _ => None,
                     },
-                    _ => panic!(),
+                    _ => None,
                 }
             } else {
-                Ok(Condition::Eval(Box::new(Command::Cmd(words))))
+                None
             }
         }
-        Command::Compound(CompoundCommand::And(first, second)) => Ok(Condition::And(
-            Box::new(first),
-            Box::new(make_condition(*second)?),
+        Command::Compound(CompoundCommand::And(first, second)) => Some(Condition::And(
+            Box::new(first.clone()),
+            Box::new(make_condition(*second.clone())?),
         )),
-        Command::Compound(CompoundCommand::Or(first, second)) => Ok(Condition::Or(
-            Box::new(first),
-            Box::new(make_condition(*second)?),
+        Command::Compound(CompoundCommand::Or(first, second)) => Some(Condition::Or(
+            Box::new(first.clone()),
+            Box::new(make_condition(*second.clone())?),
         )),
-        _ => {
-            panic!()
-        }
+        _ => None,
     }
+    .map_or(Ok(Condition::ReturnZero(Box::new(cmd))), |cond| Ok(cond))
 }
