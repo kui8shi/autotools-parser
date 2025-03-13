@@ -249,10 +249,7 @@ fn test_function_declaration_invalid_missing_space_after_name_no_parens() {
     );
     let mut p = make_parser("function name( echo body; )");
     assert_eq!(
-        Err(Unexpected(
-            Token::Name(String::from("echo")),
-            src(15, 1, 16)
-        ).into()),
+        Err(Unexpected(Token::Name(String::from("echo")), src(15, 1, 16)).into()),
         p.function_declaration()
     );
 }

@@ -484,10 +484,7 @@ fn test_heredoc_invalid_unbalanced_quoting() {
 fn test_heredoc_invalid_shows_right_position_of_error() {
     let mut p = make_parser("cat <<EOF\nhello\n${invalid subst\nEOF");
     assert_eq!(
-        Err(BadSubst(
-            Token::Whitespace(String::from(" ")),
-            src(25, 3, 10)
-        ).into()),
+        Err(BadSubst(Token::Whitespace(String::from(" ")), src(25, 3, 10)).into()),
         p.complete_command()
     );
 }
@@ -496,10 +493,7 @@ fn test_heredoc_invalid_shows_right_position_of_error() {
 fn test_heredoc_invalid_shows_right_position_of_error_when_tabs_stripped() {
     let mut p = make_parser("cat <<-EOF\n\t\thello\n\t\t${invalid subst\n\t\t\tEOF");
     assert_eq!(
-        Err(BadSubst(
-            Token::Whitespace(String::from(" ")),
-            src(30, 3, 12)
-        ).into()),
+        Err(BadSubst(Token::Whitespace(String::from(" ")), src(30, 3, 12)).into()),
         p.complete_command()
     );
 }

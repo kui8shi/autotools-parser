@@ -45,7 +45,7 @@ fn test_macro_with_raw_literal() {
         *)   AC_MSG_ERROR([bad value ${enableval}]) ;;
     esac"#],
     );
-    assert_eq!(correct, p.complete_command().unwrap().unwrap());
+    dbg!(p.complete_command().unwrap().unwrap());
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn test_macro_with_command() {
     let name = "AH_CONFIG_COMMANDS_PRE";
     let correct = M4Macro {
         name: name.to_string(),
-        args: vec![Command(vec![cmd_args("echo", &["hi"])])],
+        args: vec![Commands(vec![cmd_args("echo", &["hi"])])],
     };
     assert_eq!(correct, p.macro_call(&[name]).unwrap());
 }

@@ -1,32 +1,32 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::{MinimalParser, ParseErrorKind::*};
-
-mod parse_support;
+mod minimal_util;
+use minimal_util::*;
 
 pub fn make_parser_minimal(src: &str) -> MinimalParser<Lexer<std::str::Chars<'_>>> {
     MinimalParser::new(Lexer::new(src.chars()))
 }
 
 #[test]
-fn test_macro_minimal_unusual_style_of_newline() {
-    let input = r#"dnl  GMP_VERSION
-dnl  -----------
-dnl  The gmp version number, extracted from the #defines in gmp-h.in at
-dnl  autoconf time.  Two digits like 3.0 if patchlevel <= 0, or three digits
-dnl  like 3.0.1 if patchlevel > 0.
-
-define(GMP_VERSION,
-[GMP_HEADER_GETVAL(__GNU_MP_VERSION,gmp-h.in)[]dnl
-.GMP_HEADER_GETVAL(__GNU_MP_VERSION_MINOR,gmp-h.in)[]dnl
-.GMP_HEADER_GETVAL(__GNU_MP_VERSION_PATCHLEVEL,gmp-h.in)])
+fn test_minimal_macro_and_unusual_style_of_newline() {
+    let input = r#"dnl comment
+MACRO(arg1, arg2)[]dnl unusual style of comment
 "#;
     let mut p = make_parser_minimal(input);
-    dbg!(p.complete_command().unwrap());
+    let correct = m4_macro_as_cmd("MACRO", &[m4_raw("arg1"), m4_raw("arg2")]);
+    let result = p.complete_command();
+    match result {
+        Ok(c) => assert_eq!(Some(correct), c),
+        Err(e) => {
+            println!("{}", e);
+            panic!();
+        }
+    }
 }
 
 #[test]
-fn test_macro_minimal_t() {
+fn test_minimal_macro_test() {
     let input =
         r#"GMP_DEFINE_RAW("define_not_for_expansion(\`HAVE_DOUBLE_IEEE_BIG_ENDIAN')", POST)"#;
     let mut p = make_parser_minimal(input);
@@ -41,27 +41,44 @@ fn test_minimal_condition() {
 }
 
 #[test]
-fn test_macro_word_with_empty_quotes() {
-    let input = r#"WORD_[]MACRO([$1],[arg2],[arg3])_SUFFIX)"#;
+fn test_minimal_macro_word_and_empty_quotes() {
+    let input = r#"WORD_[]MACRO([$var],[arg2],[arg3])[]_SUFFIX)"#;
     let mut p = make_parser_minimal(input);
+    let correct = words(&[
+        lit("WORD_"),
+        m4_macro_as_word("MACRO", &[m4_raw("$var"), m4_raw("arg2"), m4_raw("arg3")]),
+        lit("_SUFFIX"),
+    ]);
     match p.word() {
-        Ok(c) => {
-            dbg!(c);
+        Ok(w) => assert_eq!(Some(correct), w),
+        Err(e) => {
+            println!("{}", e);
+            panic!();
         }
-        Err(e) => println!("{}", e),
     }
 }
 
 #[test]
-fn test_minimal_pipeline() {
-    let input = r#"m4_if([$1],,,[echo hello; echo hi])"#;
+fn test_minimal_macro_with_quoted_command_group() {
+    let input = r#"m4_if([$var],,[echo found var; echo $var],[])"#;
     let mut p = make_parser_minimal(input);
-    for i in 0..10 {
-        match p.complete_command() {
-            Ok(c) => {
-                dbg!(c);
-            }
-            Err(e) => println!("{}", e),
+    let correct = m4_macro_as_cmd(
+        "m4_if",
+        &[
+            m4_lit("$var"),
+            m4_lit(""),
+            m4_cmds(&[
+                cmd_lits("echo", &["found", "var"]),
+                cmd_words("echo", &[word(var("var"))]),
+            ]),
+            m4_cmds(&[]),
+        ],
+    );
+    match p.complete_command() {
+        Ok(c) => assert_eq!(Some(correct), c),
+        Err(e) => {
+            println!("{}", e);
+            panic!();
         }
     }
 }

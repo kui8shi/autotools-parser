@@ -271,8 +271,14 @@ fn test_arithmetic_substitution_invalid() {
     let cases = vec![
         // Pre/post increment/decrement must be applied on a variable
         // Otherwise becomes `expr+(+expr)` or `expr-(-expr)`
-        ("$(( 5++ ))", Unexpected(Token::ParenClose, src(8, 1, 9)).into()),
-        ("$(( 5-- ))", Unexpected(Token::ParenClose, src(8, 1, 9)).into()),
+        (
+            "$(( 5++ ))",
+            Unexpected(Token::ParenClose, src(8, 1, 9)).into(),
+        ),
+        (
+            "$(( 5-- ))",
+            Unexpected(Token::ParenClose, src(8, 1, 9)).into(),
+        ),
         (
             "$(( (x + y)++ ))",
             Unexpected(Token::ParenClose, src(14, 1, 15)).into(),
@@ -299,40 +305,142 @@ fn test_arithmetic_substitution_invalid() {
             Unexpected(Token::ParenOpen, src(6, 1, 7)).into(),
         ),
         // Incomplete commands
-        ("$(( + ))", Unexpected(Token::ParenClose, src(6, 1, 7)).into()),
-        ("$(( - ))", Unexpected(Token::ParenClose, src(6, 1, 7)).into()),
-        ("$(( ! ))", Unexpected(Token::ParenClose, src(6, 1, 7)).into()),
-        ("$(( ~ ))", Unexpected(Token::ParenClose, src(6, 1, 7)).into()),
-        ("$(( x ** ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x *  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x /  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x %  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x +  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x -  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x << ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x >> ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x <  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x <= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x >  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x >= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x == ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x != ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x &  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x ^  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x |  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x && ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x || ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x =  ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x *= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x /= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x %= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x += ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x -= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x <<=))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x >>=))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x &= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x ^= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
-        ("$(( x |= ))", Unexpected(Token::ParenClose, src(9, 1, 10)).into()),
+        (
+            "$(( + ))",
+            Unexpected(Token::ParenClose, src(6, 1, 7)).into(),
+        ),
+        (
+            "$(( - ))",
+            Unexpected(Token::ParenClose, src(6, 1, 7)).into(),
+        ),
+        (
+            "$(( ! ))",
+            Unexpected(Token::ParenClose, src(6, 1, 7)).into(),
+        ),
+        (
+            "$(( ~ ))",
+            Unexpected(Token::ParenClose, src(6, 1, 7)).into(),
+        ),
+        (
+            "$(( x ** ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x *  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x /  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x %  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x +  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x -  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x << ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x >> ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x <  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x <= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x >  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x >= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x == ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x != ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x &  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x ^  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x |  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x && ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x || ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x =  ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x *= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x /= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x %= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x += ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x -= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x <<=))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x >>=))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x &= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x ^= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
+        (
+            "$(( x |= ))",
+            Unexpected(Token::ParenClose, src(9, 1, 10)).into(),
+        ),
         (
             "$(( x ? y : ))",
             Unexpected(Token::ParenClose, src(12, 1, 13)).into(),
@@ -352,36 +460,96 @@ fn test_arithmetic_substitution_invalid() {
         // Missing first operand
         ("$(( ** y  ))", Unexpected(Token::Star, src(4, 1, 5)).into()),
         ("$(( * y   ))", Unexpected(Token::Star, src(4, 1, 5)).into()),
-        ("$(( / y   ))", Unexpected(Token::Slash, src(4, 1, 5)).into()),
-        ("$(( % y   ))", Unexpected(Token::Percent, src(4, 1, 5)).into()),
-        ("$(( << y  ))", Unexpected(Token::DLess, src(4, 1, 5)).into()),
-        ("$(( >> y  ))", Unexpected(Token::DGreat, src(4, 1, 5)).into()),
+        (
+            "$(( / y   ))",
+            Unexpected(Token::Slash, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( % y   ))",
+            Unexpected(Token::Percent, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( << y  ))",
+            Unexpected(Token::DLess, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( >> y  ))",
+            Unexpected(Token::DGreat, src(4, 1, 5)).into(),
+        ),
         ("$(( < y   ))", Unexpected(Token::Less, src(4, 1, 5)).into()),
         ("$(( <= y  ))", Unexpected(Token::Less, src(4, 1, 5)).into()),
-        ("$(( > y   ))", Unexpected(Token::Great, src(4, 1, 5)).into()),
-        ("$(( >= y  ))", Unexpected(Token::Great, src(4, 1, 5)).into()),
-        ("$(( == y  ))", Unexpected(Token::Equals, src(4, 1, 5)).into()),
+        (
+            "$(( > y   ))",
+            Unexpected(Token::Great, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( >= y  ))",
+            Unexpected(Token::Great, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( == y  ))",
+            Unexpected(Token::Equals, src(4, 1, 5)).into(),
+        ),
         ("$(( & y   ))", Unexpected(Token::Amp, src(4, 1, 5)).into()),
-        ("$(( ^ y   ))", Unexpected(Token::Caret, src(4, 1, 5)).into()),
+        (
+            "$(( ^ y   ))",
+            Unexpected(Token::Caret, src(4, 1, 5)).into(),
+        ),
         ("$(( | y   ))", Unexpected(Token::Pipe, src(4, 1, 5)).into()),
-        ("$(( && y  ))", Unexpected(Token::AndIf, src(4, 1, 5)).into()),
+        (
+            "$(( && y  ))",
+            Unexpected(Token::AndIf, src(4, 1, 5)).into(),
+        ),
         ("$(( || y  ))", Unexpected(Token::OrIf, src(4, 1, 5)).into()),
-        ("$(( = y   ))", Unexpected(Token::Equals, src(4, 1, 5)).into()),
+        (
+            "$(( = y   ))",
+            Unexpected(Token::Equals, src(4, 1, 5)).into(),
+        ),
         ("$(( *= y  ))", Unexpected(Token::Star, src(4, 1, 5)).into()),
-        ("$(( /= y  ))", Unexpected(Token::Slash, src(4, 1, 5)).into()),
-        ("$(( %= y  ))", Unexpected(Token::Percent, src(4, 1, 5)).into()),
-        ("$(( <<= y ))", Unexpected(Token::DLess, src(4, 1, 5)).into()),
-        ("$(( >>= y ))", Unexpected(Token::DGreat, src(4, 1, 5)).into()),
+        (
+            "$(( /= y  ))",
+            Unexpected(Token::Slash, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( %= y  ))",
+            Unexpected(Token::Percent, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( <<= y ))",
+            Unexpected(Token::DLess, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( >>= y ))",
+            Unexpected(Token::DGreat, src(4, 1, 5)).into(),
+        ),
         ("$(( &= y  ))", Unexpected(Token::Amp, src(4, 1, 5)).into()),
-        ("$(( ^= y  ))", Unexpected(Token::Caret, src(4, 1, 5)).into()),
+        (
+            "$(( ^= y  ))",
+            Unexpected(Token::Caret, src(4, 1, 5)).into(),
+        ),
         ("$(( |= y  ))", Unexpected(Token::Pipe, src(4, 1, 5)).into()),
-        ("$(( ? y : z ))", Unexpected(Token::Question, src(4, 1, 5)).into()),
-        ("$(( , x + y ))", Unexpected(Token::Comma, src(4, 1, 5)).into()),
+        (
+            "$(( ? y : z ))",
+            Unexpected(Token::Question, src(4, 1, 5)).into(),
+        ),
+        (
+            "$(( , x + y ))",
+            Unexpected(Token::Comma, src(4, 1, 5)).into(),
+        ),
         // Each of the following leading tokens will be parsed as unary
         // operators, thus the error will occur on the `=`.
-        ("$(( != y  ))", Unexpected(Token::Equals, src(5, 1, 6)).into()),
-        ("$(( += y  ))", Unexpected(Token::Equals, src(5, 1, 6)).into()),
-        ("$(( -= y  ))", Unexpected(Token::Equals, src(5, 1, 6)).into()),
+        (
+            "$(( != y  ))",
+            Unexpected(Token::Equals, src(5, 1, 6)).into(),
+        ),
+        (
+            "$(( += y  ))",
+            Unexpected(Token::Equals, src(5, 1, 6)).into(),
+        ),
+        (
+            "$(( -= y  ))",
+            Unexpected(Token::Equals, src(5, 1, 6)).into(),
+        ),
     ];
 
     for (s, correct) in cases.into_iter() {

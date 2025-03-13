@@ -272,8 +272,14 @@ fn test_compound_command_errors_on_quoted_commands() {
         // to expect a brace command would be aware themselves that no such valid
         // command actually exists. TL;DR: it's okay for `compound_command` to blame {
         ("{foo; }", Unexpected(Token::CurlyOpen, src(0, 1, 1)).into()),
-        ("'{' foo; }", Unexpected(Token::SingleQuote, src(0, 1, 1)).into()),
-        ("'(' foo; )", Unexpected(Token::SingleQuote, src(0, 1, 1)).into()),
+        (
+            "'{' foo; }",
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
+        ),
+        (
+            "'(' foo; )",
+            Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
+        ),
         (
             "'while' guard do foo; done",
             Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
@@ -294,8 +300,14 @@ fn test_compound_command_errors_on_quoted_commands() {
             "'case' foo in esac",
             Unexpected(Token::SingleQuote, src(0, 1, 1)).into(),
         ),
-        ("\"{\" foo; }", Unexpected(Token::DoubleQuote, src(0, 1, 1)).into()),
-        ("\"(\" foo; )", Unexpected(Token::DoubleQuote, src(0, 1, 1)).into()),
+        (
+            "\"{\" foo; }",
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
+        ),
+        (
+            "\"(\" foo; )",
+            Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),
+        ),
         (
             "\"while\" guard do foo; done",
             Unexpected(Token::DoubleQuote, src(0, 1, 1)).into(),

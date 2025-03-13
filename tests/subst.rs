@@ -668,9 +668,18 @@ fn test_parameter_substitution_invalid() {
             "${foo: #}",
             BadSubst(Token::Whitespace(String::from(" ")), src(6, 1, 7)).into(),
         ),
-        ("${foo-bar", Unmatched(Token::CurlyOpen, src(1, 1, 2)).into()),
-        ("${'foo'}", BadSubst(Token::SingleQuote, src(2, 1, 3)).into()),
-        ("${\"foo\"}", BadSubst(Token::DoubleQuote, src(2, 1, 3)).into()),
+        (
+            "${foo-bar",
+            Unmatched(Token::CurlyOpen, src(1, 1, 2)).into(),
+        ),
+        (
+            "${'foo'}",
+            BadSubst(Token::SingleQuote, src(2, 1, 3)).into(),
+        ),
+        (
+            "${\"foo\"}",
+            BadSubst(Token::DoubleQuote, src(2, 1, 3)).into(),
+        ),
         ("${`foo`}", BadSubst(Token::Backtick, src(2, 1, 3)).into()),
     ];
 

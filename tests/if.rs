@@ -126,10 +126,7 @@ fn test_if_command_invalid_missing_separator() {
 fn test_if_command_invalid_missing_keyword() {
     let mut p = make_parser("guard1; then body1; elif guard2; then body2; else else; fi");
     assert_eq!(
-        Err(Unexpected(
-            Token::Name(String::from("guard1")),
-            src(0, 1, 1)
-        ).into()),
+        Err(Unexpected(Token::Name(String::from("guard1")), src(0, 1, 1)).into()),
         p.if_command()
     );
     let mut p = make_parser("if guard1; then body1; elif guard2; then body2; else else;");
@@ -142,17 +139,29 @@ fn test_if_command_invalid_missing_keyword() {
 #[test]
 fn test_if_command_invalid_missing_guard() {
     let mut p = make_parser("if; then body1; elif guard2; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(2, 1, 3)).into()), p.if_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(2, 1, 3)).into()),
+        p.if_command()
+    );
 }
 
 #[test]
 fn test_if_command_invalid_missing_body() {
     let mut p = make_parser("if guard; then; elif guard2; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(14, 1, 15)).into()), p.if_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(14, 1, 15)).into()),
+        p.if_command()
+    );
     let mut p = make_parser("if guard1; then body1; elif; then body2; else else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(27, 1, 28)).into()), p.if_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(27, 1, 28)).into()),
+        p.if_command()
+    );
     let mut p = make_parser("if guard1; then body1; elif guard2; then body2; else; fi");
-    assert_eq!(Err(Unexpected(Token::Semi, src(52, 1, 53)).into()), p.if_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(52, 1, 53)).into()),
+        p.if_command()
+    );
 }
 
 #[test]

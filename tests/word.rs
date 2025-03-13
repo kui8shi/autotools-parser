@@ -271,17 +271,11 @@ fn test_word_special_words_recognized_as_such() {
     // @kui8shi
     // By default the outermost '[' must have the corresponding ']'
     // and is skipped, since it's a quoting characters in autoconf language.
-    assert_eq!(
-        Ok(None),
-        make_parser("[").word()
-    );
+    assert_eq!(Ok(None), make_parser("[").word());
     // @kui8shi
     // By default the outermost ']' must have the corresponding '[',
     // and skipped, since it's a quoting characters in autoconf language.
-    assert_eq!(
-        Ok(None),
-        make_parser("]").word()
-    );
+    assert_eq!(Ok(None), make_parser("]").word());
     assert_eq!(
         Ok(Some(TopLevelWord(Single(Word::Simple(Colon))))),
         make_parser(":").word()

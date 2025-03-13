@@ -131,7 +131,10 @@ fn test_for_command_invalid_missing_separator() {
 #[test]
 fn test_for_command_invalid_amp_not_valid_separator() {
     let mut p = make_parser("for var in one two three& do echo $var; done");
-    assert_eq!(Err(Unexpected(Token::Amp, src(24, 1, 25)).into()), p.for_command());
+    assert_eq!(
+        Err(Unexpected(Token::Amp, src(24, 1, 25)).into()),
+        p.for_command()
+    );
 }
 
 #[test]

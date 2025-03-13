@@ -75,9 +75,15 @@ fn test_loop_command_invalid_missing_keyword() {
 fn test_loop_command_invalid_missing_guard() {
     // With command separator between loop and do keywords
     let mut p = make_parser("while; do foo\nbar; baz; done");
-    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6)).into()), p.loop_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(5, 1, 6)).into()),
+        p.loop_command()
+    );
     let mut p = make_parser("until; do foo\nbar; baz; done");
-    assert_eq!(Err(Unexpected(Token::Semi, src(5, 1, 6)).into()), p.loop_command());
+    assert_eq!(
+        Err(Unexpected(Token::Semi, src(5, 1, 6)).into()),
+        p.loop_command()
+    );
 
     // Without command separator between loop and do keywords
     let mut p = make_parser("while do foo\nbar; baz; done");
@@ -142,10 +148,7 @@ fn test_loop_command_invalid_concat() {
         Token::Literal(String::from("done")),
     ]);
     assert_eq!(
-        Err(Unexpected(
-            Token::Literal(String::from("whi")),
-            src(0, 1, 1)
-        ).into()),
+        Err(Unexpected(Token::Literal(String::from("whi")), src(0, 1, 1)).into()),
         p.loop_command()
     );
     let mut p = make_parser_from_tokens(vec![
