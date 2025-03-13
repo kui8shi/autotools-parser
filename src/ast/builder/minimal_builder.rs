@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use void::Void;
 
 use super::{
@@ -95,6 +95,7 @@ where
                 cmds.into_iter().map(|(_, c)| c).collect(),
             )))
         } else {
+            // FIXME Suppport bang in the case of single command
             debug_assert_eq!(bang, false);
             Ok(cmds.pop().unwrap().1)
         }
@@ -338,7 +339,6 @@ where
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
     ) -> Result<Self::M4Macro, Self::Error> {
-        dbg!(&name);
         Ok(M4Macro { name, args })
     }
 
@@ -602,7 +602,6 @@ where
         Command::Cmd(words) => {
             let first_word = words.first().unwrap();
             if let Word::Single(w) = first_word {
-                dbg!(&w);
                 match w {
                     WordFragment::Literal(v) if v.clone().into() == "test" => {
                         Some(Condition::Cond(parse_condition(&words[1..])?))

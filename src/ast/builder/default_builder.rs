@@ -572,7 +572,10 @@ where
         &mut self,
         macro_call: Self::M4Macro,
     ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(WordKind::Simple(SimpleWordKind::Macro(macro_call.name.to_string(), macro_call)))
+        Ok(WordKind::Simple(SimpleWordKind::Macro(
+            macro_call.name.to_string(),
+            macro_call,
+        )))
     }
 
     fn macro_call(
@@ -580,7 +583,6 @@ where
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
     ) -> Result<Self::M4Macro, Self::Error> {
-        dbg!(&name);
         Ok(M4Macro { name, args })
     }
 

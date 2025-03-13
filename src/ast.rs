@@ -1,8 +1,8 @@
 //! Defines abstract representations of the shell source.
+use super::m4_macro::{M4Argument, M4Macro};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt, ops};
-use super::m4_macro::{M4Macro, M4Argument};
 
 pub mod builder;
 pub mod minimal;
@@ -93,7 +93,7 @@ pub type ShellWord<T, W, C> = ComplexWord<
             T,
             Parameter<T>,
             Box<ParameterSubstitution<Parameter<T>, W, C, Arithmetic<T>>>,
-            M4Macro<W, C>
+            M4Macro<W, C>,
         >,
     >,
 >;
@@ -130,12 +130,8 @@ pub enum Word<L, W> {
 }
 
 /// Type alias for the default `SimpleWord` representation.
-pub type DefaultSimpleWord = SimpleWord<
-    String,
-    DefaultParameter,
-    Box<DefaultParameterSubstitution>,
-    DefaultM4Macro,
->;
+pub type DefaultSimpleWord =
+    SimpleWord<String, DefaultParameter, Box<DefaultParameterSubstitution>, DefaultM4Macro>;
 
 /// Represents the smallest fragment of any text.
 ///
@@ -167,12 +163,8 @@ pub enum SimpleWord<L, P, S, M> {
     Macro(M),
 }
 
-/// Type alias for the default `M4Argument` representation.
-pub type DefaultM4Argument = M4Argument<String, DefaultCommand>;
-
 /// Type alias for the default `M4Macro` representation.
 pub type DefaultM4Macro = M4Macro<TopLevelWord<String>, TopLevelCommand<String>>;
-
 
 /// Type alias for the default `Redirect` representation.
 pub type DefaultRedirect = Redirect<TopLevelWord<String>>;

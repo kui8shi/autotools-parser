@@ -138,7 +138,7 @@ impl Builder for EmptyBuilder {
         &mut self,
         _macro_call: Self::M4Macro,
     ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(WordKind::Simple(SimpleWordKind::Macro("".to_owned(),())))
+        Ok(WordKind::Simple(SimpleWordKind::Macro("".to_owned(), ())))
     }
 
     fn macro_call(

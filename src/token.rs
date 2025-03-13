@@ -209,8 +209,9 @@ impl Token {
 
             Bang | Star | Question | Backslash | SingleQuote | DoubleQuote | Backtick | Percent
             | Dash | Equals | Plus | Colon | At | Caret | Slash | Comma | CurlyOpen
-            | CurlyClose | Dollar | Tilde | Pound | Name(_)
-            | Literal(_) | ParamPositional(_) => false,
+            | CurlyClose | Dollar | Tilde | Pound | Name(_) | Literal(_) | ParamPositional(_) => {
+                false
+            }
         }
     }
 

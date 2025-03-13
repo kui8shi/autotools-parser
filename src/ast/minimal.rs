@@ -35,7 +35,7 @@ pub enum WordFragment<L, W, C> {
     Macro(M4Macro<W, C>),
 }
 
-/// A collection of simple words, wrapping a vector of `SimpleWord`
+/// A collection of simple words, wrapping a vector of `WordFragment`
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Word<T, C> {
     /// A word composed of multiple fragments concatenated together
@@ -146,7 +146,7 @@ pub enum CompoundCommand<W, C> {
         /// The function name
         name: String,
         /// Commands in the body
-        body: Box<C>
+        body: Box<C>,
     },
     /// A macro call utilizing M4 macros.
     Macro(M4Macro<W, C>),

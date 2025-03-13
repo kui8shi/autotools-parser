@@ -10,8 +10,7 @@
 //! struct to the parser if you wish to use the default AST implementation.
 
 use crate::ast::{
-    AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord,
-    RedirectOrEnvVar,
+    AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
 
 mod default_builder;

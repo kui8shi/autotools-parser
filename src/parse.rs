@@ -1250,8 +1250,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         // Make sure we don't consume comments,
         // e.g. if a # is at the start of a word.
-        if let Some(&Pound) = self.iter.peek() {
-            return Ok(None);
+        match self.iter.peek() {
+            Some(&Pound) => return Ok(None),
+            Some(&Name(ref n)) if n == "dnl" => return Ok(None),
+            _ => (),
         }
 
         let mut words = Vec::new();
@@ -2394,30 +2396,16 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let mut idx_arg_type = 0;
             for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
                 self.linebreak();
-                if let Some((start, end)) = repeat {
-                    if (idx_arg_type == end) && (num_args - i) >= (end - start) {
-                        idx_arg_type = start
-                    }
-                }
                 let found_macro = self
                     .maybe_macro_call()
-                    .and_then(|name| m4_macro::MACROS.get(&name))
-                    .map(|(_, ret_type, _)| ret_type == &arg_types[idx_arg_type])
+                    .map(|name| m4_macro::MACROS.get(&name).is_some())
+                    //.map(|(_, ret_type, _)| ret_type == &arg_types[idx_arg_type])
                     .unwrap_or(false);
                 let arg_type = if found_macro {
                     M4Type::Cmds
                 } else {
                     arg_types[idx_arg_type]
                 };
-                {
-                    println!("==============================================");
-                    let mut p = self.iter.multipeek();
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                }
-                dbg!(&arg_type, found_macro, i);
                 let arg = match arg_type {
                     M4Type::Lit => {
                         self.skip_macro_arg()?;
@@ -2457,7 +2445,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                                 // we ignore empty words (: None).
                                 arr.push(self.builder.word(word)?);
                             }
-                            dbg!("next array token", self.iter.peek());
                         }
                         if self.iter.peek() == Some(&quote_close) {
                             self.iter.next();
@@ -2468,15 +2455,15 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         if let Some(&Comma | &ParenClose) = self.iter.peek() {
                             // we do not found any effective commands.
                             // empty arguments like '[]' were already skipped by self.linebreak().
-                            M4Argument::Command(Vec::new())
+                            M4Argument::Commands(Vec::new())
                         } else {
                             let cmds = self
                                 .command_group(CommandGroupDelimiters {
-                                    reserved_tokens: &[ParenClose, Comma, quote_close.clone()],
+                                    exact_tokens: &[ParenClose, Comma, quote_close.clone()],
                                     ..Default::default()
                                 })?
                                 .commands;
-                            M4Argument::Command(cmds)
+                            M4Argument::Commands(cmds)
                         }
                     }
                     _ => {
@@ -2484,49 +2471,26 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         return Err(self.make_unexpected_err());
                     }
                 };
-                {
-                    println!("----------------------------------------------");
-                    let mut p = self.iter.multipeek();
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                }
                 self.linebreak();
                 if i < num_args - 1 {
                     eat!(self, { Comma => {} });
                 } else {
                     eat!(self, { ParenClose => {} });
                 }
-                {
-                    println!("----------------------------------------------");
-                    let mut p = self.iter.multipeek();
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                    dbg!(p.peek_next());
-                }
                 idx_arg_type += 1;
+                if let Some((start, end)) = repeat {
+                    // repeat in [start..=end]
+                    let remain_size = num_args - i - 1;
+                    let repeat_size = end - start + 1;
+                    if (idx_arg_type > end) && remain_size >= repeat_size {
+                        idx_arg_type = start
+                    }
+                }
                 parsed_args.push(arg);
             }
             parsed_args
         } else {
-            // let mut args = Vec::new();
-            // for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
-            //     let mut words = Vec::new();
-            //     while let (Some(word), Some(tok)) = (
-            //         self.word_preserve_trailing_whitespace_raw_with_delim(Some(Comma))?,
-            //         self.iter.next(),
-            //     ) {
-            //         words.push(self.builder.word(word)?);
-            //         if tok == ParenClose {
-            //             break;
-            //         }
-            //     }
-            //     let arg = M4Argument::Words(words);
-            //     args.push(arg);
-            // }
-            // args
+            // user-defined macro arguments' types are unknown
             while let Comma = self.skip_macro_arg()? {
                 eat!(self, {Comma => {}});
             }

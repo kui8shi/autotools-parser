@@ -109,11 +109,13 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             ')' => ParenClose,
             '{' => CurlyOpen,
             '}' => CurlyClose,
-            '[' => if let Some(&']') = self.inner.peek() {
-                self.inner.next();
-                EmptyQuotes
-            } else {
-                SquareOpen
+            '[' => {
+                if let Some(&']') = self.inner.peek() {
+                    self.inner.next();
+                    EmptyQuotes
+                } else {
+                    SquareOpen
+                }
             }
             ']' => SquareClose,
 
