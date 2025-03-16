@@ -2430,7 +2430,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
                     }
-                    M4Type::Prog => {
+                    M4Type::Prog | M4Type::Body => {
                         self.skip_macro_arg()?;
                         M4Argument::Program(peeked_arg.clone())
                     }
@@ -2480,7 +2480,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         }
                         M4Argument::Array(arr)
                     }
-                    M4Type::Cmds | M4Type::Body => {
+                    M4Type::Cmds => {
                         if let Some(&Comma | &ParenClose) = self.iter.peek() {
                             // we do not found any effective commands.
                             // empty arguments like '[]' were already skipped by self.linebreak().
