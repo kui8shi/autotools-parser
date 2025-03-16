@@ -13,7 +13,7 @@ pub fn macro_as_command(name: &str, args: &[&str]) -> TopLevelCommand<String> {
         first: ListableCommand::Single(Compound(Box::new(CompoundCommand {
             kind: CompoundCommandKind::Macro(M4Macro {
                 name: name.to_string(),
-                args: args.iter().map(|a| Literal(a.to_string())).collect(),
+                args: args.iter().map(|a| Unknown(a.to_string())).collect(),
             }),
             io: vec![],
         }))),
@@ -145,3 +145,4 @@ fn test_macro_t() {
     let mut p = make_parser(input);
     dbg!(p.complete_command().unwrap());
 }
+

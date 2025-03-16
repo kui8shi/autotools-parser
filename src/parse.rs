@@ -16,7 +16,7 @@ use crate::ast::builder::ComplexWordKind::{self, Concat, Single};
 use crate::ast::builder::WordKind::{self, DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, Builder, SimpleWordKind};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
-use crate::m4_macro;
+use crate::m4_macro::{self, ArrayDelim};
 use crate::token::Token;
 use crate::token::Token::*;
 
@@ -1244,7 +1244,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// allows for specifying an arbitrary token as a word delimiter.
     fn word_preserve_trailing_whitespace_raw_with_delim(
         &mut self,
-        delim: Option<Token>,
+        delims: Option<&[Token]>,
     ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
         self.skip_whitespace();
 
@@ -1260,8 +1260,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let mut in_quote = 0;
         let (quote_open, quote_close) = self.get_quotes();
         loop {
-            if in_quote == 0 && delim.is_some() && self.iter.peek() == delim.as_ref() {
-                break;
+            if in_quote == 0 {
+                if let Some(delims) = delims {
+                    if let Some(tok) = self.iter.peek() {
+                        if delims.iter().find(|&t| t == tok).is_some() {
+                            break;
+                        }
+                    }
+                }
             }
 
             match self.iter.peek() {
@@ -1660,7 +1666,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 }
             }
 
-            match self.word_preserve_trailing_whitespace_raw_with_delim(Some(CurlyClose))? {
+            match self.word_preserve_trailing_whitespace_raw_with_delim(Some(&[CurlyClose]))? {
                 Some(Single(w)) => words.push(w),
                 Some(Concat(ws)) => words.extend(ws),
                 None => break 'capture_words,
@@ -2359,9 +2365,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 // distinct the macro calls and shell command/function calls without any arguments.
                 // It is just a heuristic.
                 // They are indistinguishable especially in the case of no arguments.
-                let is_macro_name = name
-                    .chars()
-                    .all(|c| (c.is_alphabetic() && c.is_uppercase()) || c.is_numeric() || c == '_');
+                let is_macro_name = name.chars().next().is_some_and(|first| {
+                    (first.is_ascii() && first.is_alphabetic() && first.is_uppercase())
+                        || first == '_'
+                }) && name.chars().skip(1).all(|c| {
+                    (c.is_ascii() && c.is_alphabetic() && c.is_uppercase())
+                        || c.is_numeric()
+                        || c == '_'
+                });
                 if is_macro_name {
                     match peeked.peek_next() {
                         Some(&ParenOpen) | Some(&Newline) | None => Some(name),
@@ -2382,7 +2393,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let name = self
             .reserved_word(name_candidates)
             .map_err(|()| self.make_unexpected_err())?;
-        let macro_signature = m4_macro::MACROS.get(name).cloned();
+        let macro_entry = m4_macro::MACROS.get(name).cloned();
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
@@ -2391,23 +2402,31 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let (quote_open, quote_close) = self.get_quotes();
         let peeked_args = self.peek_macro_args()?;
         let num_args = peeked_args.len();
-        let args = if let Some((arg_types, _ret_type, repeat)) = macro_signature {
+        let args = if let Some(signature) = macro_entry {
+            let signature = if let Some(ref alternative) = signature.replaced_by {
+                m4_macro::MACROS.get(alternative).unwrap().clone()
+            } else {
+                signature
+            };
+            dbg!(&name, &signature, &peeked_args);
+            let arg_types = signature.arg_types;
+            let ret_type = signature.ret_type;
+            let repeat = signature.repeat;
             let mut parsed_args = Vec::new();
             let mut idx_arg_type = 0;
             for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
                 self.linebreak();
                 let found_macro = self
                     .maybe_macro_call()
-                    .map(|name| m4_macro::MACROS.get(&name).is_some())
-                    //.map(|(_, ret_type, _)| ret_type == &arg_types[idx_arg_type])
-                    .unwrap_or(false);
+                    .and_then(|name| m4_macro::MACROS.get(&name))
+                    .is_some_and(|sig| sig.ret_type.is_some_and(|ref t| t == &arg_types[idx_arg_type]));
                 let arg_type = if found_macro {
-                    M4Type::Cmds
+                    &M4Type::Cmds
                 } else {
-                    arg_types[idx_arg_type]
+                    &arg_types[idx_arg_type]
                 };
                 let arg = match arg_type {
-                    M4Type::Lit => {
+                    M4Type::Lit | M4Type::VarName(_, _) => {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
                     }
@@ -2415,7 +2434,18 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.skip_macro_arg()?;
                         M4Argument::Program(peeked_arg.clone())
                     }
-                    M4Type::Arr => {
+                    M4Type::Word => {
+                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(Some(&[Comma]))? {
+                            M4Argument::Word(self.builder.word(word)?)
+                        } else {
+                            M4Argument::Literal(peeked_arg.clone())
+                        }
+                    }
+                    M4Type::Arr(delim) | M4Type::Symbols(delim, _) => {
+                        let mut delims = match delim {
+                            ArrayDelim::Blank => vec![Whitespace(" ".into()), Newline],
+                            ArrayDelim::Comma => vec![Comma],
+                        };
                         // @kui8shi
                         // When we have an array like '[word1 word2]',
                         // we will call self.word() twice.
@@ -2424,23 +2454,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         let end = if self.iter.peek() == Some(&quote_open) {
                             self.iter.next();
                             // array should end with closing quote char
-                            quote_close.clone()
+                            &quote_close
                         } else if i < num_args - 1 {
                             // array should end with comma
-                            Comma
+                            &Comma
                         } else {
                             // array should end with ')'
-                            ParenClose
+                            &ParenClose
                         };
+                        delims.push(end.clone());
                         while self.iter.peek() != Some(&end) {
                             // @kui8shi
                             // For brevity of the implementation, we include any tokens
                             // that is taken to be an end of shell word
                             // to the delimiters of the array.
                             if let Some(word) = self
-                                .word_preserve_trailing_whitespace_raw_with_delim(Some(
-                                    end.clone(),
-                                ))?
+                                .word_preserve_trailing_whitespace_raw_with_delim(Some(&delims))?
                             {
                                 // we ignore empty words (: None).
                                 arr.push(self.builder.word(word)?);
@@ -2451,7 +2480,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         }
                         M4Argument::Array(arr)
                     }
-                    M4Type::Cmds => {
+                    M4Type::Cmds | M4Type::Body => {
                         if let Some(&Comma | &ParenClose) = self.iter.peek() {
                             // we do not found any effective commands.
                             // empty arguments like '[]' were already skipped by self.linebreak().
@@ -2466,8 +2495,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                             M4Argument::Commands(cmds)
                         }
                     }
-                    _ => {
-                        eprintln!("Unexpected M4Type for arguments");
+                    unknown @ _ => {
+                        eprintln!("Unexpected M4Type for arguments: {:?}", unknown);
                         return Err(self.make_unexpected_err());
                     }
                 };
@@ -2548,7 +2577,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let mut buf = String::new();
         loop {
             match peeked.peek_next() {
-                Some(&Comma) if in_quote == 0 => {
+                Some(&Comma) if in_quote == 0 && unquoted_paren_depth == 0 => {
                     literals.push(buf.trim().to_string());
                     buf = String::new();
                 }

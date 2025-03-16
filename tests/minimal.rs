@@ -82,3 +82,51 @@ fn test_minimal_macro_with_quoted_command_group() {
         }
     }
 }
+
+#[test]
+fn test_macro_define_recursive() {
+    let input = r#"
+AC_DEFUN([GMP_COMPARE_GE_INTERNAL],
+[ifelse(len([$3]),0,
+[if test -n "$1" && test "$1" -ge $2; then
+  gmp_compare_ge=yes
+fi],
+[if test -n "$1"; then
+  if test "$1" -gt $2; then
+    gmp_compare_ge=yes
+  else
+    if test "$1" -eq $2; then
+      GMP_COMPARE_GE_INTERNAL(m4_shift(m4_shift($@)))
+    fi
+  fi
+fi])
+])
+AC_DEFUN([GMP_SUBST_CHECK_FUNCS],
+[m4_if([$1],,,
+[_GMP_SUBST_CHECK_FUNCS(ac_cv_func_[$1],HAVE_[]m4_translit([$1],[a-z],[A-Z])_01)
+GMP_SUBST_CHECK_FUNCS(m4_shift($@))])])"#;
+    let mut p = make_parser_minimal(input);
+    match p.complete_command() {
+        Ok(cmd) => {
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+        }
+    }
+}
+
+#[test]
+fn test_macro_define() {
+    let input = r#"define(GMP_FAT_SUFFIX,
+[[$1=`echo $2 | sed -e '/\//s:^[^/]*/::' -e 's:[\\/]:_:g'`]])"#;
+    let mut p = make_parser_minimal(input);
+    match p.complete_command() {
+        Ok(cmd) => {
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+        }
+    }
+}

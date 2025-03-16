@@ -107,6 +107,7 @@ where
         redirects_or_env_vars: Vec<RedirectOrEnvVar<Self::Redirect, String, Self::Word>>,
         redirects_or_cmd_words: Vec<RedirectOrCmdWord<Self::Redirect, Self::Word>>,
     ) -> Result<Self::PipeableCommand, Self::Error> {
+        dbg!(&redirects_or_cmd_words);
         let mut assignments = redirects_or_env_vars
             .into_iter()
             .map(|roev| match roev {

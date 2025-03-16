@@ -5,7 +5,7 @@ use M4ExportType::*;
 use M4Type::*;
 
 /// Specify types of arguments or expansion of m4 macro calls.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum M4Type {
     /// raw literal treated as is.
     Lit,
@@ -62,14 +62,26 @@ pub enum M4Type {
     // TODO: Maybe we should add 'Unknown' type to be determined dynamically for m4_* and user-defined macros.
 }
 
-#[derive(Clone, Copy)]
-pub enum M4ReturnType {}
-
+/// The type of any dynamically exported information
 #[derive(Debug, Clone, Copy)]
 pub enum M4ExportType {
+    /// Export a shell variable
     ExVar(VarAttrs),
+    /// Export a C preprocessor symbol
     ExCPP,
+    /// Reference to a path
     ExPath,
+}
+
+impl PartialEq for M4Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Lit, _) | (_, Lit) => true,
+            (Word, Word) => true,
+            (Args, _) | (_, Args) => true,
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Debug for M4Type {
@@ -103,14 +115,15 @@ impl std::fmt::Debug for M4Type {
 pub enum M4Argument<W, C> {
     /// raw literal
     Literal(String),
+    /// a shell word, likes a parsed version of the literal
+    /// without any whiite spaces nor any other deliminating characters.
+    Word(W),
     /// array of words
     Array(Vec<W>),
     /// program string
     Program(String),
     /// list of commands.
     Commands(Vec<C>),
-    /// list of words
-    Words(Vec<W>),
     /// unknown argument type when the macro is user-defined
     Unknown(String),
 }
@@ -130,6 +143,7 @@ pub struct M4Macro<W, C> {
     pub args: Vec<M4Argument<W, C>>,
 }
 
+/// Represent the external and internal specs of a m4 macro
 #[derive(Debug, Clone, Default)]
 pub struct M4MacroSignature {
     /// the types of macro arguments.
@@ -148,47 +162,63 @@ pub struct M4MacroSignature {
     /// List of macro names to be called without arguments if not. c.f. AC_REQUIRE
     /// We expect required macros have the same return type, and no arguments.
     pub require: Option<Vec<String>>,
+    /// List of paths referenced in the macro
     pub paths: Option<Vec<String>>,
 }
 
+/// Represents a static shell variable
 #[derive(Debug, Clone, Default)]
 pub struct Var(String, VarAttrs);
 
+/// Represents attributes of a shell variable
 #[derive(Debug, Clone, Default, Copy)]
 pub struct VarAttrs {
+    /// called AC_SUBST on it
     pub is_subst: bool,
+    /// very close to the configure script's argument
     pub is_arg: bool,
+    /// exported to an environmental variable
     pub is_env: bool,
+    /// exported to a automake conditional variable
     pub is_am_cond: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Delimiter used in a m4 array argument
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ArrayDelim {
-    Blank, // whitespace or newline
-    Comma, // ','
+    /// whitespace or newline
+    Blank,
+    /// ','
+    Comma,
 }
 
 impl Var {
+    /// Create a new shell variable with specified attributes
     pub fn new(name: &str, attrs: VarAttrs) -> Self {
         Self(name.into(), attrs)
     }
 
+    /// Create a new output shell variable
     pub fn new_output(name: &str) -> Self {
         Self::new(name, VarAttrs::new_output())
     }
 
+    /// Create a new input shell variable
     pub fn new_input(name: &str) -> Self {
         Self::new(name, VarAttrs::new_input())
     }
 
+    /// Create a new input+output shell variable
     pub fn new_precious(name: &str) -> Self {
         Self::new(name, VarAttrs::new_precious())
     }
 
+    /// Create a new environmental variable
     pub fn new_env(name: &str) -> Self {
         Self::new(name, VarAttrs::new_env())
     }
 
+    /// Create a new automake conditional variable
     pub fn new_conditional(name: &str) -> Self {
         Self::new(name, VarAttrs::new_conditional())
     }
@@ -201,6 +231,7 @@ impl From<&str> for Var {
 }
 
 impl VarAttrs {
+    /// Create a new shell variable attributes
     pub fn new(is_subst: bool, is_arg: bool, is_env: bool, is_am_cond: bool) -> Self {
         Self {
             is_subst,
@@ -210,26 +241,32 @@ impl VarAttrs {
         }
     }
 
+    /// Create a new internal shell variable attributes
     pub fn new_internal() -> Self {
         Self::new(false, false, false, false)
     }
 
+    /// Create a new output shell variable attributes
     pub fn new_output() -> Self {
         Self::new(true, false, false, false)
     }
 
+    /// Create a new input shell variable attributes
     pub fn new_input() -> Self {
         Self::new(false, true, false, false)
     }
 
+    /// Create a new input shell variable attributes
     pub fn new_precious() -> Self {
         Self::new(true, true, false, false)
     }
 
+    /// Create a new environmental variable attributes
     pub fn new_env() -> Self {
         Self::new(false, true, true, false)
     }
 
+    /// Create a new automake conditional variable attributes
     pub fn new_conditional() -> Self {
         Self::new(false, false, false, true)
     }
@@ -4130,8 +4167,15 @@ lazy_static::lazy_static! {
             M4MacroSignature {
                 // return the length of a string.
                 // 0 if empty string on BSD.
-                arg_types: vec![Lit],
+                arg_types: vec![Word],
                 ret_type: Some(Cmds),
+                ..Default::default()
+            },
+        ),
+        (
+            "len",
+            M4MacroSignature {
+                replaced_by: Some("m4_len".into()),
                 ..Default::default()
             },
         ),
@@ -4394,8 +4438,8 @@ lazy_static::lazy_static! {
             "m4_if",
             M4MacroSignature {
                 arg_types: vec![
-                    Lit,  // string-1
-                    Lit,  // string-2
+                    Word,  // string-1
+                    Word,  // string-2
                     Cmds, // equal
                     Cmds, // [not-equal]
                 ],
