@@ -133,7 +133,10 @@ fn test_macro_define() {
 
 #[test]
 fn test_macro_patsubst() {
-    let input = r#"patsubst(esyscmd(grep \"^#define __GNU_MP_VERSION \" gmp-h.in /dev/null 2>/dev/null),^.*__GNU_MP_VERSION \t+,)"#;
+    let input = r#"patsubst(
+[esyscmd([grep \"^#define __GNU_MP_VERSION \" gmp-h.in /dev/null 2>/dev/null])],
+^.*__GNU_MP_VERSION \t+,
+)"#;
     let mut p = make_parser_minimal(input);
     match p.complete_command() {
         Ok(cmd) => {

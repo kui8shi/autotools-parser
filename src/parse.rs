@@ -2352,7 +2352,21 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             .collect::<Vec<&str>>();
         let (quote_open, _) = self.get_quotes();
         if let Some(name) = self.peek_reserved_word_with_prefix(&names, Some(&quote_open)) {
+            if m4_macro::get_macro(name).unwrap().arg_types.len() == 0{
             Some(name.to_string())
+            } else {
+                let mut peeked = self.iter.multipeek();
+                while peeked.peek_next() != Some(&Name(name.into())) {};
+                if peeked.peek_next() == Some(&ParenOpen) {
+                    // @kui8shi
+                    // If the macro takes arguments, we expect the parenthesis follows the macro
+                    // name. We could refine this logic by explicitly specifying each argument
+                    // type whether it is optional or needed. 
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            }
         } else {
             // check if user-defined macro call
             let found_quote_open = self.iter.peek() == Some(&quote_open);
