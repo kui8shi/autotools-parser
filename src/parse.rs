@@ -818,6 +818,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
         }
 
+        if self.iter.peek() == Some(&Comma)  {
+            // @kui8shi
+            // The end of commands as a macro argument can be colon.
+            return Ok(None);
+        }
+
         let (src_fd, src_fd_as_word) = match self.word_preserve_trailing_whitespace_raw()? {
             None => (None, None),
             Some(w) => match as_num(&w) {
