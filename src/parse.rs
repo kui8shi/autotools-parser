@@ -1275,8 +1275,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | Some(&SingleQuote) | Some(&DoubleQuote) | Some(&Pound) | Some(&Star)
                 | Some(&Question) | Some(&Tilde) | Some(&Bang) | Some(&Backslash)
                 | Some(&Percent) | Some(&Dash) | Some(&Equals) | Some(&Plus) | Some(&Colon)
-                | Some(&At) | Some(&Caret) | Some(&Slash) | Some(&Comma) | Some(&Name(_))
-                | Some(&Literal(_)) => {}
+                | Some(&At) | Some(&Caret) | Some(&Slash) | Some(&Comma) | Some(&Dot)
+                | Some(&Name(_)) | Some(&Literal(_)) => {}
 
                 Some(&Backtick) => {
                     words.push(Simple(self.backticked_raw()?));
@@ -1348,6 +1348,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | tok @ Caret
                 | tok @ Slash
                 | tok @ Comma
+                | tok @ Dot
                 | tok @ CurlyOpen
                 | tok @ CurlyClose => Simple(SimpleWordKind::Literal(tok.to_string())),
 
@@ -1636,6 +1637,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     | Some(&Caret)
                     | Some(&Slash)
                     | Some(&Comma)
+                    | Some(&Dot)
                     | Some(&Name(_))
                     | Some(&Literal(_))
                     | Some(&Backtick)
@@ -2393,7 +2395,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let name = self
             .reserved_word(name_candidates)
             .map_err(|()| self.make_unexpected_err())?;
-        let macro_entry = m4_macro::MACROS.get(name).cloned();
+        let macro_entry = m4_macro::get_macro(name).cloned();
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
@@ -2403,12 +2405,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let peeked_args = self.peek_macro_args()?;
         let num_args = peeked_args.len();
         let args = if let Some(signature) = macro_entry {
-            let signature = if let Some(ref alternative) = signature.replaced_by {
-                m4_macro::MACROS.get(alternative).unwrap().clone()
-            } else {
-                signature
-            };
-            dbg!(&name, &signature, &peeked_args);
+            dbg!((&name, &signature, &peeked_args));
             let arg_types = signature.arg_types;
             let ret_type = signature.ret_type;
             let repeat = signature.repeat;
@@ -2418,8 +2415,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 self.linebreak();
                 let found_macro = self
                     .maybe_macro_call()
-                    .and_then(|name| m4_macro::MACROS.get(&name))
-                    .is_some_and(|sig| sig.ret_type.is_some_and(|ref t| t == &arg_types[idx_arg_type]));
+                    .and_then(|name| m4_macro::get_macro(&name).cloned())
+                    .is_some_and(|sig| {
+                        sig.ret_type
+                            .is_some_and(|ref t| t == &arg_types[idx_arg_type])
+                    });
+                dbg!((&name, &found_macro, &self.maybe_macro_call()));
                 let arg_type = if found_macro {
                     &M4Type::Cmds
                 } else {
@@ -2435,7 +2436,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         M4Argument::Program(peeked_arg.clone())
                     }
                     M4Type::Word => {
-                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(Some(&[Comma]))? {
+                        if let Some(word) =
+                            self.word_preserve_trailing_whitespace_raw_with_delim(Some(&[Comma]))?
+                        {
                             M4Argument::Word(self.builder.word(word)?)
                         } else {
                             M4Argument::Literal(peeked_arg.clone())
@@ -2581,21 +2584,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     literals.push(buf.trim().to_string());
                     buf = String::new();
                 }
-                Some(tok @ &ParenOpen) if in_quote == 0 => {
+                Some(&ParenOpen) if in_quote == 0 => {
                     unquoted_paren_depth += 1;
                     if unquoted_paren_depth >= 1 {
-                        buf.push_str(tok.as_str());
+                        buf.push_str(ParenOpen.as_str());
                     }
                 }
-                Some(tok @ &ParenClose) if in_quote == 0 => {
+                Some(&ParenClose) if in_quote == 0 => {
                     if unquoted_paren_depth < 1 {
                         literals.push(buf.trim().to_string());
                         return Ok(literals);
                     } else {
-                        buf.push_str(tok.as_str());
+                        buf.push_str(ParenClose.as_str());
                     }
                     unquoted_paren_depth -= 1;
                 }
+                Some(Newline | Whitespace(_)) if buf.is_empty() => continue,
                 Some(tok) => {
                     if tok == &quote_open {
                         in_quote += 1;

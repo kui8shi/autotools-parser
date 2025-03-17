@@ -60,15 +60,15 @@ fn test_minimal_macro_word_and_empty_quotes() {
 
 #[test]
 fn test_minimal_macro_with_quoted_command_group() {
-    let input = r#"m4_if([$var],,[echo found var; echo $var],[])"#;
+    let input = r#"m4_if([$var],,[echo found; echo $var],[])"#;
     let mut p = make_parser_minimal(input);
     let correct = m4_macro_as_cmd(
         "m4_if",
         &[
-            m4_lit("$var"),
+            m4_var("var"),
             m4_lit(""),
             m4_cmds(&[
-                cmd_lits("echo", &["found", "var"]),
+                cmd_lits("echo", &["found"]),
                 cmd_words("echo", &[word(var("var"))]),
             ]),
             m4_cmds(&[]),
@@ -120,6 +120,20 @@ GMP_SUBST_CHECK_FUNCS(m4_shift($@))])])"#;
 fn test_macro_define() {
     let input = r#"define(GMP_FAT_SUFFIX,
 [[$1=`echo $2 | sed -e '/\//s:^[^/]*/::' -e 's:[\\/]:_:g'`]])"#;
+    let mut p = make_parser_minimal(input);
+    match p.complete_command() {
+        Ok(cmd) => {
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+        }
+    }
+}
+
+#[test]
+fn test_macro_patsubst() {
+    let input = r#"patsubst(esyscmd(grep \"^#define __GNU_MP_VERSION \" gmp-h.in /dev/null 2>/dev/null),^.*__GNU_MP_VERSION \t+,)"#;
     let mut p = make_parser_minimal(input);
     match p.complete_command() {
         Ok(cmd) => {

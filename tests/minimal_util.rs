@@ -128,6 +128,10 @@ pub fn m4_lit(s: &str) -> MinimalM4Argument {
     M4Argument::Literal(s.to_string())
 }
 
+pub fn m4_var(s: &str) -> MinimalM4Argument {
+    M4Argument::Word(Word::Single(var(s)))
+}
+
 pub fn m4_arr(words: &[MinimalWord]) -> MinimalM4Argument {
     M4Argument::Array(words.to_owned())
 }

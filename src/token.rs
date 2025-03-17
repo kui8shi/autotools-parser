@@ -89,7 +89,6 @@ pub enum Token {
     SquareClose,
 
     /// []
-    /// FIXME: @kui8shi we only support empty quotes of '[]', which limit the lexer possibility.
     EmptyQuotes,
 
     /// !
@@ -122,6 +121,8 @@ pub enum Token {
     Slash,
     /// ,
     Comma,
+    /// .
+    Dot,
 
     /// '
     SingleQuote,
@@ -208,7 +209,7 @@ impl Token {
             | Whitespace(_) | SquareOpen | SquareClose | EmptyQuotes => true,
 
             Bang | Star | Question | Backslash | SingleQuote | DoubleQuote | Backtick | Percent
-            | Dash | Equals | Plus | Colon | At | Caret | Slash | Comma | CurlyOpen
+            | Dash | Equals | Plus | Colon | At | Caret | Slash | Comma | Dot | CurlyOpen
             | CurlyClose | Dollar | Tilde | Pound | Name(_) | Literal(_) | ParamPositional(_) => {
                 false
             }
@@ -247,6 +248,7 @@ impl Token {
             Caret => "^",
             Slash => "/",
             Comma => ",",
+            Dot => ".",
             SingleQuote => "\'",
             DoubleQuote => "\"",
             Backtick => "`",

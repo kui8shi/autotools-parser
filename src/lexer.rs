@@ -65,6 +65,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             '^' => Caret,
             '/' => Slash,
             ',' => Comma,
+            '.' => Dot,
 
             // Make sure that we treat the next token as a single character,
             // preventing multi-char tokens from being recognized. This is

@@ -308,6 +308,17 @@ fn split_tag(tag: &str) -> Vec<(M4ExportType, String)> {
     ret
 }
 
+/// Return macro signature if a predefined macro found.
+pub fn get_macro(name: &str) -> Option<&M4MacroSignature> {
+    MACROS.get(name).map(|signature| {
+        if let Some(ref alternative) = signature.replaced_by {
+            MACROS.get(alternative).unwrap()
+        } else {
+            signature
+        }
+    })
+}
+
 // pub fn get_macros() -> HashMap<&'static str, M4MacroSignature> {
 // arg_types, ret_type, repeat, output_variables, preprocessor_symbols
 // TODO: revert to the static definition style.
@@ -4084,6 +4095,13 @@ lazy_static::lazy_static! {
                     Cmds, // shell-command
                 ],
                 ret_type: Some(Lit),
+                ..Default::default()
+            },
+        ),
+        (
+            "esyscmd",
+            M4MacroSignature {
+                replaced_by: Some("m4_esyscmd".into()),
                 ..Default::default()
             },
         ),
