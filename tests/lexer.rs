@@ -98,7 +98,8 @@ lex_str!(
     Name(String::from("__name")),
     Whitespace(String::from(" ")),
     Caret,
-    Literal(String::from(".abc")),
+    Dot,
+    Name(String::from("abc")),
     Whitespace(String::from(" ")),
     Name(String::from("_test2"))
 );
