@@ -19,6 +19,9 @@ fn main() {
 
     // Parse our input!
     for t in parser {
-        println!("{:?}", t);
+        match t {
+            Ok(res) => println!("{:?}", res),
+            Err(e) => println!("{}", e)
+        }
     }
 }

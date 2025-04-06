@@ -69,6 +69,7 @@ pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
     // Collect included files
     let included_paths = collect_m4_includes(ac_path)?;
     let excluded_paths = HashSet::from([
+        "ax_cxx_compile_stdcxx.m4".to_string(), // FIXME: ignore all m4 files definining AX_* macros
         "libtool.m4".to_string(),
         "ltoptions.m4".to_string(),
         "ltsugar.m4".to_string(),

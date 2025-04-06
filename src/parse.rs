@@ -550,26 +550,36 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         pre_cmd_comments: Vec<builder::Newline>,
     ) -> ParseResult<B::Command, B::Error> {
-        let in_quote = self.may_quote_open();
+        self.complete_command_with_leading_comments_with_delim(pre_cmd_comments, None)
+    }
+
+    /// Identical to `Parser::and_or_lisk()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn complete_command_with_leading_comments_with_delim(
+        &mut self,
+        pre_cmd_comments: Vec<builder::Newline>,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<B::Command, B::Error> {
+        let in_quote = self.may_open_quote();
         if in_quote {
             // @kui8shi
             // Since `pre_cmd_comments` do not include linebreaks after opening quote character,
             // We need to sweep newlines again.
             self.linebreak();
         }
-        let cmd = self.and_or_list()?;
+        let cmd = self.and_or_list_with_delim(delims)?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
             Semi => {
-                self.may_quote_close(in_quote);
+                self.may_close_quote(in_quote);
                 (builder::SeparatorKind::Semi, self.newline())
             },
             Amp  => {
-                self.may_quote_close(in_quote);
+                self.may_close_quote(in_quote);
                 (builder::SeparatorKind::Amp , self.newline())
             };
             _ => {
-                self.may_quote_close(in_quote);
+                self.may_close_quote(in_quote);
                 match self.newline() {
                     n@Some(_) => (builder::SeparatorKind::Newline, n),
                     None => (builder::SeparatorKind::Other, None),
@@ -586,7 +596,16 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// Commands are left associative. For example `foo || bar && baz`
     /// parses to `And(Or(foo, bar), baz)`.
     pub fn and_or_list(&mut self) -> ParseResult<B::CommandList, B::Error> {
-        let first = self.pipeline()?;
+        self.and_or_list_with_delim(None)
+    }
+
+    /// Identical to `Parser::and_or_lisk()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn and_or_list_with_delim(
+        &mut self,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<B::CommandList, B::Error> {
+        let first = self.pipeline_with_delim(delims)?;
         let mut rest = Vec::new();
 
         loop {
@@ -598,7 +617,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             });
 
             let post_sep_comments = self.linebreak();
-            let next = self.pipeline()?;
+            let next = self.pipeline_with_delim(delims)?;
 
             let next = if is_and {
                 ast::AndOr::And(next)
@@ -616,6 +635,15 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     ///
     /// For example `[!] foo | bar`.
     pub fn pipeline(&mut self) -> ParseResult<B::ListableCommand, B::Error> {
+        self.pipeline_with_delim(None)
+    }
+
+    /// Identical to `Parser::pipeline()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn pipeline_with_delim(
+        &mut self,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<B::ListableCommand, B::Error> {
         self.skip_whitespace();
         let bang = eat_maybe!(self, {
             Bang => { true };
@@ -630,7 +658,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 return Err(self.make_unexpected_err());
             }
 
-            let cmd = self.command()?;
+            let cmd = self.command_with_delim(delims)?;
 
             eat_maybe!(self, {
                 Pipe => { cmds.push((self.linebreak(), cmd)) };
@@ -646,13 +674,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Parses any compound or individual command.
     pub fn command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
+        self.command_with_delim(None)
+    }
+
+    /// Identical to `Parser::command()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn command_with_delim(
+        &mut self,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<B::PipeableCommand, B::Error> {
         if let Some(kw) = self.next_compound_command_type() {
             let compound = self.compound_command_internal(Some(kw))?;
             Ok(self.builder.compound_command_into_pipeable(compound)?)
         } else if let Some(fn_def) = self.maybe_function_declaration()? {
             Ok(fn_def)
         } else {
-            self.simple_command()
+            self.simple_command_with_delim(delims)
         }
     }
 
@@ -661,6 +698,15 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// A valid command is expected to have at least an executable name, or a single
     /// variable assignment or redirection. Otherwise an error will be returned.
     pub fn simple_command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
+        self.simple_command_with_delim(None)
+    }
+
+    /// Identical to `Parser::simple_command()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn simple_command_with_delim(
+        &mut self,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<B::PipeableCommand, B::Error> {
         use crate::ast::{RedirectOrCmdWord, RedirectOrEnvVar};
 
         let mut vars = Vec::new();
@@ -684,7 +730,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     let value = if let Some(&Whitespace(_)) = self.iter.peek() {
                         None
                     } else {
-                        self.word()?
+                        let w =
+                            match self.word_preserve_trailing_whitespace_raw_with_delim(delims)? {
+                                Some(w) => Some(self.builder.word(w)?),
+                                None => None,
+                            };
+                        self.skip_whitespace();
+                        w
                     };
                     vars.push(RedirectOrEnvVar::EnvVar(var, value));
 
@@ -699,7 +751,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             // If we find a redirect we should keep checking for
             // more redirects or assignments. Otherwise we will either
             // run into the command name or the end of the simple command.
-            let exec = match self.redirect()? {
+            let exec = match self.redirect_with_delim(delims)? {
                 Some(Ok(redirect)) => {
                     vars.push(RedirectOrEnvVar::Redirect(redirect));
                     continue;
@@ -719,7 +771,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         // Now that all assignments are taken care of, any other occurances of `=` will be
         // treated as literals when we attempt to parse a word out.
         loop {
-            match self.redirect()? {
+            match self.redirect_with_delim(delims)? {
                 Some(Ok(redirect)) => cmd_args.push(RedirectOrCmdWord::Redirect(redirect)),
                 Some(Err(w)) => cmd_args.push(RedirectOrCmdWord::CmdWord(w)),
                 None => break,
@@ -766,6 +818,15 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
+        self.redirect_with_delim(None)
+    }
+
+    /// Identical to `Parser::redirect()` but
+    /// allows for specifying an arbitrary token as a word delimiter.
+    fn redirect_with_delim(
+        &mut self,
+        delims: Option<&[Token]>,
+    ) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
         fn could_be_numeric<C, M>(word: &WordKind<C, M>) -> bool {
             let simple_could_be_numeric = |word: &SimpleWordKind<C, M>| match *word {
                 SimpleWordKind::Star
@@ -820,17 +881,18 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         if self.iter.peek() == Some(&Comma) {
             // @kui8shi
-            // The end of commands as a macro argument can be colon.
+            // Comma can be the end of macro argument of command type.
             return Ok(None);
         }
 
-        let (src_fd, src_fd_as_word) = match self.word_preserve_trailing_whitespace_raw()? {
-            None => (None, None),
-            Some(w) => match as_num(&w) {
-                Some(num) => (Some(num), Some(w)),
-                None => return Ok(Some(Err(self.builder.word(w)?))),
-            },
-        };
+        let (src_fd, src_fd_as_word) =
+            match self.word_preserve_trailing_whitespace_raw_with_delim(delims)? {
+                None => (None, None),
+                Some(w) => match as_num(&w) {
+                    Some(num) => (Some(num), Some(w)),
+                    None => return Ok(Some(Err(self.builder.word(w)?))),
+                },
+            };
 
         let redir_tok = match self.iter.peek() {
             Some(&Less) | Some(&Great) | Some(&DGreat) | Some(&Clobber) | Some(&LessAnd)
@@ -905,7 +967,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     }
 
     /// Consume opening quote if exists.
-    fn may_quote_open(&mut self) -> bool {
+    fn may_open_quote(&mut self) -> bool {
         let (quote_open, _quote_close) = self.get_quotes();
         if self.iter.peek() == Some(&quote_open) {
             self.iter.next();
@@ -915,7 +977,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         }
     }
     /// Consume closing quote token if in quotes.
-    fn may_quote_close(&mut self, in_quote: bool) {
+    fn may_close_quote(&mut self, in_quote: bool) {
         let (_quote_open, quote_close) = self.get_quotes();
         if in_quote && self.iter.peek() == Some(&quote_close) {
             self.iter.next();
@@ -1300,6 +1362,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     continue;
                 }
 
+                Some(&Whitespace(_)) if in_quote > 0 => {
+                    self.iter.next();
+                    continue;
+                }
+
                 Some(&Newline) | Some(&ParenOpen) | Some(&ParenClose) | Some(&Semi)
                 | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf) | Some(&DSemi)
                 | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
@@ -1307,18 +1374,20 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | Some(&Whitespace(_)) | None => break,
             }
 
-            if let Some(ref token) = self.iter.peek().cloned() {
-                // @kui8shi
-                // Skip the outermost quoting tokens.
+            if let Some(token) = self.iter.peek() {
                 if token == &quote_open {
                     in_quote += 1;
                     if in_quote == 1 {
+                        // @kui8shi
+                        // Skip the outermost quoting tokens.
                         self.iter.next();
                         continue;
                     }
                 } else if token == &quote_close {
                     in_quote -= 1;
                     if in_quote == 0 {
+                        // @kui8shi
+                        // Skip the outermost quoting tokens.
                         self.iter.next();
                         continue;
                     } else if in_quote < 0 {
@@ -2015,8 +2084,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
             Some(CompoundCmdKeyword::Macro(name)) => {
                 let cmds = self.macro_call(&[&name])?;
-                let io = self.redirect_list()?;
-                self.builder.macro_into_compound_command(cmds, io)?
+                // @kui8shi
+                // FIXME: Macro of commands often do not end with newline, hence the following commands
+                // will be incorrectly treated as redirection words, leading to an error.
+                // To ease the problem, we ban the redirection after macro of commands.
+                // let io = self.redirect_list()?;
+                self.builder.macro_into_compound_command(cmds, vec![])?
             }
 
             None => return Err(self.make_unexpected_err()),
@@ -2276,9 +2349,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
 
             let (quote_open, quote_close) = self.get_quotes();
-            if self.iter.peek() == Some(&quote_open) {
+            let mut in_quote = if self.iter.peek() == Some(&quote_open) {
                 self.iter.next();
-            }
+                true
+            } else {
+                false
+            };
 
             let mut patterns = Vec::new();
             loop {
@@ -2299,6 +2375,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     }
 
                     Some(tok) if tok == &quote_close && !patterns.is_empty() => {
+                        in_quote = false;
                         self.iter.next();
                         self.skip_whitespace();
                         eat!(self, { ParenClose => {} });
@@ -2310,6 +2387,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     None => return Err(()).map_err(missing_esac!()),
                     _ => return Err(self.make_unexpected_err()),
                 }
+            }
+            if in_quote && self.iter.peek() == Some(&quote_close) {
+                self.iter.next();
             }
 
             let pattern_comment = self.newline();
@@ -2370,21 +2450,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             .collect::<Vec<&str>>();
         let (quote_open, _) = self.get_quotes();
         if let Some(name) = self.peek_reserved_word_with_prefix(&names, Some(&quote_open)) {
-            if m4_macro::get_macro(name).unwrap().1.arg_types.len() == 0 {
-                Some(name.to_string())
-            } else {
-                let mut peeked = self.iter.multipeek();
-                while peeked.peek_next() != Some(&Name(name.into())) {}
-                if peeked.peek_next() == Some(&ParenOpen) {
-                    // @kui8shi
-                    // If the macro takes arguments, we expect the parenthesis follows the macro
-                    // name. We could refine this logic by explicitly specifying each argument
-                    // type whether it is optional or needed.
-                    Some(name.to_string())
-                } else {
-                    None
-                }
-            }
+            Some(name.to_string())
+            // if m4_macro::get_macro(name).unwrap().1.arg_types.len() == 0 {
+            //     Some(name.to_string())
+            // } else {
+            //     let mut peeked = self.iter.multipeek();
+            //     while peeked.peek_next() != Some(&Name(name.into())) {}
+            //     if peeked.peek_next() == Some(&ParenOpen) {
+            //         // @kui8shi
+            //         // If the macro takes arguments, we expect the parenthesis follows the macro
+            //         // name. We could refine this logic by explicitly specifying each argument
+            //         // type whether it is optional or needed.
+            //         Some(name.to_string())
+            //     } else {
+            //         None
+            //     }
+            // }
         } else {
             // check if user-defined macro call
             let found_quote_open = self.iter.peek() == Some(&quote_open);
@@ -2427,7 +2508,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let name = self
             .reserved_word(name_candidates)
             .map_err(|()| self.make_unexpected_err())?;
-        let macro_entry = m4_macro::get_macro(name).map(|(_, v)| v.clone());
+        let (name, macro_entry) = match m4_macro::get_macro(name) {
+            Some((k, v)) => (k.as_ref(), Some(v)),
+            None => (name, None),
+        };
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
@@ -2437,7 +2521,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let peeked_args = self.peek_macro_args()?;
         let num_args = peeked_args.len();
         let args = if let Some(signature) = macro_entry {
-            let arg_types = signature.arg_types;
+            let arg_types = &signature.arg_types;
             let ret_type = signature.ret_type;
             let repeat = signature.repeat;
             let mut parsed_args = Vec::new();
@@ -2464,6 +2548,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
                     }
+                    // FIXME: Macro body should be parsed as the same type as its return type.
                     M4Type::Prog | M4Type::Body => {
                         self.skip_macro_arg()?;
                         M4Argument::Program(peeked_arg.clone())
@@ -2550,12 +2635,19 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     M4Type::Cmds => {
                         if let Some(&Comma | &ParenClose) = self.iter.peek() {
                             // we do not found any effective commands.
-                            // empty arguments like '[]' were already skipped by self.linebreak().
+                            // empty arguments like '[]' were already skipped by `Parser::linebreak()`.
                             M4Argument::Commands(Vec::new())
                         } else {
+                            let delims = if i < num_args - 1 {
+                                // argument should end with comma
+                                &[Comma, quote_close.clone()]
+                            } else {
+                                // argument should end with ')'
+                                &[ParenClose, quote_close.clone()]
+                            };
                             let cmds = self
                                 .command_group(CommandGroupDelimiters {
-                                    exact_tokens: &[ParenClose, Comma, quote_close.clone()],
+                                    exact_tokens: delims,
                                     ..Default::default()
                                 })?
                                 .commands;
@@ -3013,9 +3105,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         cfg: CommandGroupDelimiters<'_, '_, '_>,
     ) -> ParseResult<builder::CommandGroup<B::Command>, B::Error> {
-        let in_quote = self.may_quote_open();
+        let in_quote = self.may_open_quote();
         let group = self.command_group_internal(cfg)?;
-        self.may_quote_close(in_quote);
+        self.may_close_quote(in_quote);
         if group.commands.is_empty() {
             Err(self.make_unexpected_err())
         } else {
@@ -3043,6 +3135,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         let mut cmds = Vec::new();
         let mut trailing_comments = Vec::new();
+        let mut in_quote = false;
         loop {
             if found_delim(self) {
                 break;
@@ -3056,7 +3149,20 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 break;
             }
 
-            cmds.push(self.complete_command_with_leading_comments(leading_comments)?);
+            // quoting could start/end in the middle of command group
+            in_quote = self.may_open_quote();
+            let mut delims = cfg.exact_tokens.to_vec();
+            if in_quote {
+                let (_, quote_close) = self.get_quotes();
+                delims.push(quote_close);
+            }
+
+            cmds.push(self.complete_command_with_leading_comments_with_delim(
+                leading_comments,
+                Some(&delims),
+            )?);
+
+            self.may_close_quote(in_quote);
         }
 
         Ok(builder::CommandGroup {
@@ -3592,5 +3698,46 @@ mod tests {
             Ok(macro_call),
             make_parser("TEST_MACRO").macro_call(&["TEST_MACRO"])
         )
+    }
+
+    #[test]
+    fn test_macro_call_with_unquoted_command_argument() {
+        let input = "AC_ARG_ENABLE(option,\n\
+                      help-string,\n\
+                      enabled=yes,\n\
+                      enabled=no)";
+        let mut p = make_parser(input);
+        let res = p.complete_command();
+        if let Err(e) = &res {
+            println!("{}", e);
+        }
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_quoted_pattern() {
+        let input = r"case $gcc_prog_ld in
+                        # Accept absolute paths.
+                        [[\\/]* | [A-Za-z]:[\\/]*)]
+                          LD='gcc_prog_ld' ;;
+                        esac";
+        let mut p = make_parser(input);
+        let res = p.complete_command();
+        if let Err(e) = &res {
+            println!("{}", e);
+        }
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_nonempty_quotes() {
+        let input = r"var=`cmd [][[ ]]`";
+        let input = r"errors=`(${CC} [][[ ]]-c conftest.adb) 2>&1 || echo failure`";
+        let mut p = make_parser(input);
+        let res = p.complete_command();
+        if let Err(e) = &res {
+            println!("{}", e);
+        }
+        assert!(res.is_ok());
     }
 }

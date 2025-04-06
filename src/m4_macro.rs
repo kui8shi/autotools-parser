@@ -3106,7 +3106,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_CXX",
                 M4MacroSignature {
                     arg_types: vec![
-                        Arr(Blank), // compiler-search-list
+                        Arr(Blank), // [compiler-search-list]
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
@@ -4087,6 +4087,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Lit, // end='
                     ],
                     ret_type: Some(Ctrl),
+                    ..Default::default()
+                },
+            ),
+            (
+                "changequote",
+                M4MacroSignature {
+                    replaced_by: Some("m4_changequote".into()),
                     ..Default::default()
                 },
             ),

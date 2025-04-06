@@ -111,8 +111,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             '{' => CurlyOpen,
             '}' => CurlyClose,
             '[' => {
-                if let Some(&']') = self.inner.peek() {
-                    self.inner.next();
+                if self.next_is(']') {
                     EmptyQuotes
                 } else {
                     SquareOpen

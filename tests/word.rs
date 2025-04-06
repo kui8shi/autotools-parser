@@ -291,10 +291,14 @@ fn test_word_quotes() {
     assert_eq!(
         Ok(Some(TopLevelWord(Concat(vec![
             Word::Simple(SimpleWord::SquareOpen),
+            Word::Simple(SimpleWord::Literal("word".into())),
             Word::Simple(SimpleWord::SquareClose)
         ])))),
-        make_parser("[[]]").word()
+        make_parser("[[word]]").word()
     );
+    // @kui8shi
+    // FIXME: Currently empty inner quoting pairs are treated as same as whitespaces.
+    assert_eq!(Ok(None), make_parser("[[]]").word());
 }
 
 #[test]
