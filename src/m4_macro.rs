@@ -3990,6 +3990,15 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ..Default::default()
                 },
             ),
+            (
+                "AC_TRY_RUN",
+                M4MacroSignature {
+                    // actually there is a difference that
+                    // the first input is wrapped by AC_LANG_SOURCE.
+                    replaced_by: Some("AC_RUN_IFELSE".into()),
+                    ..Default::default()
+                },
+            ),
             // Defininig C preprocessor symbols
             (
                 "AC_DEFINE",

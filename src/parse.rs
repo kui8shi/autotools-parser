@@ -416,6 +416,7 @@ pub struct Parser<I, B> {
     quotes: (Token, Token),
     quote_stack: Vec<QuoteContext>,
     last_quote_pos: Option<SourcePos>,
+    unknown_macro: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -528,6 +529,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 quote_level: 0,
             }],
             last_quote_pos: None,
+            unknown_macro: false,
         }
     }
 
@@ -2629,7 +2631,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             } else {
                 Some(name.to_string())
             }
-        } else {
+        } else if self.unknown_macro {
             // check if user-defined macro call
             let found_quote_open = self.iter.peek() == Some(&quote_open);
             let mut peeked = self.iter.multipeek();
@@ -2639,7 +2641,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             if let Some(Name(name)) = peeked.peek_next() {
                 let name = name.to_string();
                 // @kui8shi
-                // We disallow user-defined macro names with lower-case characters to
+                // We ignore user-defined macro names with lower-case characters to
                 // distinct the macro calls and shell command/function calls without any arguments.
                 // It is just a heuristic.
                 // They are indistinguishable especially in the case of no arguments.
@@ -2662,6 +2664,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             } else {
                 None
             }
+        } else {
+            None
         }
     }
 
