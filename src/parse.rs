@@ -261,8 +261,7 @@ enum CompoundCmdKeyword {
 }
 
 /// Used to configure when `Parser::command_group` stops parsing commands.
-#[derive(Debug, PartialEq, Eq, Clone)]
-#[derive(Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct CommandGroupDelimiters<'a, 'b, 'c> {
     /// Any token which appears after a complete command separator (e.g. `;`, `&`, or a
     /// newline) will be considered a delimeter for the command group.
@@ -273,7 +272,6 @@ pub struct CommandGroupDelimiters<'a, 'b, 'c> {
     /// Any token which matches this provided set will be considered a delimeter.
     pub exact_tokens: &'c [Token],
 }
-
 
 /// An `Iterator` adapter around a `Parser`.
 ///
@@ -543,11 +541,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// For example, `foo && bar; baz` will yield two complete
     /// commands: `And(foo, bar)`, and `Simple(baz)`.
     pub fn complete_command(&mut self) -> ParseResult<Option<B::Command>, B::Error> {
+        let start_pos = self.iter.pos();
         let pre_cmd_comments = self.linebreak();
 
         if self.iter.peek().is_some() {
             Ok(Some(self.complete_command_with_leading_comments(
                 pre_cmd_comments,
+                start_pos,
             )?))
         } else {
             if !pre_cmd_comments.is_empty() {
@@ -564,6 +564,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn complete_command_with_leading_comments(
         &mut self,
         mut pre_cmd_comments: Vec<builder::Newline>,
+        start_pos: SourcePos,
     ) -> ParseResult<B::Command, B::Error> {
         if self.may_open_quote(None, false) {
             // @kui8shi
@@ -590,9 +591,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 }
             }
         });
-        Ok(self
-            .builder
-            .complete_command(pre_cmd_comments, cmd, sep, cmd_comment)?)
+        let end_pos = self.iter.pos();
+        Ok(self.builder.complete_command(
+            pre_cmd_comments,
+            cmd,
+            sep,
+            cmd_comment,
+            (start_pos.line, end_pos.line),
+        )?)
     }
 
     /// Parses compound AND/OR commands.
@@ -660,7 +666,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Parses any compound or individual command.
     pub fn command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
-        let pos = self.iter.pos();
         if let Some(kw) = self.next_compound_command_type() {
             let compound = self.compound_command_internal(Some(kw))?;
             Ok(self.builder.compound_command_into_pipeable(compound)?)
@@ -1445,7 +1450,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 [&quote_open, &Dollar, &quote_close]
                     .iter()
                     .all(|t| m.peek_next() == Some(t))
-            }; if res {
+            };
+            if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
                 words.push(Simple(self.parameter_raw()?));
@@ -1648,7 +1654,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 [&quote_open, &Dollar, &quote_close]
                     .iter()
                     .all(|t| m.peek_next() == Some(t))
-            }; if res {
+            };
+            if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
                 store!(self.parameter_raw()?);
@@ -2915,10 +2922,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
             self.linebreak();
             eat!(self, {ParenClose => {}});
-            peeked_args
-                .into_iter()
-                .map(M4Argument::Unknown)
-                .collect()
+            peeked_args.into_iter().map(M4Argument::Unknown).collect()
         };
         assert!(!self.in_quote());
         self.pop_quote_context();
@@ -3433,6 +3437,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 self.iter.next();
             }
 
+            let start_pos = self.iter.pos();
+
             let leading_comments = self.linebreak();
 
             if found_delim(self) || self.iter.peek().is_none() {
@@ -3447,7 +3453,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 self.iter.next();
             }
 
-            cmds.push(self.complete_command_with_leading_comments(leading_comments)?);
+            cmds.push(self.complete_command_with_leading_comments(leading_comments, start_pos)?);
         }
 
         Ok(builder::CommandGroup {

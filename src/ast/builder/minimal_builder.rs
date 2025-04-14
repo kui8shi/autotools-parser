@@ -7,11 +7,12 @@ use super::{
     IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind, SimpleWordKind, WordKind,
 };
 
+use crate::ast::minimal::Command::*;
 use crate::{
     ast::{
         builder::compress,
         minimal::{
-            Command, CompoundCommand, Condition, GuardBodyPair, Operator, Word, WordFragment,
+            CommandWrapper, CompoundCommand, Condition, GuardBodyPair, Operator, Word, WordFragment,
         },
         AndOr, Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
         PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
@@ -44,7 +45,7 @@ impl<T> Builder for MinimalBuilder<T>
 where
     T: Into<String> + From<String> + Clone + Debug,
 {
-    type Command = Command<T>;
+    type Command = CommandWrapper<T>;
     type CommandList = Self::Command;
     type ListableCommand = Self::Command;
     type PipeableCommand = Self::Command;
@@ -59,12 +60,22 @@ where
     /// was delimited by an ampersand or the command itself otherwise.
     fn complete_command(
         &mut self,
-        _pre_cmd_comments: Vec<Newline>,
+        pre_cmd_comments: Vec<Newline>,
         list: Self::CommandList,
         _separator: SeparatorKind,
         _cmd_comment: Option<Newline>,
+        range: (usize, usize),
     ) -> Result<Self::Command, Self::Error> {
-        Ok(list)
+        let mut raw_cmd = list;
+        let comments = (!pre_cmd_comments.is_empty())
+            .then_some(pre_cmd_comments.into_iter().filter_map(|n| n.0).collect())
+            .filter(|c: &String| !c.is_empty());
+        let complete_cmd = {
+            raw_cmd.comment = comments;
+            raw_cmd.range = Some(range);
+            raw_cmd
+        };
+        Ok(complete_cmd)
     }
 
     /// Constructs a `Command::List` node with the provided inputs.
@@ -82,14 +93,14 @@ where
                     .then_some(comments.into_iter().filter_map(|n| n.0).collect());
                 match andor {
                     AndOr::And(next) => {
-                        cmd = Command::Compound(
-                            CompoundCommand::And(make_condition(cmd)?, next.into()),
+                        cmd = CommandWrapper::new_with_comment(
+                            Compound(CompoundCommand::And(make_condition(cmd)?, next.into())),
                             comments,
                         )
                     }
                     AndOr::Or(next) => {
-                        cmd = Command::Compound(
-                            CompoundCommand::Or(make_condition(cmd)?, next.into()),
+                        cmd = CommandWrapper::new_with_comment(
+                            Compound(CompoundCommand::Or(make_condition(cmd)?, next.into())),
                             comments,
                         )
                     }
@@ -108,16 +119,16 @@ where
     ) -> Result<Self::ListableCommand, Self::Error> {
         debug_assert!(!cmds.is_empty());
         if cmds.len() > 1 {
-            Ok(Command::Compound(
-                CompoundCommand::Pipe(bang, cmds.into_iter().map(|(_, c)| c).collect()),
-                None,
-            ))
+            Ok(CommandWrapper::new(Compound(CompoundCommand::Pipe(
+                bang,
+                cmds.into_iter().map(|(_, c)| c).collect(),
+            ))))
         } else if bang {
             // FIXME Suppport bang in the case of single command with other than fake Pipe.
-            Ok(Command::Compound(
-                CompoundCommand::Pipe(bang, vec![cmds.pop().unwrap().1]),
-                None,
-            ))
+            Ok(CommandWrapper::new(Compound(CompoundCommand::Pipe(
+                bang,
+                vec![cmds.pop().unwrap().1],
+            ))))
         } else {
             Ok(cmds.pop().unwrap().1)
         }
@@ -138,11 +149,10 @@ where
                     // to disallow redirections before any command word appears
                     Err(BuilderError::UnsupportedSyntax)
                 }
-                RedirectOrEnvVar::EnvVar(k, v) => Ok(Command::Assignment(
+                RedirectOrEnvVar::EnvVar(k, v) => Ok(CommandWrapper::new(Assignment(
                     k.into(),
                     v.unwrap_or(Word::Empty),
-                    None,
-                )),
+                ))),
             })
             .collect::<Result<Vec<Self::Command>, _>>()?;
 
@@ -159,23 +169,25 @@ where
             if assignments.len() == 1 {
                 Ok(assignments.pop().unwrap())
             } else {
-                Ok(Command::Compound(CompoundCommand::Brace(assignments), None))
+                Ok(CommandWrapper::new(Compound(CompoundCommand::Brace(
+                    assignments,
+                ))))
             }
         } else {
-            let mut cmd = Command::Cmd(cmd_words, None);
+            let mut cmd = CommandWrapper::new(Cmd(cmd_words));
             if !redirects.is_empty() {
                 for r in redirects {
-                    cmd = Command::Compound(CompoundCommand::Redirect(Box::new(cmd), r), None);
+                    cmd =
+                        CommandWrapper::new(Compound(CompoundCommand::Redirect(Box::new(cmd), r)));
                 }
             }
             if assignments.is_empty() {
                 Ok(cmd)
             } else {
                 assignments.push(cmd);
-                Ok(Command::Compound(
-                    CompoundCommand::Subshell(assignments),
-                    None,
-                ))
+                Ok(CommandWrapper::new(Compound(CompoundCommand::Subshell(
+                    assignments,
+                ))))
             }
         }
     }
@@ -192,7 +204,7 @@ where
         let mut cmd = CompoundCommand::Brace(cmds);
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -210,7 +222,7 @@ where
         let mut cmd = CompoundCommand::Subshell(cmds);
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -241,7 +253,7 @@ where
         };
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -293,7 +305,7 @@ where
         };
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -324,7 +336,7 @@ where
         };
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -358,7 +370,7 @@ where
         };
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -369,7 +381,7 @@ where
         &mut self,
         cmd: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(Command::Compound(cmd, None))
+        Ok(CommandWrapper::new(Compound(cmd)))
     }
 
     /// Constructs a `Command::FunctionDef` node with the provided inputs.
@@ -379,13 +391,12 @@ where
         _post_name_comments: Vec<Newline>,
         body: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(Command::Compound(
+        Ok(CommandWrapper::new(Compound(
             CompoundCommand::FunctionDef {
                 name,
-                body: Box::new(Command::Compound(body, None)),
+                body: Box::new(CommandWrapper::new(Compound(body))),
             },
-            None,
-        ))
+        )))
     }
 
     fn macro_into_compound_command(
@@ -396,7 +407,7 @@ where
         let mut cmd = CompoundCommand::Macro(macro_call);
         if !redirects.is_empty() {
             for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(Command::Compound(cmd, None)), r)
+                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
             }
         }
         Ok(cmd)
@@ -683,14 +694,16 @@ where
     Ok(operator)
 }
 
-type MinimalWord<V> = Word<V, Command<V>>;
+type MinimalWord<V> = Word<V, CommandWrapper<V>>;
 
-fn make_condition<V>(cmd: Command<V>) -> Result<Condition<MinimalWord<V>, Command<V>>, BuilderError>
+fn make_condition<V>(
+    cmd: CommandWrapper<V>,
+) -> Result<Condition<MinimalWord<V>, CommandWrapper<V>>, BuilderError>
 where
     V: Into<String> + Clone + Debug,
 {
-    match &cmd {
-        Command::Cmd(words, _) => {
+    match &cmd.cmd {
+        Cmd(words) => {
             let first_word = words.first().unwrap();
             if let Word::Single(w) = first_word {
                 match w {
@@ -698,7 +711,7 @@ where
                         Some(Condition::Cond(parse_condition(&words[1..])?))
                     }
                     WordFragment::Literal(v) if v.clone().into() == "eval" => Some(
-                        Condition::Eval(vec![Command::Cmd(words[1..].to_owned(), None)]),
+                        Condition::Eval(vec![CommandWrapper::new(Cmd(words[1..].to_owned()))]),
                     ),
                     WordFragment::Subst(s) => match s.as_ref() {
                         ParameterSubstitution::Command(cmds) => Some(Condition::Eval(cmds.clone())),
@@ -710,11 +723,11 @@ where
                 None
             }
         }
-        Command::Compound(CompoundCommand::And(first, second), _) => Some(Condition::And(
+        Compound(CompoundCommand::And(first, second)) => Some(Condition::And(
             Box::new(first.clone()),
             Box::new(make_condition(*second.clone())?),
         )),
-        Command::Compound(CompoundCommand::Or(first, second), _) => Some(Condition::Or(
+        Compound(CompoundCommand::Or(first, second)) => Some(Condition::Or(
             Box::new(first.clone()),
             Box::new(make_condition(*second.clone())?),
         )),

@@ -13,6 +13,7 @@ use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
 use crate::m4_macro::SideEffect;
+use crate::parse::SourcePos;
 
 mod default_builder;
 mod empty_builder;
@@ -297,6 +298,7 @@ pub trait Builder {
         list: Self::CommandList,
         separator: SeparatorKind,
         cmd_comment: Option<Newline>,
+        range: (usize, usize),
     ) -> Result<Self::Command, Self::Error>;
 
     /// Invoked when multiple commands are parsed which are separated by `&&` or `||`.
@@ -519,8 +521,9 @@ macro_rules! impl_builder_body {
             list: Self::CommandList,
             separator: SeparatorKind,
             cmd_comment: Option<Newline>,
+            range: (usize, usize),
         ) -> Result<Self::Command, Self::Error> {
-            (**self).complete_command(pre_cmd_comments, list, separator, cmd_comment)
+            (**self).complete_command(pre_cmd_comments, list, separator, cmd_comment, range)
         }
 
         fn and_or_list(

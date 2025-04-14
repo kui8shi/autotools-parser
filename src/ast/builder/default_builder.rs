@@ -74,10 +74,12 @@ macro_rules! default_builder {
                                 pre_cmd_comments: Vec<Newline>,
                                 list: Self::CommandList,
                                 separator: SeparatorKind,
-                                cmd_comment: Option<Newline>)
+                                cmd_comment: Option<Newline>,
+                                range: (usize, usize),
+            )
                 -> Result<Self::Command, Self::Error>
             {
-                self.0.complete_command(pre_cmd_comments, list, separator, cmd_comment)
+                self.0.complete_command(pre_cmd_comments, list, separator, cmd_comment, range)
             }
 
             fn and_or_list(&mut self,
@@ -318,6 +320,7 @@ where
         list: Self::CommandList,
         separator: SeparatorKind,
         _cmd_comment: Option<Newline>,
+        _range: (usize, usize),
     ) -> Result<Self::Command, Self::Error> {
         let cmd = match separator {
             SeparatorKind::Semi | SeparatorKind::Other | SeparatorKind::Newline => {

@@ -154,14 +154,45 @@ pub enum CompoundCommand<W, C> {
     Macro(M4Macro<W, C>),
 }
 
+/// Complete the parsed command with additional information such as comment, line numbers, etc.
+#[derive(Debug, Clone)]
+pub struct CommandWrapper<V> {
+    /// trailing comments
+    pub comment: Option<String>,
+    /// range of line numbers in the original script.
+    pub range: Option<(usize, usize)>,
+    /// the command parsed
+    pub cmd: Command<V>,
+}
+
+impl<V: Eq> Eq for CommandWrapper<V> {}
+
+impl<V: PartialEq> PartialEq for CommandWrapper<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmd == other.cmd
+    }
+}
+
+impl<V> CommandWrapper<V> {
+    /// Create a new command wrapper without any extra information
+    pub fn new(cmd: Command<V>) -> Self {
+        Self::new_with_comment(cmd, None)
+    }
+
+    /// Wrap a command with its trailing comments
+    pub fn new_with_comment(cmd: Command<V>, comment: Option<String>) -> Self {
+        Self { comment, range: None, cmd }
+    }
+}
+
 /// Represents a command, which can be an assignment, compound command, simple command,
 /// or macro command.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command<V> {
     /// An assignment command that associates a value with a variable.
-    Assignment(V, Word<V, Self>, Option<String>),
+    Assignment(V, Word<V, CommandWrapper<V>>),
     /// A compound command such as loops, conditionals, or case statements.
-    Compound(CompoundCommand<Word<V, Self>, Self>, Option<String>),
+    Compound(CompoundCommand<Word<V, CommandWrapper<V>>, CommandWrapper<V>>),
     /// A simple command represented by a sequence of words.
-    Cmd(Vec<Word<V, Self>>, Option<String>),
+    Cmd(Vec<Word<V, CommandWrapper<V>>>),
 }

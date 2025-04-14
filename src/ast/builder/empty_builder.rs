@@ -40,6 +40,7 @@ impl Builder for EmptyBuilder {
         _cmd: Self::Command,
         _separator: SeparatorKind,
         _cmd_comment: Option<Newline>,
+        _range: (usize, usize),
     ) -> Result<Self::Command, Self::Error> {
         Ok(())
     }

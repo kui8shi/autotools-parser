@@ -1,6 +1,8 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::minimal::*;
 use autoconf_parser::ast::Redirect;
+use autoconf_parser::ast::minimal::CompoundCommand;
+use autoconf_parser::ast::minimal::Command::*;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::m4_macro::M4Argument;
 use autoconf_parser::m4_macro::SideEffect;
@@ -16,7 +18,7 @@ pub fn make_parser(src: &str) -> MinimalParser<Lexer<std::str::Chars<'_>>> {
 #[test]
 fn test_macro_with_unusual_style_of_newline() {
     let input = r#"dnl comment
-MACRO(arg1, arg2)[]dnl unusual style of comment
+MACRO(arg1, arg2)[]dnl unusual style of commentf
 "#;
     let mut p = make_parser(input);
     let expected = m4_macro_as_cmd("MACRO", &[m4_raw("arg1"), m4_raw("arg2")]);
@@ -36,13 +38,12 @@ fn test_condition() {
     let mut p = make_parser(input);
 
     // Create expected structure with AND condition
-    let expected = MinimalCommand::Compound(
+    let expected = MinimalCommand::new(Compound(
         CompoundCommand::And(
             Condition::Cond(Operator::Eq(word(var("foo")), word(lit("yes")))),
-            Box::new(Command::Assignment("foo".into(), word(lit("1")), None)),
+            Box::new(CommandWrapper::new(Assignment("foo".into(), word(lit("1"))))),
         ),
-        None,
-    );
+    ));
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -221,8 +222,8 @@ esac],
 
     let mut p = make_parser(input);
     match p.complete_command() {
-        Ok(cmd) => {
-            if let Some(Command::Compound(CompoundCommand::Macro(m), None)) = cmd {
+        Ok(Some(cmd)) => {
+            if let Compound(CompoundCommand::Macro(m)) = cmd.cmd {
                 assert_eq!("AC_ARG_ENABLE", m.name);
                 for (actual, expected) in m.args.iter().zip(expected_args.iter()) {
                     assert_eq!(actual, expected);
@@ -231,6 +232,9 @@ esac],
                 println!("{:?}", cmd);
                 panic!();
             }
+        }
+        Ok(None) => {
+            panic!();
         }
         Err(e) => {
             println!("{}", e);
@@ -245,9 +249,9 @@ fn test_backticked_command_in_macro_argument() {
     let mut p = make_parser(input);
 
     // Create the backticked shell command for the sed expression
-    let echo_cmd = MinimalCommand::Cmd(vec![word(lit("echo")), word(var("name"))], None);
+    let echo_cmd = MinimalCommand::new(Cmd(vec![word(lit("echo")), word(var("name"))]));
 
-    let sed_cmd = MinimalCommand::Cmd(
+    let sed_cmd = MinimalCommand::new(Cmd(
         vec![
             word(lit("sed")),
             word(lit("-e")),
@@ -255,12 +259,11 @@ fn test_backticked_command_in_macro_argument() {
             word(lit("-e")),
             word(lit("s:[\\/]:_:g")),
         ],
-        None,
-    );
+    ));
 
     // Create the pipeline command
     let piped_cmd =
-        MinimalCommand::Compound(CompoundCommand::Pipe(false, vec![echo_cmd, sed_cmd]), None);
+        MinimalCommand::new(Compound(CompoundCommand::Pipe(false, vec![echo_cmd, sed_cmd])));
 
     // Create the entire backticked expression
     let backtick_expr = WordFragment::Subst(Box::new(MinimalParameterSubstitution::Command(vec![
@@ -268,15 +271,15 @@ fn test_backticked_command_in_macro_argument() {
     ])));
 
     // Create the assignment command
-    let assign_expr = Command::Assignment("var".into(), Word::Single(backtick_expr), None);
+    let assign_expr = CommandWrapper::new(Assignment("var".into(), Word::Single(backtick_expr)));
 
     // Create the expected define macro
-    let expected = MinimalCommand::Compound(
+    let expected = MinimalCommand::new(Compound(
         CompoundCommand::Macro(m4_macro(
             "m4_esyscmd",
             &[M4Argument::Commands(vec![assign_expr])],
         )),
-        None,
+    )
     );
 
     match p.complete_command() {
@@ -319,53 +322,47 @@ fn test_macro_patsubst_nested() {
     let mut p = make_parser(input);
 
     // Create expected structures for version commands
-    let version_cmd = MinimalCommand::Compound(
+    let version_cmd = MinimalCommand::new(Compound(
         CompoundCommand::Redirect(
-            Box::new(Command::Cmd(
+            Box::new(CommandWrapper::new(Cmd(
                 vec![
                     word(lit("grep")),
                     word(lit("^#define VERSION ")),
                     word(lit("config.h.in")),
                     word(lit("/dev/null")),
                 ],
-                None,
-            )),
+            ))),
             Redirect::Write(Some(2), word(lit("/dev/null"))),
         ),
-        None,
-    );
+    ));
 
-    let version_minor_cmd = Command::Compound(
+    let version_minor_cmd = CommandWrapper::new(Compound(
         CompoundCommand::Redirect(
-            Box::new(Command::Cmd(
+            Box::new(CommandWrapper::new(Cmd(
                 vec![
                     word(lit("grep")),
                     word(lit("^#define VERSION_MINOR ")),
                     word(lit("config.h.in")),
                     word(lit("/dev/null")),
                 ],
-                None,
-            )),
+            ))),
             Redirect::Write(Some(2), word(lit("/dev/null"))),
         ),
-        None,
-    );
+    ));
 
-    let version_patchlevel_cmd = Command::Compound(
+    let version_patchlevel_cmd = CommandWrapper::new(Compound(
         CompoundCommand::Redirect(
-            Box::new(Command::Cmd(
+            Box::new(CommandWrapper::new(Cmd(
                 vec![
                     word(lit("grep")),
                     word(lit("^#define VERSION_PATCHLEVEL ")),
                     word(lit("config.h.in")),
                     word(lit("/dev/null")),
                 ],
-                None,
-            )),
+            ))),
             Redirect::Write(Some(2), word(lit("/dev/null"))),
         ),
-        None,
-    );
+    ));
 
     // Create nested m4 macros for the version components
     let version_esyscmd = m4_macro("m4_esyscmd", &[M4Argument::Commands(vec![version_cmd])]);
@@ -444,8 +441,8 @@ fn test_macro_patsubst_nested() {
     ]);
 
     match p.complete_command() {
-        Ok(cmd) => {
-            if let Some(Command::Compound(CompoundCommand::Macro(m), None)) = cmd {
+        Ok(Some(cmd)) => {
+            if let Compound(CompoundCommand::Macro(m)) = cmd.cmd {
                 assert_eq!("AC_INIT", m.name);
                 assert_eq!(
                     vec![
@@ -459,6 +456,9 @@ fn test_macro_patsubst_nested() {
                 println!("{:?}", cmd);
                 panic!();
             }
+        }
+        Ok(None) => {
+            panic!();
         }
         Err(e) => {
             println!("{}", e);
