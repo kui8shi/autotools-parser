@@ -46,5 +46,5 @@ pub mod ast;
 pub mod lexer;
 pub mod m4_macro;
 pub mod parse;
-pub mod token;
 pub mod preprocess;
+pub mod token;

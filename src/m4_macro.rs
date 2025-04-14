@@ -28,38 +28,32 @@ pub enum M4Type {
     /// path string, while some variables based on the value may be generated.
     /// a colon-separated list of paths can be appended to a path string.
     /// e.g. path1:path2:path3
-    Path(Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>),
+    Path(Option<M4ExportFunc>),
     /// array of path strings separated by whitespace.
     Paths(
         ArrayDelim,
         Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>,
     ),
     /// the type string include struct member strings, e.g. `struct A.member`
-    Type(Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>),
+    Type(Option<M4ExportFunc>),
     /// array of type strings separated by comma (expecting the array to be enclosed by quotes)
-    Types(
-        ArrayDelim,
-        Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>,
-    ),
+    Types(ArrayDelim, Option<M4ExportFunc>),
     /// output shell variable name, conversions may be applied to create other variable names.
-    VarName(
-        Option<VarAttrs>,
-        Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>,
-    ),
+    VarName(Option<VarAttrs>, Option<M4ExportFunc>),
     /// library name , conversions may be applied to become variable names.
-    Library(Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>),
+    Library(Option<M4ExportFunc>),
     /// C preprocessor symbol name, conversions may be applied to become variable names.
     CPP,
     /// C symbol, conversions may be applied to become variable names.
-    Symbol(Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>),
+    Symbol(Option<M4ExportFunc>),
     /// array of C symbols, separated by whitespace.
-    Symbols(
-        ArrayDelim,
-        Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>,
-    ),
+    Symbols(ArrayDelim, Option<M4ExportFunc>),
     /// Automake conditional name.
     AMCond,
 }
+
+/// A lambda function exporging side effects.
+pub type M4ExportFunc = &'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync);
 
 /// The type of any dynamically exported information
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +111,6 @@ pub enum M4Argument<W, C> {
     /// raw literal
     Literal(String),
     /// a shell word, likes a parsed version of the literal
-    /// without any whiite spaces nor any other deliminating characters.
     Word(W),
     /// array of words
     Array(Vec<W>),
@@ -142,6 +135,101 @@ pub struct M4Macro<W, C> {
     pub name: String,
     /// m4 macro arguments
     pub args: Vec<M4Argument<W, C>>,
+    /// side effects from the call
+    pub effects: Option<SideEffect>,
+}
+
+impl<W, C> M4Macro<W, C> {
+    /// Create a new M4 macro call node.
+    pub fn new(name: String, args: Vec<M4Argument<W, C>>) -> Self {
+        Self::new_with_side_effect(name, args, None)
+    }
+
+    /// Create a new M4 macro call node with information about side effects.
+    pub fn new_with_side_effect(
+        name: String,
+        args: Vec<M4Argument<W, C>>,
+        effects: Option<SideEffect>,
+    ) -> Self {
+        Self {
+            name,
+            args,
+            effects,
+        }
+    }
+}
+
+/// Represent side effects that an operation (e.g. macro call) could produce.
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub struct SideEffect {
+    /// exported shell variables.
+    pub shell_vars: Option<Vec<Var>>,
+    /// exported shell variables.
+    pub cpp_symbols: Option<Vec<String>>,
+    /// exported path strings.
+    pub paths: Option<Vec<String>>,
+    /// exported automake conditional variables.
+    pub am_conds: Option<Vec<String>>,
+}
+
+impl From<M4MacroSignature> for SideEffect {
+    fn from(value: M4MacroSignature) -> Self {
+        SideEffect {
+            shell_vars: value.shell_vars,
+            cpp_symbols: value.cpp_symbols,
+            paths: value.paths,
+            ..Default::default()
+        }
+    }
+}
+
+impl SideEffect {
+    /// A shell variable is defined.
+    pub fn add_shell_var(&mut self, val: &str, attrs: &VarAttrs) {
+        let var = Var(val.into(), *attrs);
+        if let Some(v) = &mut self.shell_vars {
+            v.push(var)
+        } else {
+            self.shell_vars = Some(vec![var])
+        }
+    }
+
+    /// A cpp symbol is defined.
+    pub fn add_cpp_symbol(&mut self, val: &str) {
+        if let Some(v) = &mut self.cpp_symbols {
+            v.push(val.into())
+        } else {
+            self.cpp_symbols = Some(vec![val.into()])
+        }
+    }
+
+    /// A path is touched.
+    pub fn add_path(&mut self, val: &str) {
+        if let Some(v) = &mut self.paths {
+            v.push(val.into())
+        } else {
+            self.paths = Some(vec![val.into()])
+        }
+    }
+
+    /// An automake conditional variable is defined.
+    pub fn add_am_cond(&mut self, val: &str) {
+        if let Some(v) = &mut self.am_conds {
+            v.push(val.into())
+        } else {
+            self.am_conds = Some(vec![val.into()])
+        }
+    }
+
+    /// Any type of export is triggered.
+    pub fn add_side_effect(&mut self, export_type: &M4ExportType, val: &str) {
+        match export_type {
+            ExVar(attrs) => self.add_shell_var(val, attrs),
+            ExCPP => self.add_cpp_symbol(val),
+            ExPath => self.add_path(val),
+            ExAMCond => self.add_am_cond(val),
+        }
+    }
 }
 
 /// Represent the external and internal specs of a m4 macro
@@ -149,6 +237,9 @@ pub struct M4Macro<W, C> {
 pub struct M4MacroSignature {
     /// the types of macro arguments.
     pub arg_types: Vec<M4Type>,
+    /// the number of required arguments. rest of arguments are optional.
+    /// this is useful especially for macros with confusing names (e.g. define).
+    pub num_args_required: usize,
     /// the type of macro after expansion.
     pub ret_type: Option<M4Type>,
     /// repeat the part of arg_types[start..=end] as long as arguments are given.
@@ -167,12 +258,19 @@ pub struct M4MacroSignature {
     pub paths: Option<Vec<String>>,
 }
 
+impl M4MacroSignature {
+    /// Return whether the signature has any explicit side effects.
+    pub fn has_no_exports(&self) -> bool {
+        self.shell_vars.is_none() && self.cpp_symbols.is_none() && self.paths.is_none()
+    }
+}
+
 /// Represents a static shell variable
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Var(String, VarAttrs);
 
 /// Represents attributes of a shell variable
-#[derive(Debug, Clone, Default, Copy)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
 pub struct VarAttrs {
     /// called AC_SUBST on it
     pub is_subst: bool,
@@ -1134,6 +1232,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AM_SILENT_RULES",
                 M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // yes
+                    ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // by _AM_SILENT_RULES
@@ -1208,26 +1309,6 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Word,       // [value-if-not-found]
                         Path(None), // [path=$PATH]
                         Path(None), // [REJECT]
-                    ],
-                    ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::new_env("PATH")]),
-                    ..Default::default()
-                },
-            ),
-            (
-                "AC_CHECK_PROGS",
-                M4MacroSignature {
-                    arg_types: vec![
-                        VarName(
-                            Some(VarAttrs::new_output()),
-                            Some(&|s| {
-                                // variable
-                                vec![(ExVar(VarAttrs::new_internal()), format!("ac_cv_prog_{}", s))]
-                            }),
-                        ),
-                        Arr(Blank), // progs-to-check-for
-                        Word,       // [value-if-not-found]
-                        Path(None), // [path=$PATH]
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![Var::new_env("PATH")]),
@@ -2982,6 +3063,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     cpp_symbols: Some(vec![
                         // Define to empty if 'const' does not conform to ANSI C.
                         "const".into(),
+                        "ac_cv_c_const".into(),
                     ]),
                     ..Default::default()
                 },
@@ -2993,6 +3075,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     cpp_symbols: Some(vec![
                         // Define to 1 if C11-style _Generic works.
                         "const".into(),
+                        "ac_cv_c__Generic".into(),
                     ]),
                     ..Default::default()
                 },
@@ -3026,7 +3109,15 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     cpp_symbols: Some(vec![
                         // Define to '__inline__', '__inline', or empty.
                         "inline".into(),
+                        "ac_cv_c_inline".into(),
                     ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_INLINE",
+                M4MacroSignature {
+                    replaced_by: Some("AC_C_INLINE".into()),
                     ..Default::default()
                 },
             ),
@@ -4137,6 +4228,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Lit,  // name
                         Body, // body
                     ],
+                    num_args_required: 2,
                     ret_type: Some(Def),
                     ..Default::default()
                 },
@@ -4203,6 +4295,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Lit, // [radix='10']
                         Lit, // [width]
                     ],
+                    num_args_required: 1,
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -6158,8 +6251,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::new_env("SHELL".into()),
-                        Var::new_env("LC_ALL".into()),
+                        Var::new_env("SHELL"),
+                        Var::new_env("LC_ALL"),
                     ]),
                     ..Default::default()
                 },
@@ -6260,6 +6353,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Lit, // name
                     ],
                     ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "m4_require",
+                M4MacroSignature {
+                    replaced_by: Some("AC_REQUIRE".into()),
                     ..Default::default()
                 },
             ),
@@ -6666,25 +6766,6 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ..Default::default()
                 },
             ),
-            // Other macros
-            (
-                "AC_REQUIRE",
-                M4MacroSignature {
-                    arg_types: vec![
-                        Lit, // macro-name
-                    ],
-                    ret_type: None,
-                    ..Default::default()
-                },
-            ),
-            (
-                "m4_require",
-                M4MacroSignature {
-                    ret_type: None,
-                    replaced_by: Some("AC_REQUIRE".into()),
-                    ..Default::default()
-                },
-            ),
             // pkg.m4 (PKG_*) macros
             (
                 "PKG_PREREQ",
@@ -6758,8 +6839,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     shell_vars: Some(vec![
                         // $pkgconfigdir is set to $libdir/pkgconfig by default
-                        Var::new_output("pkgconfigdir".into()),
-                        Var::new_output("libdir".into()),
+                        Var::new_output("pkgconfigdir"),
+                        Var::new_output("libdir"),
                     ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
@@ -6773,8 +6854,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     shell_vars: Some(vec![
                         // $noarch_pkgconfigdir is set to $datadir/pkgconfig by default
-                        Var::new_output("noarch_pkgconfigdir".into()),
-                        Var::new_output("datadir".into()),
+                        Var::new_output("noarch_pkgconfigdir"),
+                        Var::new_output("datadir"),
                     ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
@@ -7015,6 +7096,193 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "LT_OUTPUT",
                 M4MacroSignature {
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_CMD_MAX_LEN",
+                M4MacroSignature {
+                    shell_vars: Some(vec!["max_cmd_len".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_FUNC_DLSYM_USCORE",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec!["DLSYM_USCORE".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_LIB_M",
+                M4MacroSignature {
+                    shell_vars: Some(vec![Var::new_output("LIBM")]),
+                    cpp_symbols: Some(vec!["HAVE_LIBM".into(), "HAVE_LIBMW".into()]),
+                    require: Some(vec!["AC_CANONICAL_HOST".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_CHECK_LIBM",
+                M4MacroSignature {
+                    replaced_by: Some("LT_LIB_M".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_LIB_DLLOAD",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        Var::new_output("LT_DLLOADERS"),
+                        Var::new_output("LIBADD_SHL_LOAD"),
+                    ]),
+                    cpp_symbols: Some(vec![
+                        "HAVE_LIBDL".into(),
+                        "HAVE_SHL_LOAD".into(),
+                        "HAVE_DYLD".into(),
+                        "HAVE_DLD".into(),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_PATH_LD",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        Var::new_input("with_gnu_ld"),
+                        Var::new_output("LD"),
+                        "lt_cv_path_LD".into(),
+                    ]),
+                    require: Some(vec![
+                        "AC_PROG_CC".into(),
+                        "AC_CANONICAL_HOST".into(),
+                        "AC_CANONICAL_BUILD".into(),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_PROG_LD", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_PATH_LD".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_PATH_NM",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        Var::new_output("NM"),
+                        Var::new_output("DUMPBIN"),
+                        "lt_cv_path_NM".into(),
+                        "lt_cv_path_NM".into(),
+                        "lt_cv_nm_interface".into(),
+                    ]),
+                    require: Some(vec!["AC_PROG_CC".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_PROG_NM", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_PATH_NM".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_SYS_DLOPEN_SELF",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        "enable_dlopen".into(),
+                        "enable_dlopen_self".into(),
+                        "enable_dlopen_self_static".into(),
+                        "lt_cv_dlopen_self".into(),
+                        "lt_cv_dlopen_self_static".into(),
+                        "LIBS".into(),
+                    ]),
+                    cpp_symbols: Some(vec!["HAVE_DLFCN_H".into()]),
+                    paths: Some(vec!["dlfcn.h".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LIBTOOL_DLOPEN_SELF", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_SYS_DLOPEN_SELF".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_SYS_DLOPEN_DEPLIBS",
+                M4MacroSignature {
+                    shell_vars: Some(vec!["lt_cv_sys_dlopen_deplibs".into()]),
+                    cpp_symbols: Some(vec!["LTDL_DLOPEN_DEPLIBS".into()]),
+                    require: Some(vec!["AC_CANONICAL_HOST".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LTDL_SYS_DLOPEN_DEPLIBS", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_SYS_DLOPEN_DEPLIBS".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_SYS_DLSEARCH_PATH",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        "lt_cv_sys_dlsearch_path".into(),
+                        "sys_dlsearch_path".into(),
+                    ]),
+                    cpp_symbols: Some(vec!["LTDL_DLSERCH_PATH".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LTDL_SYSSEARCHPATH", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_SYS_DLSEARCH_PATH".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_SYS_MODULE_EXIT",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        "libltdl_cv_shlibext".into(),
+                        "libltdl_cv_shext".into(),
+                        "shared_archive_member_spec".into(),
+                    ]),
+                    cpp_symbols: Some(vec![
+                        "LT_MODULE_EXT".into(),
+                        "LT_SHARED_EXT".into(),
+                        "LT_SHARED_LIB_MEMBER".into(),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LTDL_SHLIBEXT", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_SYS_MODULE_EXT".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "LT_SYS_SYMBOL_USCORE",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        "lt_cv_sys_symbol_underscore".into(),
+                        Var::new_output("sys_symbol_underscore"),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LTDL_SYMBOL_USCORE", // obsolete macro
+                M4MacroSignature {
+                    replaced_by: Some("LT_SYS_SYMBOL_USCORE".into()),
                     ..Default::default()
                 },
             ),

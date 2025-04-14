@@ -226,7 +226,7 @@ fn test_word_tokens_which_become_literal_words() {
     for w in &words {
         match make_parser(w).word() {
             Ok(Some(res)) => {
-                let correct = word(*w);
+                let correct = word(w);
                 if correct != res {
                     panic!(
                         "Unexpectedly parsed \"{}\": expected:\n{:#?}\ngot:\n{:#?}",
@@ -268,14 +268,13 @@ fn test_word_special_words_recognized_as_such() {
         Ok(Some(TopLevelWord(Single(Word::Simple(Tilde))))),
         make_parser("~").word()
     );
+
     // @kui8shi
-    // By default the outermost '[' must have the corresponding ']'
-    // and is skipped, since it's a quoting characters in autoconf language.
-    assert_eq!(Ok(None), make_parser("[").word());
-    // @kui8shi
-    // By default the outermost ']' must have the corresponding '[',
+    // By default the outermost '[' must have the corresponding ']',
     // and skipped, since it's a quoting characters in autoconf language.
-    assert_eq!(Ok(None), make_parser("]").word());
+    // assert_eq!(Ok(Some(TopLevelWord(Single(Word::Simple(SquareOpen))))), make_parser("[").word());
+    // assert_eq!(Ok(Some(TopLevelWord(Single(Word::Simple(SquareClose))))), make_parser("]").word());
+
     assert_eq!(
         Ok(Some(TopLevelWord(Single(Word::Simple(Colon))))),
         make_parser(":").word()

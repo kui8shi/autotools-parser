@@ -4,7 +4,6 @@ use crate::parse::SourcePos;
 use crate::token::Token;
 use crate::token::Token::*;
 use std::iter as std_iter;
-use std::mem;
 
 /// Indicates an error such that EOF was encountered while some unmatched
 /// tokens were still pending. The error stores the unmatched token
@@ -39,7 +38,7 @@ pub trait PositionIterator: Iterator {
     fn pos(&self) -> SourcePos;
 }
 
-impl<'a, T: PositionIterator> PositionIterator for &'a mut T {
+impl<T: PositionIterator> PositionIterator for &mut T {
     fn pos(&self) -> SourcePos {
         (**self).pos()
     }
@@ -53,7 +52,7 @@ pub trait PeekableIterator: Iterator {
     fn peek(&mut self) -> Option<&Self::Item>;
 }
 
-impl<'a, T: PeekableIterator> PeekableIterator for &'a mut T {
+impl<T: PeekableIterator> PeekableIterator for &mut T {
     fn peek(&mut self) -> Option<&Self::Item> {
         (**self).peek()
     }
@@ -153,7 +152,7 @@ impl<I: Iterator<Item = Token>> PeekableIterator for TokenIter<I> {
         // the borrow checker.
         let _ = self.multipeek().peek_next()?;
 
-        if let Some(&TokenOrPos::Tok(ref t)) = self.prev_buffered.last() {
+        if let Some(TokenOrPos::Tok(t)) = self.prev_buffered.last() {
             Some(t)
         } else {
             unreachable!("unexpected state: peeking next token failed. This is a bug!")
@@ -311,9 +310,9 @@ pub struct Multipeek<'a> {
     buf: Vec<TokenOrPos>,
 }
 
-impl<'a> Drop for Multipeek<'a> {
+impl Drop for Multipeek<'_> {
     fn drop(&mut self) {
-        let tokens = mem::replace(&mut self.buf, Vec::new());
+        let tokens = std::mem::take(&mut self.buf);
         self.iter.rewind(tokens);
     }
 }
@@ -345,7 +344,7 @@ impl<'a> Multipeek<'a> {
             }
         }
 
-        if let Some(&TokenOrPos::Tok(ref t)) = self.buf.last() {
+        if let Some(TokenOrPos::Tok(t)) = self.buf.last() {
             Some(t)
         } else {
             None

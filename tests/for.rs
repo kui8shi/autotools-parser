@@ -285,14 +285,10 @@ fn test_for_command_invalid_concat() {
 
 #[test]
 fn test_for_command_should_recognize_literals_and_names() {
-    for for_tok in vec![
-        Token::Literal(String::from("for")),
-        Token::Name(String::from("for")),
-    ] {
-        for in_tok in vec![
-            Token::Literal(String::from("in")),
-            Token::Name(String::from("in")),
-        ] {
+    for for_tok in [Token::Literal(String::from("for")),
+        Token::Name(String::from("for"))] {
+        for in_tok in [Token::Literal(String::from("in")),
+            Token::Name(String::from("in"))] {
             let mut p = make_parser_from_tokens(vec![
                 for_tok.clone(),
                 Token::Whitespace(String::from(" ")),

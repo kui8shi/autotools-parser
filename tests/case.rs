@@ -1,5 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::builder::*;
+use autoconf_parser::ast::Parameter;
+use autoconf_parser::ast::TopLevelCommand;
 use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
@@ -352,12 +354,10 @@ fn test_case_command_should_recognize_literals_and_names() {
     let case_str = String::from("case");
     let in_str = String::from("in");
     let esac_str = String::from("esac");
-    for case_tok in vec![Token::Literal(case_str.clone()), Token::Name(case_str)] {
-        for in_tok in vec![Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
-            for esac_tok in vec![
-                Token::Literal(esac_str.clone()),
-                Token::Name(esac_str.clone()),
-            ] {
+    for case_tok in [Token::Literal(case_str.clone()), Token::Name(case_str)] {
+        for in_tok in [Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
+            for esac_tok in [Token::Literal(esac_str.clone()),
+                Token::Name(esac_str.clone())] {
                 let mut p = make_parser_from_tokens(vec![
                     case_tok.clone(),
                     Token::Whitespace(String::from(" ")),
@@ -381,4 +381,102 @@ fn test_case_command_should_recognize_literals_and_names() {
             }
         }
     }
+}
+
+#[test]
+fn test_usual_case_command() {
+    let input = r#"case $var in yes) echo hi ;; esac"#;
+    let mut p = make_parser(input);
+    let res = p.case_command();
+    match p.complete_command() {
+        Ok(cmd) => {
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+            panic!();
+        }
+    }
+}
+
+#[test]
+fn test_quoted_patterns() {
+    let input = r#"case $var in
+                  [[a]* | [b]:[c]*)]    ;;  # closing quote after ')'
+                  [[a-z]]* | ?:[[b]]* ) ;;  # closing quote inside words
+                  [x] | [y])            ;;  # inside words & end with closing quotes
+                  [a | b] | [c | d])    ;;  # inside words & end with closing quotes & split '|'
+                  "a-[$][cond]")          ;;  # interpolated & quoted variable
+                  esac"#;
+    let empty_cmds = CommandGroup::<TopLevelCommand<String>> {
+        commands: vec![],
+        trailing_comments: vec![],
+    };
+    let correct = CaseFragments {
+        word: word_param(Parameter::<String>::Var("var".into())),
+        post_word_comments: vec![],
+        in_comment: Some(Newline(None)),
+        arms: vec![
+            CaseArm {
+                patterns: CasePatternFragments {
+                    pre_pattern_comments: vec![],
+                    pattern_alternatives: vec![
+                        concat_words(&["[", "a", "]", "*"]),
+                        concat_words(&["[", "b", "]", ":", "[", "c", "]", "*"]),
+                    ],
+                    pattern_comment: None,
+                },
+                body: empty_cmds.clone(),
+                arm_comment: Some(Newline(Some("# closing quote after ')'".into()))),
+            },
+            CaseArm {
+                patterns: CasePatternFragments {
+                    pre_pattern_comments: vec![],
+                    pattern_alternatives: vec![
+                        concat_words(&["[", "a-z", "]", "*"]),
+                        concat_words(&["?", ":", "[", "b", "]", "*"]),
+                    ],
+                    pattern_comment: None,
+                },
+                body: empty_cmds.clone(),
+                arm_comment: Some(Newline(Some("# closing quote inside words".into()))),
+            },
+            CaseArm {
+                patterns: CasePatternFragments {
+                    pre_pattern_comments: vec![],
+                    pattern_alternatives: vec![word("x"), word("y")],
+                    pattern_comment: None,
+                },
+                body: empty_cmds.clone(),
+                arm_comment: Some(Newline(Some(
+                    "# inside words & end with closing quotes".into(),
+                ))),
+            },
+            CaseArm {
+                patterns: CasePatternFragments {
+                    pre_pattern_comments: vec![],
+                    pattern_alternatives: vec![word("a"), word("b"), word("c"), word("d")],
+                    pattern_comment: None,
+                },
+                body: empty_cmds.clone(),
+                arm_comment: Some(Newline(Some(
+                    "# inside words & end with closing quotes & split '|'".into(),
+                ))),
+            },
+            CaseArm {
+                patterns: CasePatternFragments {
+                    pre_pattern_comments: vec![],
+                    pattern_alternatives: vec![double_quoted(&["a-", "$cond"])],
+                    pattern_comment: None,
+                },
+                body: empty_cmds.clone(),
+                arm_comment: Some(Newline(Some("# interpolated & quoted variable".into()))),
+            },
+        ],
+        post_arms_comments: vec![],
+    };
+    let mut p = make_parser(input);
+    let res = p.case_command();
+
+    assert_eq!(res, Ok(correct));
 }

@@ -117,14 +117,10 @@ fn test_do_group_invalid_concat() {
 
 #[test]
 fn test_do_group_should_recognize_literals_and_names() {
-    for do_tok in vec![
-        Token::Literal(String::from("do")),
-        Token::Name(String::from("do")),
-    ] {
-        for done_tok in vec![
-            Token::Literal(String::from("done")),
-            Token::Name(String::from("done")),
-        ] {
+    for do_tok in [Token::Literal(String::from("do")),
+        Token::Name(String::from("do"))] {
+        for done_tok in [Token::Literal(String::from("done")),
+            Token::Name(String::from("done"))] {
             let mut p = make_parser_from_tokens(vec![
                 do_tok.clone(),
                 Token::Newline,
@@ -378,12 +374,10 @@ fn test_compound_command_captures_redirections_after_command() {
 
 #[test]
 fn test_compound_command_should_delegate_literals_and_names_loop() {
-    for kw in vec![
-        Token::Literal(String::from("while")),
+    for kw in [Token::Literal(String::from("while")),
         Token::Name(String::from("while")),
         Token::Literal(String::from("until")),
-        Token::Name(String::from("until")),
-    ] {
+        Token::Name(String::from("until"))] {
         let mut p = make_parser_from_tokens(vec![
             kw,
             Token::Newline,
@@ -401,26 +395,16 @@ fn test_compound_command_should_delegate_literals_and_names_loop() {
 
 #[test]
 fn test_compound_command_should_delegate_literals_and_names_if() {
-    for if_tok in vec![
-        Token::Literal(String::from("if")),
-        Token::Name(String::from("if")),
-    ] {
-        for then_tok in vec![
-            Token::Literal(String::from("then")),
-            Token::Name(String::from("then")),
-        ] {
-            for elif_tok in vec![
-                Token::Literal(String::from("elif")),
-                Token::Name(String::from("elif")),
-            ] {
-                for else_tok in vec![
-                    Token::Literal(String::from("else")),
-                    Token::Name(String::from("else")),
-                ] {
-                    for fi_tok in vec![
-                        Token::Literal(String::from("fi")),
-                        Token::Name(String::from("fi")),
-                    ] {
+    for if_tok in [Token::Literal(String::from("if")),
+        Token::Name(String::from("if"))] {
+        for then_tok in [Token::Literal(String::from("then")),
+            Token::Name(String::from("then"))] {
+            for elif_tok in [Token::Literal(String::from("elif")),
+                Token::Name(String::from("elif"))] {
+                for else_tok in [Token::Literal(String::from("else")),
+                    Token::Name(String::from("else"))] {
+                    for fi_tok in [Token::Literal(String::from("fi")),
+                        Token::Name(String::from("fi"))] {
                         let mut p = make_parser_from_tokens(vec![
                             if_tok.clone(),
                             Token::Whitespace(String::from(" ")),
@@ -453,14 +437,10 @@ fn test_compound_command_should_delegate_literals_and_names_if() {
 
 #[test]
 fn test_compound_command_should_delegate_literals_and_names_for() {
-    for for_tok in vec![
-        Token::Literal(String::from("for")),
-        Token::Name(String::from("for")),
-    ] {
-        for in_tok in vec![
-            Token::Literal(String::from("in")),
-            Token::Name(String::from("in")),
-        ] {
+    for for_tok in [Token::Literal(String::from("for")),
+        Token::Name(String::from("for"))] {
+        for in_tok in [Token::Literal(String::from("in")),
+            Token::Name(String::from("in"))] {
             let mut p = make_parser_from_tokens(vec![
                 for_tok.clone(),
                 Token::Whitespace(String::from(" ")),
@@ -494,12 +474,10 @@ fn test_compound_command_should_delegate_literals_and_names_case() {
     let case_str = String::from("case");
     let in_str = String::from("in");
     let esac_str = String::from("esac");
-    for case_tok in vec![Token::Literal(case_str.clone()), Token::Name(case_str)] {
-        for in_tok in vec![Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
-            for esac_tok in vec![
-                Token::Literal(esac_str.clone()),
-                Token::Name(esac_str.clone()),
-            ] {
+    for case_tok in [Token::Literal(case_str.clone()), Token::Name(case_str)] {
+        for in_tok in [Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
+            for esac_tok in [Token::Literal(esac_str.clone()),
+                Token::Name(esac_str.clone())] {
                 let mut p = make_parser_from_tokens(vec![
                     case_tok.clone(),
                     Token::Whitespace(String::from(" ")),

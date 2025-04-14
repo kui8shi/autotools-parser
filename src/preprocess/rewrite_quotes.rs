@@ -4,7 +4,7 @@
 //! m4_* macros before parsing and expansion, allowing for more accurate
 //! macro processing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::lexer::Lexer;
 use crate::m4_macro::{get_macro, M4Type};
@@ -39,9 +39,10 @@ impl Default for QuoteRewriteConfig {
                 ("m4_PACKAGE_VERSION".into(), "AC_AUTOCONF_VERSION".into()),
                 // Don't know why but AC_BEFORE is error-prone.
                 ("AC_BEFORE".into(), "dnl AC_BEFORE".into()),
-                // AC_REQUIRE's argument (which is another macro name) should be re-quoted.
-                // This replacement is more inprecise but simpler solution.
+                // m4sugar somehow evaluates AC_REQUIRE.
                 ("AC_REQUIRE".into(), "dnl AC_REQUIRE".into()),
+                // Current autoconf-parser cannot recognize it.
+                ("AC_FD_CC".into(), "5".into()),
             ]),
         }
     }
@@ -50,7 +51,7 @@ impl Default for QuoteRewriteConfig {
 /// Rewrites m4 quotes in an m4/autoconf file content
 pub fn rewrite_quotes(input: &str) -> String {
     let mut rewriter = Rewriter::new(
-        Lexer::new(input.chars()).into_iter(),
+        Lexer::new(input.chars()),
         QuoteRewriteConfig::default(),
     );
     rewriter.rewrite_quotes()
@@ -58,11 +59,12 @@ pub fn rewrite_quotes(input: &str) -> String {
 
 /// Same as above but with a configuration specifying quoting characters
 pub fn rewrite_quotes_with_config(input: &str, config: QuoteRewriteConfig) -> String {
-    let mut rewriter = Rewriter::new(Lexer::new(input.chars()).into_iter(), config);
+    let mut rewriter = Rewriter::new(Lexer::new(input.chars()), config);
     rewriter.rewrite_quotes()
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+#[derive(Default)]
 struct InMacroState {
     /// the level of quoting pairs to overwrite.
     rewrite_level: isize,
@@ -72,6 +74,8 @@ struct InMacroState {
     paren_level: isize,
 }
 
+// Can be derived but explicitly implemented
+
 /// Configuration for quote rewriting
 #[derive(Debug)]
 struct Rewriter<I> {
@@ -79,6 +83,7 @@ struct Rewriter<I> {
     config: QuoteRewriteConfig,
     result: String,
     stack: Vec<InMacroState>,
+    called_macros: HashSet<String>,
 }
 
 impl<I: Iterator<Item = Token>> Rewriter<I> {
@@ -92,8 +97,17 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
             config,
             result: String::new(),
             stack: Vec::new(),
+            called_macros: HashSet::new(),
         }
     }
+}
+
+fn is_user_macro(name: &str) -> bool {
+    name.chars().next().is_some_and(|first| {
+        (first.is_ascii() && first.is_alphabetic() && first.is_uppercase()) || first == '_'
+    }) && name.chars().skip(1).all(|c| {
+        (c.is_ascii() && c.is_alphabetic() && c.is_uppercase()) || c.is_numeric() || c == '_'
+    })
 }
 
 impl<I: Iterator<Item = Token>> Rewriter<I> {
@@ -127,19 +141,49 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                     self.result.push_str(self.config.replace.get(name).unwrap());
                 }
                 Token::Name(ref name)
-                    if (self.stack.is_empty()
-                        || (self
-                            .stack
-                            .last()
-                            .is_some_and(|ctx| ctx.quote_level <= ctx.rewrite_level)))
-                        && self.iter.peek() == Some(&Token::ParenOpen) =>
+                    if self.iter.peek() == Some(&Token::ParenOpen)
+                        && !(!is_user_macro(name)
+                            && self
+                                .stack
+                                .last()
+                                .is_some_and(|ctx| ctx.quote_level > ctx.rewrite_level)) =>
                 {
                     if let Some((ref name, rewrite_level)) = self.macro_name(name) {
+                        self.called_macros.insert(name.into());
                         self.stack.push(InMacroState {
                             rewrite_level,
                             ..Default::default()
                         });
                         self.result.push_str(name);
+                    } else if name == "AC_REQUIRE" {
+                        // TODO: support m4_require
+                        assert_eq!(self.iter.next(), Some(Token::ParenOpen));
+                        if self.iter.peek().unwrap().to_string() == self.config.open_quote {
+                            self.iter.next();
+                        }
+                        let required = if let Some(Token::Name(s)) = self.iter.next() {
+                            s
+                        } else {
+                            Default::default()
+                        };
+                        if self.iter.peek().unwrap().to_string() == self.config.close_quote {
+                            self.iter.next();
+                        }
+                        assert_eq!(self.iter.next(), Some(Token::ParenClose));
+                        if !self.called_macros.contains(&required) {
+                            self.called_macros.insert(required.clone());
+                            // user-defined macro is required.
+                            // self.result.push_str(&required);
+                        } else {
+                            // m4sugar somehow evaluates AC_REQUIRE.
+                            // protect AC_REQUIRE from got evaluated
+                            self.result.push_str(&format!(
+                                "dnl {}AC_REQUIRE{}([{}])",
+                                self.config.transformed_open_quote,
+                                self.config.transformed_close_quote,
+                                &required,
+                            ))
+                        }
                     } else {
                         self.stack.push(InMacroState {
                             ..Default::default()
@@ -210,19 +254,12 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                 name
             };
             if name.starts_with("m4_") {
-                Some((name.to_string(), if is_define_macro { 2 } else { 1 }))
+                Some((name.to_string(), if is_define_macro { 1 } else { 1 }))
             } else {
                 None
             }
         } else {
-            let is_macro_name = name.chars().next().is_some_and(|first| {
-                (first.is_ascii() && first.is_alphabetic() && first.is_uppercase()) || first == '_'
-            }) && name.chars().skip(1).all(|c| {
-                (c.is_ascii() && c.is_alphabetic() && c.is_uppercase())
-                    || c.is_numeric()
-                    || c == '_'
-            });
-            is_macro_name.then_some((name.to_string(), 1))
+            is_user_macro(name).then_some((name.to_string(), 1))
         }
     }
 }
@@ -234,12 +271,14 @@ mod tests {
     #[test]
     fn test_simple_rewrite() {
         let input = "m4_define([MACRO_NAME], [macro body])";
-        let expected = "m4_define(|OPENQUOTE|MACRO_NAME|CLOSEQUOTE|, |OPENQUOTE|macro body|CLOSEQUOTE|)";
+        let expected =
+            "m4_define(|OPENQUOTE|MACRO_NAME|CLOSEQUOTE|, |OPENQUOTE|macro body|CLOSEQUOTE|)";
         assert_eq!(rewrite_quotes(input), expected);
     }
 
     #[test]
-    fn test_nested_rewrite() {
+    fn test_ac_require() {
+        // FIXME
         let input = "m4_define([GMP_M4_M4WRAP_SPURIOUS], [AC_REQUIRE([GMP_PROG_M4])])";
         let expected = "m4_define(|OPENQUOTE|GMP_M4_M4WRAP_SPURIOUS|CLOSEQUOTE|, |OPENQUOTE|AC_REQUIRE([GMP_PROG_M4])|CLOSEQUOTE|)";
         // assert_eq!(rewrite_quotes(input), expected);
@@ -285,5 +324,24 @@ mod tests {
     |OPENQUOTE||CLOSEQUOTE|)";
         let result = rewrite_quotes(input);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_nested_rewirte() {
+        let input = r#"
+    AC_CACHE_CHECK([for test],
+                    cv_test, [
+    MACRO([AAAA],
+    [cv_test="\$][1,\$][2"])
+    ])
+    "#;
+        let expected = r#"
+    AC_CACHE_CHECK([for test],
+                    cv_test, [
+    MACRO(|OPENQUOTE|AAAA|CLOSEQUOTE|,
+    |OPENQUOTE|cv_test="\$|CLOSEQUOTE||OPENQUOTE|1,\$|CLOSEQUOTE||OPENQUOTE|2"|CLOSEQUOTE|)
+    ])
+    "#;
+        assert_eq!(rewrite_quotes(input), expected);
     }
 }

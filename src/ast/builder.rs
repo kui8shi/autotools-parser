@@ -12,6 +12,7 @@
 use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
+use crate::m4_macro::SideEffect;
 
 mod default_builder;
 mod empty_builder;
@@ -461,7 +462,7 @@ pub trait Builder {
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error>;
+    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error>;
 
     /// @kui8shi
     /// Invoked when a m4 macro call is parsed.
@@ -472,6 +473,7 @@ pub trait Builder {
         &mut self,
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
+        effects: Option<SideEffect>,
     ) -> Result<Self::M4Macro, Self::Error>;
 
     /// Invoked when only comments are parsed with no commands following.
@@ -612,7 +614,7 @@ macro_rules! impl_builder_body {
         fn macro_into_word(
             &mut self,
             macro_call: Self::M4Macro,
-        ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
             (**self).macro_into_word(macro_call)
         }
 
@@ -620,8 +622,9 @@ macro_rules! impl_builder_body {
             &mut self,
             name: String,
             args: Vec<M4Argument<Self::Word, Self::Command>>,
+            effects: Option<SideEffect>,
         ) -> Result<Self::M4Macro, Self::Error> {
-            (**self).macro_call(name, args)
+            (**self).macro_call(name, args, effects)
         }
 
         fn function_declaration(
@@ -653,7 +656,7 @@ macro_rules! impl_builder_body {
     };
 }
 
-impl<'a, T: Builder + ?Sized> Builder for &'a mut T {
+impl<T: Builder + ?Sized> Builder for &mut T {
     impl_builder_body!(T);
 }
 

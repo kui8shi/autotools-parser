@@ -170,12 +170,10 @@ fn test_loop_command_invalid_concat() {
 
 #[test]
 fn test_loop_command_should_recognize_literals_and_names() {
-    for kw in vec![
-        Token::Literal(String::from("while")),
+    for kw in [Token::Literal(String::from("while")),
         Token::Name(String::from("while")),
         Token::Literal(String::from("until")),
-        Token::Name(String::from("until")),
-    ] {
+        Token::Name(String::from("until"))] {
         let mut p = make_parser_from_tokens(vec![
             kw,
             Token::Newline,

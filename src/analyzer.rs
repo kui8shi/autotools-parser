@@ -1,5 +1,4 @@
 //! Provides the higher level on-time analyses to improve parsing
-use grep::{matcher::Matcher, regex::RegexMatcher, searcher::sinks::UTF8, searcher::Searcher};
 
 use super::m4_macro::M4Type;
 

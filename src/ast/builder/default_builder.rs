@@ -178,7 +178,7 @@ macro_rules! default_builder {
                 self.0.macro_into_compound_command(macro_call, redirects)
             }
 
-            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
                 self.0.macro_into_word(macro_call)
             }
 
@@ -186,8 +186,9 @@ macro_rules! default_builder {
                 &mut self,
                 name: String,
                 args: Vec<M4Argument<Self::Word, Self::Command>>,
+                effects: Option<SideEffect>,
             ) -> Result<Self::M4Macro, Self::Error> {
-                self.0.macro_call(name, args)
+                self.0.macro_call(name, args, effects)
             }
 
             fn comments(&mut self,
@@ -347,7 +348,7 @@ where
         bang: bool,
         cmds: Vec<(Vec<Newline>, Self::PipeableCommand)>,
     ) -> Result<Self::ListableCommand, Self::Error> {
-        debug_assert_eq!(cmds.is_empty(), false);
+        debug_assert!(!cmds.is_empty());
         let mut cmds: Vec<_> = cmds.into_iter().map(|(_, c)| c).collect();
 
         // Pipe is the only AST node which allows for a status
@@ -571,19 +572,20 @@ where
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(WordKind::Simple(SimpleWordKind::Macro(
+    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        Ok(SimpleWordKind::Macro(
             macro_call.name.to_string(),
             macro_call,
-        )))
+        ))
     }
 
     fn macro_call(
         &mut self,
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
+        effects: Option<SideEffect>,
     ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(M4Macro { name, args })
+        Ok(M4Macro::new_with_side_effect(name, args, effects))
     }
 
     /// Ignored by the builder.
@@ -856,7 +858,7 @@ pub(crate) fn compress<C, M>(word: ComplexWordKind<C, M>) -> ComplexWordKind<C, 
             DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_simple).collect()),
         }),
         Concat(v) => {
-            let mut body: Vec<_> = Coalesce::new(v.into_iter(), coalesce_word).collect();
+            let mut body: Vec<_> = Coalesce::new(v, coalesce_word).collect();
             if body.len() == 1 {
                 Single(body.pop().unwrap())
             } else {

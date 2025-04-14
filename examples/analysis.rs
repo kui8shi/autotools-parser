@@ -41,7 +41,7 @@ fn count_echo_top_level(cmd: &ast::TopLevelCommand<String>) -> usize {
             .chain(list.rest.iter().map(|and_or| match and_or {
                 ast::AndOr::And(cmd) | ast::AndOr::Or(cmd) => cmd,
             }))
-            .map(|cmd| count_echo_listable(&cmd))
+            .map(|cmd| count_echo_listable(cmd))
             .sum(),
     }
 }
@@ -49,7 +49,7 @@ fn count_echo_top_level(cmd: &ast::TopLevelCommand<String>) -> usize {
 fn count_echo_listable(cmd: &ast::DefaultListableCommand) -> usize {
     match cmd {
         ast::ListableCommand::Single(cmd) => count_echo_pipeable(cmd),
-        ast::ListableCommand::Pipe(_, cmds) => cmds.into_iter().map(count_echo_pipeable).sum(),
+        ast::ListableCommand::Pipe(_, cmds) => cmds.iter().map(count_echo_pipeable).sum(),
     }
 }
 
@@ -64,7 +64,7 @@ fn count_echo_pipeable(cmd: &ast::DefaultPipeableCommand) -> usize {
 fn count_echo_compound(cmd: &ast::DefaultCompoundCommand) -> usize {
     match &cmd.kind {
         ast::CompoundCommandKind::Brace(cmds) | ast::CompoundCommandKind::Subshell(cmds) => {
-            count_echo_top_level_array(&cmds)
+            count_echo_top_level_array(cmds)
         }
 
         ast::CompoundCommandKind::While(lp) | ast::CompoundCommandKind::Until(lp) => {
@@ -84,13 +84,13 @@ fn count_echo_compound(cmd: &ast::DefaultCompoundCommand) -> usize {
 
             let num_echo_in_else = else_branch
                 .as_ref()
-                .map(|cmds| count_echo_top_level_array(&cmds))
+                .map(|cmds| count_echo_top_level_array(cmds))
                 .unwrap_or(0);
 
             num_echo_in_conditionals + num_echo_in_else
         }
 
-        ast::CompoundCommandKind::For { body, .. } => count_echo_top_level_array(&body),
+        ast::CompoundCommandKind::For { body, .. } => count_echo_top_level_array(body),
 
         ast::CompoundCommandKind::Case { arms, .. } => arms
             .iter()

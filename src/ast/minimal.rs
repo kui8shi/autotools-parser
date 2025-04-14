@@ -65,10 +65,12 @@ pub enum Operator<W> {
     Empty(W),
     /// Checks if the given word is non-empty.
     NonEmpty(W),
-    /// Checks if the given word represents a directory.
+    /// Checks if the given word represents an existing directory.
     Dir(W),
-    /// Checks if the given word represents a file.
+    /// Checks if the given word represents an existing file.
     File(W),
+    /// Checks if the given word represents a non-existing path.
+    NoExists(W),
 }
 
 /// Represents a condition for control flow, which can be a single operator-based
@@ -157,9 +159,9 @@ pub enum CompoundCommand<W, C> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command<V> {
     /// An assignment command that associates a value with a variable.
-    Assignment(V, Word<V, Self>),
+    Assignment(V, Word<V, Self>, Option<String>),
     /// A compound command such as loops, conditionals, or case statements.
-    Compound(CompoundCommand<Word<V, Self>, Self>),
+    Compound(CompoundCommand<Word<V, Self>, Self>, Option<String>),
     /// A simple command represented by a sequence of words.
-    Cmd(Vec<Word<V, Self>>),
+    Cmd(Vec<Word<V, Self>>, Option<String>),
 }

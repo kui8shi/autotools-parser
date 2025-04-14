@@ -264,7 +264,7 @@ fn test_heredoc_valid_skip_past_newlines_in_double_quotes() {
         redirects_or_cmd_words: vec![
             RedirectOrCmdWord::CmdWord(word("cat")),
             RedirectOrCmdWord::Redirect(Heredoc(None, word("here\n"))),
-            RedirectOrCmdWord::CmdWord(double_quoted("\n")),
+            RedirectOrCmdWord::CmdWord(double_quoted(&["\n"])),
             RedirectOrCmdWord::CmdWord(word("arg")),
         ],
     }));

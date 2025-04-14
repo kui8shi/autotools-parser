@@ -137,14 +137,15 @@ impl Builder for EmptyBuilder {
     fn macro_into_word(
         &mut self,
         _macro_call: Self::M4Macro,
-    ) -> Result<WordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(WordKind::Simple(SimpleWordKind::Macro("".to_owned(), ())))
+    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        Ok(SimpleWordKind::Macro("".to_owned(), ()))
     }
 
     fn macro_call(
         &mut self,
         _name: String,
         _args: Vec<M4Argument<Self::Word, Self::Command>>,
+        _effects: Option<SideEffect>,
     ) -> Result<Self::M4Macro, Self::Error> {
         Ok(())
     }

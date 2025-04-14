@@ -28,12 +28,14 @@ pub fn single_quoted(s: &str) -> TopLevelWord<String> {
     TopLevelWord(Single(Word::SingleQuoted(String::from(s))))
 }
 
-pub fn double_quoted(s: &str) -> TopLevelWord<String> {
-    TopLevelWord(Single(Word::DoubleQuoted(vec![Literal(String::from(s))])))
+pub fn double_quoted(s: &[&str]) -> TopLevelWord<String> {
+    TopLevelWord(Single(Word::DoubleQuoted(
+        s.iter().map(|e| from_str(e)).collect(),
+    )))
 }
 
 pub fn word(s: &str) -> TopLevelWord<String> {
-    TopLevelWord(Single(lit(s)))
+    TopLevelWord(Single(Word::Simple(from_str(s))))
 }
 
 pub fn word_escaped(s: &str) -> TopLevelWord<String> {
@@ -48,18 +50,66 @@ pub fn word_param(p: DefaultParameter) -> TopLevelWord<String> {
     TopLevelWord(Single(Word::Simple(Param(p))))
 }
 
+pub fn from_str(s: &str) -> DefaultSimpleWord {
+    
+    match s {
+        "[" => SquareOpen,
+        "]" => SquareClose,
+        "~" => Tilde,
+        "*" => Star,
+        "?" => Question,
+        "\\" => Escaped(s.into()),
+        ":" => Colon,
+        s => {
+            if s.starts_with("$")
+                && s.len() > 1
+                && s[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                let s = &s[1..];
+                if s.len() == 1 && s.chars().last().unwrap().is_numeric() {
+                    Param(Parameter::Positional(s.parse::<u32>().unwrap()))
+                } else {
+                    Param(Parameter::Var(s.into()))
+                }
+            } else {
+                Literal(s.into())
+            }
+        }
+    }
+}
+
+pub fn concat_words(s: &[&str]) -> TopLevelWord<String> {
+    TopLevelWord(Concat(
+        s.iter().map(|s| Word::Simple(from_str(s))).collect(),
+    ))
+}
+
 pub fn make_parser(src: &str) -> DefaultParser<Lexer<std::str::Chars<'_>>> {
     DefaultParser::new(Lexer::new(src.chars()))
 }
 
 pub fn make_parser_from_tokens(src: Vec<Token>) -> DefaultParser<std::vec::IntoIter<Token>> {
-    DefaultParser::new(src.into_iter())
+    DefaultParser::new(src)
+}
+
+pub fn cmd_args_words(cmd: &str, args: &[TopLevelWord<String>]) -> Box<DefaultSimpleCommand> {
+    let mut cmd_args = Vec::with_capacity(args.len() + 1);
+    cmd_args.push(RedirectOrCmdWord::CmdWord(word(cmd)));
+    cmd_args.extend(args.iter().map(|a| RedirectOrCmdWord::CmdWord(a.clone())));
+
+    Box::new(SimpleCommand {
+        redirects_or_env_vars: vec![],
+        redirects_or_cmd_words: cmd_args,
+    })
 }
 
 pub fn cmd_args_simple(cmd: &str, args: &[&str]) -> Box<DefaultSimpleCommand> {
     let mut cmd_args = Vec::with_capacity(args.len() + 1);
     cmd_args.push(RedirectOrCmdWord::CmdWord(word(cmd)));
-    cmd_args.extend(args.iter().map(|&a| RedirectOrCmdWord::CmdWord(word(a))));
+    cmd_args.extend(
+        args.iter()
+            .map(|&a| RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::Simple(from_str(a)))))),
+    );
 
     Box::new(SimpleCommand {
         redirects_or_env_vars: vec![],

@@ -204,7 +204,7 @@ fn test_redirect_valid_single_quoted_dup_fd() {
 
 #[test]
 fn test_redirect_valid_double_quoted_dup_fd() {
-    let correct = Redirect::DupWrite(None, double_quoted("2"));
+    let correct = Redirect::DupWrite(None, double_quoted(&["2"]));
     assert_eq!(
         Some(Ok(correct)),
         make_parser(">&\"2\"").redirect().unwrap()
