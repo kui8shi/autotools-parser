@@ -51,7 +51,6 @@ pub fn word_param(p: DefaultParameter) -> TopLevelWord<String> {
 }
 
 pub fn from_str(s: &str) -> DefaultSimpleWord {
-    
     match s {
         "[" => SquareOpen,
         "]" => SquareClose,

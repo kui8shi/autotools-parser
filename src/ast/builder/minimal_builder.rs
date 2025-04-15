@@ -143,7 +143,7 @@ where
         let mut assignments = redirects_or_env_vars
             .into_iter()
             .map(|roev| match roev {
-                RedirectOrEnvVar::Redirect(red) => {
+                RedirectOrEnvVar::Redirect(_) => {
                     // @kui8shi
                     // for simplicity of AST, we confine the command syntax
                     // to disallow redirections before any command word appears
@@ -176,10 +176,10 @@ where
         } else {
             let mut cmd = CommandWrapper::new(Cmd(cmd_words));
             if !redirects.is_empty() {
-                for r in redirects {
-                    cmd =
-                        CommandWrapper::new(Compound(CompoundCommand::Redirect(Box::new(cmd), r)));
-                }
+                cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
+                    Box::new(cmd),
+                    redirects,
+                )));
             }
             if assignments.is_empty() {
                 Ok(cmd)
@@ -203,9 +203,7 @@ where
         redirects.shrink_to_fit();
         let mut cmd = CompoundCommand::Brace(cmds);
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -221,9 +219,7 @@ where
         redirects.shrink_to_fit();
         let mut cmd = CompoundCommand::Subshell(cmds);
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -252,9 +248,7 @@ where
             LoopKind::Until => CompoundCommand::Until(guard_body_pair),
         };
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -304,9 +298,7 @@ where
             else_branch,
         };
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -335,9 +327,7 @@ where
             body,
         };
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -369,9 +359,7 @@ where
             arms,
         };
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }
@@ -406,9 +394,7 @@ where
     ) -> Result<Self::CompoundCommand, Self::Error> {
         let mut cmd = CompoundCommand::Macro(macro_call);
         if !redirects.is_empty() {
-            for r in redirects {
-                cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), r)
-            }
+            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
         }
         Ok(cmd)
     }

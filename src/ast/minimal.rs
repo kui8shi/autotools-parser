@@ -139,8 +139,8 @@ pub enum CompoundCommand<W, C> {
     Or(Condition<W, C>, Box<C>),
     /// Executes commands connecting stdout/in via a pipe.
     Pipe(bool, Vec<C>),
-    /// A command with an associated redirection.
-    Redirect(Box<C>, Redirect<W>),
+    /// A command with an associated redirections.
+    Redirect(Box<C>, Vec<Redirect<W>>),
     /// A command that is executed in the background.
     Background(Box<C>),
     /// A function declaration
@@ -181,7 +181,11 @@ impl<V> CommandWrapper<V> {
 
     /// Wrap a command with its trailing comments
     pub fn new_with_comment(cmd: Command<V>, comment: Option<String>) -> Self {
-        Self { comment, range: None, cmd }
+        Self {
+            comment,
+            range: None,
+            cmd,
+        }
     }
 }
 

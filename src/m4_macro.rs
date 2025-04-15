@@ -6259,10 +6259,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AS_INIT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![
-                        Var::new_env("SHELL"),
-                        Var::new_env("LC_ALL"),
-                    ]),
+                    shell_vars: Some(vec![Var::new_env("SHELL"), Var::new_env("LC_ALL")]),
                     ..Default::default()
                 },
             ),

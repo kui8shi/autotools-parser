@@ -50,10 +50,7 @@ impl Default for QuoteRewriteConfig {
 
 /// Rewrites m4 quotes in an m4/autoconf file content
 pub fn rewrite_quotes(input: &str) -> String {
-    let mut rewriter = Rewriter::new(
-        Lexer::new(input.chars()),
-        QuoteRewriteConfig::default(),
-    );
+    let mut rewriter = Rewriter::new(Lexer::new(input.chars()), QuoteRewriteConfig::default());
     rewriter.rewrite_quotes()
 }
 
@@ -63,8 +60,7 @@ pub fn rewrite_quotes_with_config(input: &str, config: QuoteRewriteConfig) -> St
     rewriter.rewrite_quotes()
 }
 
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct InMacroState {
     /// the level of quoting pairs to overwrite.
     rewrite_level: isize,

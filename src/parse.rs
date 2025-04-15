@@ -365,7 +365,7 @@ where
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
-/// let mut parser = Parser::with_builder(lexer, RcBuilder::new());
+/// let mut parser = Parser::with_builder(lexer, RcBuilder::new(), false);
 /// assert!(parser.complete_command().unwrap().is_some());
 /// ```
 ///
@@ -414,7 +414,7 @@ pub struct Parser<I, B> {
     quotes: (Token, Token),
     quote_stack: Vec<QuoteContext>,
     last_quote_pos: Option<SourcePos>,
-    unknown_macro: bool,
+    detect_macro: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -436,7 +436,15 @@ impl<I: Iterator<Item = Token>, B: Builder + Default> Parser<I, B> {
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
-        Parser::with_builder(iter.into_iter(), Default::default())
+        Parser::with_builder(iter.into_iter(), Default::default(), false)
+    }
+
+    /// Creates a new Parser with options
+    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> Parser<I, B>
+    where
+        T: IntoIterator<Item = Token, IntoIter = I>,
+    {
+        Parser::with_builder(iter.into_iter(), Default::default(), detect_macro)
     }
 }
 
@@ -517,7 +525,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     }
 
     /// Creates a new Parser from a Token iterator and provided AST builder.
-    pub fn with_builder(iter: I, builder: B) -> Self {
+    pub fn with_builder(iter: I, builder: B, detect_macro: bool) -> Self {
         Parser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
@@ -527,7 +535,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 quote_level: 0,
             }],
             last_quote_pos: None,
-            unknown_macro: false,
+            detect_macro,
         }
     }
 
@@ -990,6 +998,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         consume
     }
+
     /// Consume closing quote token if in quotes.
     ///
     /// This implementation is sound for multiple calls without token consumptions.
@@ -2212,7 +2221,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         kw: Option<CompoundCmdKeyword>,
     ) -> ParseResult<B::CompoundCommand, B::Error> {
-        self.may_open_quote(Some(1), true);
+        self.may_open_quote(None, true);
         let cmd = match kw.or_else(|| self.next_compound_command_type()) {
             Some(CompoundCmdKeyword::If) => {
                 let fragments = self.if_command()?;
@@ -2638,7 +2647,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             } else {
                 Some(name.to_string())
             }
-        } else if self.unknown_macro {
+        } else if self.detect_macro {
             // check if user-defined macro call
             let found_quote_open = self.iter.peek() == Some(&quote_open);
             let mut peeked = self.iter.multipeek();

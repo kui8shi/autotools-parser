@@ -1,8 +1,8 @@
 #![deny(rust_2018_idioms)]
+use autoconf_parser::ast::minimal::Command::*;
+use autoconf_parser::ast::minimal::CompoundCommand;
 use autoconf_parser::ast::minimal::*;
 use autoconf_parser::ast::Redirect;
-use autoconf_parser::ast::minimal::CompoundCommand;
-use autoconf_parser::ast::minimal::Command::*;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::m4_macro::M4Argument;
 use autoconf_parser::m4_macro::SideEffect;
@@ -12,7 +12,84 @@ mod minimal_util;
 use minimal_util::*;
 
 pub fn make_parser(src: &str) -> MinimalParser<Lexer<std::str::Chars<'_>>> {
-    MinimalParser::new(Lexer::new(src.chars()))
+    MinimalParser::new_with_config(Lexer::new(src.chars()), true)
+}
+
+#[test]
+fn test_macro_with_raw_literal() {
+    let input = r#"AC_ARG_ENABLE([val], ,[case "${val}" in
+        yes) flag=true ;;
+        no)  flag=false ;;
+        *)   AC_MSG_ERROR([bad value ${val}]) ;;
+    esac])"#;
+
+    let mut p = make_parser(input);
+    dbg!(p.complete_command().unwrap().unwrap());
+}
+
+#[test]
+fn test_macro_call_with_empty_parentheses() {
+    let mut p = make_parser("AC_MSG_ERROR()");
+    let correct = m4_macro_as_cmd("AC_MSG_ERROR", &[m4_lit("")]);
+    assert_eq!(correct, p.complete_command().unwrap().unwrap());
+}
+
+#[test]
+fn test_nested_macro_calls() {
+    let input = r#"AC_MSG_CHECKING([for FEATURE in $EXAMPLE_DIR/sub/path])
+AC_CACHE_VAL([example_cv_feature],
+    [AS_IF([test -d $EXAMPLE_DIR/sub/path],
+        [example_cv_feature=yes],
+        [example_cv_feature=no])])
+AC_MSG_RESULT([$example_cv_feature])"#;
+
+    let p = make_parser(input);
+    for res in p {
+        match res {
+            Ok(cmd) => {
+                dbg!(cmd);
+            }
+            Err(e) => {
+                println!("{}", e);
+                panic!();
+            }
+        }
+    }
+}
+
+#[test]
+fn test_macro_with_special_characters() {
+    let input = r#"AC_DEFINE([EXAMPLE_PATH], ["${prefix}/share/example\nx=`date`\n"], [Path with special characters])"#;
+
+    let mut p = make_parser(input);
+    let cmd = p.complete_command().unwrap();
+    assert!(cmd.is_some());
+    dbg!(&cmd);
+}
+
+#[test]
+fn test_macro_with_complex_array_argument() {
+    let input = r#"AC_CHECK_FUNCS([a
+                                   b=arg
+                                   c[with-brackets]
+                                   "d with spaces"], 
+                                  [ACTION-IF-FOUND], 
+                                  [ACTION-IF-NOT-FOUND])"#;
+
+    let mut p = make_parser(input);
+    let cmd = p.complete_command().unwrap();
+    assert!(cmd.is_some());
+    dbg!(&cmd);
+}
+
+#[test]
+fn test_macro_with_shell_command_containing_brackets() {
+    let input = r#"AC_SUBST([EXAMPLE], [`find $srcdir -name "*.h" | grep -v test | sort | sed 's/\(.*\)/"\1" \\/g'`])"#;
+
+    let mut p = make_parser(input);
+    let cmd = p.complete_command().unwrap();
+    assert!(cmd.is_some());
+    dbg!(&cmd);
 }
 
 #[test]
@@ -38,12 +115,13 @@ fn test_condition() {
     let mut p = make_parser(input);
 
     // Create expected structure with AND condition
-    let expected = MinimalCommand::new(Compound(
-        CompoundCommand::And(
-            Condition::Cond(Operator::Eq(word(var("foo")), word(lit("yes")))),
-            Box::new(CommandWrapper::new(Assignment("foo".into(), word(lit("1"))))),
-        ),
-    ));
+    let expected = MinimalCommand::new(Compound(CompoundCommand::And(
+        Condition::Cond(Operator::Eq(word(var("foo")), word(lit("yes")))),
+        Box::new(CommandWrapper::new(Assignment(
+            "foo".into(),
+            word(lit("1")),
+        ))),
+    )));
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -251,19 +329,19 @@ fn test_backticked_command_in_macro_argument() {
     // Create the backticked shell command for the sed expression
     let echo_cmd = MinimalCommand::new(Cmd(vec![word(lit("echo")), word(var("name"))]));
 
-    let sed_cmd = MinimalCommand::new(Cmd(
-        vec![
-            word(lit("sed")),
-            word(lit("-e")),
-            word(lit(r"/\//s:^[^/]*/::")),
-            word(lit("-e")),
-            word(lit("s:[\\/]:_:g")),
-        ],
-    ));
+    let sed_cmd = MinimalCommand::new(Cmd(vec![
+        word(lit("sed")),
+        word(lit("-e")),
+        word(lit(r"/\//s:^[^/]*/::")),
+        word(lit("-e")),
+        word(lit("s:[\\/]:_:g")),
+    ]));
 
     // Create the pipeline command
-    let piped_cmd =
-        MinimalCommand::new(Compound(CompoundCommand::Pipe(false, vec![echo_cmd, sed_cmd])));
+    let piped_cmd = MinimalCommand::new(Compound(CompoundCommand::Pipe(
+        false,
+        vec![echo_cmd, sed_cmd],
+    )));
 
     // Create the entire backticked expression
     let backtick_expr = WordFragment::Subst(Box::new(MinimalParameterSubstitution::Command(vec![
@@ -274,13 +352,10 @@ fn test_backticked_command_in_macro_argument() {
     let assign_expr = CommandWrapper::new(Assignment("var".into(), Word::Single(backtick_expr)));
 
     // Create the expected define macro
-    let expected = MinimalCommand::new(Compound(
-        CompoundCommand::Macro(m4_macro(
-            "m4_esyscmd",
-            &[M4Argument::Commands(vec![assign_expr])],
-        )),
-    )
-    );
+    let expected = MinimalCommand::new(Compound(CompoundCommand::Macro(m4_macro(
+        "m4_esyscmd",
+        &[M4Argument::Commands(vec![assign_expr])],
+    ))));
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -322,47 +397,35 @@ fn test_macro_patsubst_nested() {
     let mut p = make_parser(input);
 
     // Create expected structures for version commands
-    let version_cmd = MinimalCommand::new(Compound(
-        CompoundCommand::Redirect(
-            Box::new(CommandWrapper::new(Cmd(
-                vec![
-                    word(lit("grep")),
-                    word(lit("^#define VERSION ")),
-                    word(lit("config.h.in")),
-                    word(lit("/dev/null")),
-                ],
-            ))),
-            Redirect::Write(Some(2), word(lit("/dev/null"))),
-        ),
-    ));
+    let version_cmd = MinimalCommand::new(Compound(CompoundCommand::Redirect(
+        Box::new(CommandWrapper::new(Cmd(vec![
+            word(lit("grep")),
+            word(lit("^#define VERSION ")),
+            word(lit("config.h.in")),
+            word(lit("/dev/null")),
+        ]))),
+        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
+    )));
 
-    let version_minor_cmd = CommandWrapper::new(Compound(
-        CompoundCommand::Redirect(
-            Box::new(CommandWrapper::new(Cmd(
-                vec![
-                    word(lit("grep")),
-                    word(lit("^#define VERSION_MINOR ")),
-                    word(lit("config.h.in")),
-                    word(lit("/dev/null")),
-                ],
-            ))),
-            Redirect::Write(Some(2), word(lit("/dev/null"))),
-        ),
-    ));
+    let version_minor_cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
+        Box::new(CommandWrapper::new(Cmd(vec![
+            word(lit("grep")),
+            word(lit("^#define VERSION_MINOR ")),
+            word(lit("config.h.in")),
+            word(lit("/dev/null")),
+        ]))),
+        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
+    )));
 
-    let version_patchlevel_cmd = CommandWrapper::new(Compound(
-        CompoundCommand::Redirect(
-            Box::new(CommandWrapper::new(Cmd(
-                vec![
-                    word(lit("grep")),
-                    word(lit("^#define VERSION_PATCHLEVEL ")),
-                    word(lit("config.h.in")),
-                    word(lit("/dev/null")),
-                ],
-            ))),
-            Redirect::Write(Some(2), word(lit("/dev/null"))),
-        ),
-    ));
+    let version_patchlevel_cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
+        Box::new(CommandWrapper::new(Cmd(vec![
+            word(lit("grep")),
+            word(lit("^#define VERSION_PATCHLEVEL ")),
+            word(lit("config.h.in")),
+            word(lit("/dev/null")),
+        ]))),
+        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
+    )));
 
     // Create nested m4 macros for the version components
     let version_esyscmd = m4_macro("m4_esyscmd", &[M4Argument::Commands(vec![version_cmd])]);

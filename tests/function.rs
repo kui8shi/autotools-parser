@@ -414,8 +414,10 @@ fn test_function_declaration_invalid_concat() {
 
 #[test]
 fn test_function_declaration_should_recognize_literals_and_names_for_fn_keyword() {
-    for fn_tok in [Token::Literal(String::from("function")),
-        Token::Name(String::from("function"))] {
+    for fn_tok in [
+        Token::Literal(String::from("function")),
+        Token::Name(String::from("function")),
+    ] {
         let mut p = make_parser_from_tokens(vec![
             fn_tok,
             Token::Whitespace(String::from(" ")),

@@ -1,6 +1,6 @@
 # autoconf-parser
 
-A Rust library for parsing Unix shell commands.
+A Rust library for parsing, analyzing, and splitting autoconf script
 
 ## Quick Start
 First, add this to your `Cargo.toml`:

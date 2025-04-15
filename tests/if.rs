@@ -267,16 +267,26 @@ fn test_if_command_invalid_concat() {
 
 #[test]
 fn test_if_command_should_recognize_literals_and_names() {
-    for if_tok in [Token::Literal(String::from("if")),
-        Token::Name(String::from("if"))] {
-        for then_tok in [Token::Literal(String::from("then")),
-            Token::Name(String::from("then"))] {
-            for elif_tok in [Token::Literal(String::from("elif")),
-                Token::Name(String::from("elif"))] {
-                for else_tok in [Token::Literal(String::from("else")),
-                    Token::Name(String::from("else"))] {
-                    for fi_tok in [Token::Literal(String::from("fi")),
-                        Token::Name(String::from("fi"))] {
+    for if_tok in [
+        Token::Literal(String::from("if")),
+        Token::Name(String::from("if")),
+    ] {
+        for then_tok in [
+            Token::Literal(String::from("then")),
+            Token::Name(String::from("then")),
+        ] {
+            for elif_tok in [
+                Token::Literal(String::from("elif")),
+                Token::Name(String::from("elif")),
+            ] {
+                for else_tok in [
+                    Token::Literal(String::from("else")),
+                    Token::Name(String::from("else")),
+                ] {
+                    for fi_tok in [
+                        Token::Literal(String::from("fi")),
+                        Token::Name(String::from("fi")),
+                    ] {
                         let mut p = make_parser_from_tokens(vec![
                             if_tok.clone(),
                             Token::Whitespace(String::from(" ")),

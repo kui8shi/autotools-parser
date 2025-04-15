@@ -257,8 +257,10 @@ fn test_command_parses_quoted_compound_commands_as_simple_commands() {
 
 #[test]
 fn test_command_should_delegate_literals_and_names_loop_while() {
-    for kw in [Token::Literal(String::from("while")),
-        Token::Name(String::from("while"))] {
+    for kw in [
+        Token::Literal(String::from("while")),
+        Token::Name(String::from("while")),
+    ] {
         let mut p = make_parser_from_tokens(vec![
             kw,
             Token::Newline,
@@ -284,8 +286,10 @@ fn test_command_should_delegate_literals_and_names_loop_while() {
 
 #[test]
 fn test_command_should_delegate_literals_and_names_loop_until() {
-    for kw in [Token::Literal(String::from("until")),
-        Token::Name(String::from("until"))] {
+    for kw in [
+        Token::Literal(String::from("until")),
+        Token::Name(String::from("until")),
+    ] {
         let mut p = make_parser_from_tokens(vec![
             kw,
             Token::Newline,
@@ -311,16 +315,26 @@ fn test_command_should_delegate_literals_and_names_loop_until() {
 
 #[test]
 fn test_command_should_delegate_literals_and_names_if() {
-    for if_tok in [Token::Literal(String::from("if")),
-        Token::Name(String::from("if"))] {
-        for then_tok in [Token::Literal(String::from("then")),
-            Token::Name(String::from("then"))] {
-            for elif_tok in [Token::Literal(String::from("elif")),
-                Token::Name(String::from("elif"))] {
-                for else_tok in [Token::Literal(String::from("else")),
-                    Token::Name(String::from("else"))] {
-                    for fi_tok in [Token::Literal(String::from("fi")),
-                        Token::Name(String::from("fi"))] {
+    for if_tok in [
+        Token::Literal(String::from("if")),
+        Token::Name(String::from("if")),
+    ] {
+        for then_tok in [
+            Token::Literal(String::from("then")),
+            Token::Name(String::from("then")),
+        ] {
+            for elif_tok in [
+                Token::Literal(String::from("elif")),
+                Token::Name(String::from("elif")),
+            ] {
+                for else_tok in [
+                    Token::Literal(String::from("else")),
+                    Token::Name(String::from("else")),
+                ] {
+                    for fi_tok in [
+                        Token::Literal(String::from("fi")),
+                        Token::Name(String::from("fi")),
+                    ] {
                         let mut p = make_parser_from_tokens(vec![
                             if_tok.clone(),
                             Token::Whitespace(String::from(" ")),
@@ -361,10 +375,14 @@ fn test_command_should_delegate_literals_and_names_if() {
 
 #[test]
 fn test_command_should_delegate_literals_and_names_for() {
-    for for_tok in [Token::Literal(String::from("for")),
-        Token::Name(String::from("for"))] {
-        for in_tok in [Token::Literal(String::from("in")),
-            Token::Name(String::from("in"))] {
+    for for_tok in [
+        Token::Literal(String::from("for")),
+        Token::Name(String::from("for")),
+    ] {
+        for in_tok in [
+            Token::Literal(String::from("in")),
+            Token::Name(String::from("in")),
+        ] {
             let mut p = make_parser_from_tokens(vec![
                 for_tok.clone(),
                 Token::Whitespace(String::from(" ")),
@@ -408,8 +426,10 @@ fn test_command_should_delegate_literals_and_names_case() {
     let esac_str = String::from("esac");
     for case_tok in [Token::Literal(case_str.clone()), Token::Name(case_str)] {
         for in_tok in [Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
-            for esac_tok in [Token::Literal(esac_str.clone()),
-                Token::Name(esac_str.clone())] {
+            for esac_tok in [
+                Token::Literal(esac_str.clone()),
+                Token::Name(esac_str.clone()),
+            ] {
                 let mut p = make_parser_from_tokens(vec![
                     case_tok.clone(),
                     Token::Whitespace(String::from(" ")),
@@ -445,8 +465,10 @@ fn test_command_should_delegate_literals_and_names_case() {
 
 #[test]
 fn test_command_should_delegate_literals_and_names_for_function_declaration() {
-    for fn_tok in [Token::Literal(String::from("function")),
-        Token::Name(String::from("function"))] {
+    for fn_tok in [
+        Token::Literal(String::from("function")),
+        Token::Name(String::from("function")),
+    ] {
         let mut p = make_parser_from_tokens(vec![
             fn_tok,
             Token::Whitespace(String::from(" ")),

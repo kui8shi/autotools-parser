@@ -356,8 +356,10 @@ fn test_case_command_should_recognize_literals_and_names() {
     let esac_str = String::from("esac");
     for case_tok in [Token::Literal(case_str.clone()), Token::Name(case_str)] {
         for in_tok in [Token::Literal(in_str.clone()), Token::Name(in_str.clone())] {
-            for esac_tok in [Token::Literal(esac_str.clone()),
-                Token::Name(esac_str.clone())] {
+            for esac_tok in [
+                Token::Literal(esac_str.clone()),
+                Token::Name(esac_str.clone()),
+            ] {
                 let mut p = make_parser_from_tokens(vec![
                     case_tok.clone(),
                     Token::Whitespace(String::from(" ")),

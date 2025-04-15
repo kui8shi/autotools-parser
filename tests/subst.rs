@@ -492,7 +492,9 @@ fn test_parameter_substitution_words_can_have_spaces_and_escaped_curlies() {
         Alternative(false, var, Some(word)),
     ];
 
-    let src = ["%", "%%", "#", "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+"];
+    let src = [
+        "%", "%%", "#", "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+",
+    ];
 
     for (i, s) in substs.into_iter().enumerate() {
         let src = format!("${{foo_bar123{}foo{{\\}} \t\r \\\nbar \t\r }}", src[i]);
@@ -528,8 +530,10 @@ fn test_parameter_substitution_words_can_start_with_pound() {
         Alternative(false, var, Some(word)),
     ];
 
-    let src = ["%", "%%", //"#", // Let's not confuse the pound in the word with a substitution
-        "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+"];
+    let src = [
+        "%", "%%", //"#", // Let's not confuse the pound in the word with a substitution
+        "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+",
+    ];
 
     for (i, s) in substs.into_iter().enumerate() {
         let src = format!("${{foo_bar123{}#foo{{\\}} \t\r \\\nbar \t\r }}", src[i]);
@@ -565,7 +569,9 @@ fn test_parameter_substitution_words_can_be_parameters_or_substitutions_as_well(
         Alternative(false, var, Some(word)),
     ];
 
-    let src = ["%", "%%", "#", "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+"];
+    let src = [
+        "%", "%%", "#", "##", ":-", "-", ":=", "=", ":?", "?", ":+", "+",
+    ];
 
     for (i, s) in substs.into_iter().enumerate() {
         let src = format!("${{foo_bar123{}$@${{foo##bar}}}}", src[i]);
