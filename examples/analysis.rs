@@ -1,15 +1,15 @@
-//! An example of how one may analyze a shell program. In this case,
-//! we traverse the parsed AST and count up how many times an "echo"
-//! command appears in the source.
+//! An example of how to use the DependencyAnalyzer to analyze variable dependencies
+//! in a shell script or autoconf file.
 
-use autoconf_parser::ast;
+use autoconf_parser::analyzer::DependencyAnalyzer;
 use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::DefaultParser;
+use autoconf_parser::parse::MinimalParser;
 use owned_chars::OwnedCharsExt;
 
 use std::io::{stdin, BufRead, BufReader};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Read input from stdin
     let stdin = BufReader::new(stdin())
         .lines()
         .map(|result| result.expect("stdin error"))
@@ -18,119 +18,120 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             line.into_chars()
         });
 
-    // Initialize our token lexer and shell parser with the program's input
+    // Initialize the lexer and parser
     let lex = Lexer::new(stdin);
-    let parser = DefaultParser::new(lex);
+    let parser = MinimalParser::new(lex);
 
-    let mut num_echo = 0usize;
-    for cmd in parser {
-        num_echo += count_echo_top_level(&cmd?);
-    }
+    // Create and run the dependency analyzer
+    let mut analyzer = DependencyAnalyzer::new(parser);
+    analyzer.analyze();
 
-    println!("total number of echo commands: {}", num_echo);
-    Ok(())
-}
+    // Print information about the analyzed script
+    println!("Total commands: {}", analyzer.command_count());
 
-fn count_echo_top_level_array(cmds: &[ast::TopLevelCommand<String>]) -> usize {
-    cmds.iter().map(count_echo_top_level).sum()
-}
-
-fn count_echo_top_level(cmd: &ast::TopLevelCommand<String>) -> usize {
-    match &cmd.0 {
-        ast::Command::Job(list) | ast::Command::List(list) => std::iter::once(&list.first)
-            .chain(list.rest.iter().map(|and_or| match and_or {
-                ast::AndOr::And(cmd) | ast::AndOr::Or(cmd) => cmd,
-            }))
-            .map(|cmd| count_echo_listable(cmd))
-            .sum(),
-    }
-}
-
-fn count_echo_listable(cmd: &ast::DefaultListableCommand) -> usize {
-    match cmd {
-        ast::ListableCommand::Single(cmd) => count_echo_pipeable(cmd),
-        ast::ListableCommand::Pipe(_, cmds) => cmds.iter().map(count_echo_pipeable).sum(),
-    }
-}
-
-fn count_echo_pipeable(cmd: &ast::DefaultPipeableCommand) -> usize {
-    match cmd {
-        ast::PipeableCommand::Simple(cmd) => count_echo_simple(cmd),
-        ast::PipeableCommand::Compound(cmd) => count_echo_compound(cmd),
-        ast::PipeableCommand::FunctionDef(_, cmd) => count_echo_compound(cmd),
-    }
-}
-
-fn count_echo_compound(cmd: &ast::DefaultCompoundCommand) -> usize {
-    match &cmd.kind {
-        ast::CompoundCommandKind::Brace(cmds) | ast::CompoundCommandKind::Subshell(cmds) => {
-            count_echo_top_level_array(cmds)
+    // Display all variables and their definitions
+    let mut all_vars = std::collections::HashSet::new();
+    for i in 0..analyzer.command_count() {
+        if let Some(defines) = analyzer.get_defined_variables(i) {
+            all_vars.extend(defines.clone());
         }
-
-        ast::CompoundCommandKind::While(lp) | ast::CompoundCommandKind::Until(lp) => {
-            count_echo_top_level_array(&lp.guard) + count_echo_top_level_array(&lp.body)
-        }
-
-        ast::CompoundCommandKind::If {
-            conditionals,
-            else_branch,
-        } => {
-            let num_echo_in_conditionals = conditionals
-                .iter()
-                .map(|gbp| {
-                    count_echo_top_level_array(&gbp.guard) + count_echo_top_level_array(&gbp.body)
-                })
-                .sum::<usize>();
-
-            let num_echo_in_else = else_branch
-                .as_ref()
-                .map(|cmds| count_echo_top_level_array(cmds))
-                .unwrap_or(0);
-
-            num_echo_in_conditionals + num_echo_in_else
-        }
-
-        ast::CompoundCommandKind::For { body, .. } => count_echo_top_level_array(body),
-
-        ast::CompoundCommandKind::Case { arms, .. } => arms
-            .iter()
-            .map(|pat| count_echo_top_level_array(&pat.body))
-            .sum(),
-
-        // @kui8shi
-        // Skip macro calls for now
-        ast::CompoundCommandKind::Macro(_) => 0,
     }
-}
 
-fn count_echo_simple(cmd: &ast::DefaultSimpleCommand) -> usize {
-    cmd.redirects_or_cmd_words
-        .iter()
-        .filter_map(|redirect_or_word| match redirect_or_word {
-            ast::RedirectOrCmdWord::CmdWord(w) => Some(&w.0),
-            ast::RedirectOrCmdWord::Redirect(_) => None,
-        })
-        .filter_map(|word| match word {
-            ast::ComplexWord::Single(w) => Some(w),
-            // We're going to ignore concatenated words for simplicity here
-            ast::ComplexWord::Concat(_) => None,
-        })
-        .filter_map(|word| match word {
-            ast::Word::SingleQuoted(w) => Some(w),
-            ast::Word::Simple(w) => get_simple_word_as_string(w),
-
-            ast::Word::DoubleQuoted(words) if words.len() == 1 => {
-                get_simple_word_as_string(&words[0])
+    println!("\nVariable definitions:");
+    for var in all_vars.iter() {
+        if let Some(def_indices) = analyzer.get_definitions(var) {
+            print!("  {} defined at command(s): ", var);
+            for (idx, &cmd_idx) in def_indices.iter().enumerate() {
+                if idx > 0 {
+                    print!(", ");
+                }
+                print!("{}", cmd_idx);
             }
-            ast::Word::DoubleQuoted(_) => None, // Ignore all multi-word double quoted strings
-        })
-        .filter(|w| *w == "echo")
-        .count()
-}
-
-fn get_simple_word_as_string(word: &ast::DefaultSimpleWord) -> Option<&String> {
-    match word {
-        ast::SimpleWord::Literal(w) => Some(w),
-        _ => None, // Ignoring substitutions and others for simplicity here
+            println!();
+        }
     }
+
+    // Display dependency information for each command
+    println!("\nCommand dependencies:");
+    for i in 0..analyzer.command_count() {
+        print!("Command {}: ", i);
+        
+        // Print the command (simplified)
+        if let Some(cmd) = analyzer.get_command(i) {
+            print!("{:?}", cmd);
+        }
+        println!();
+
+        // Print defined variables
+        if let Some(defines) = analyzer.get_defined_variables(i) {
+            if !defines.is_empty() {
+                print!("  Defines: ");
+                for (idx, var) in defines.iter().enumerate() {
+                    if idx > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", var);
+                }
+                println!();
+            }
+        }
+
+        // Print used variables
+        if let Some(uses) = analyzer.get_used_variables(i) {
+            if !uses.is_empty() {
+                print!("  Uses: ");
+                for (idx, var) in uses.iter().enumerate() {
+                    if idx > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", var);
+                }
+                println!();
+            }
+        }
+
+        // Print dependencies
+        if let Some(deps) = analyzer.get_dependencies(i) {
+            if !deps.is_empty() {
+                print!("  Depends on commands: ");
+                for (idx, &dep) in deps.iter().enumerate() {
+                    if idx > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", dep);
+                }
+                println!();
+            }
+        }
+
+        // Print dependents
+        if let Some(deps) = analyzer.get_dependents(i) {
+            if !deps.is_empty() {
+                print!("  Commands that depend on this: ");
+                for (idx, &dep) in deps.iter().enumerate() {
+                    if idx > 0 {
+                        print!(", ");
+                    }
+                    print!("{}", dep);
+                }
+                println!();
+            }
+        }
+        
+        println!();
+    }
+
+    // Example of finding all commands related to a specific variable
+    println!("\nExample variable analysis:");
+    if !all_vars.is_empty() {
+        let example_var = all_vars.iter().next().unwrap();
+        println!("Commands related to variable '{}': ", example_var);
+        
+        let related_cmds = analyzer.find_commands_with_variable(example_var);
+        for cmd_idx in related_cmds {
+            println!("  Command {}: {:?}", cmd_idx, analyzer.get_command(cmd_idx));
+        }
+    }
+
+    Ok(())
 }

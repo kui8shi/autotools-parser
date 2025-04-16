@@ -267,7 +267,7 @@ impl M4MacroSignature {
 
 /// Represents a static shell variable
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Var(String, VarAttrs);
+pub struct Var(pub String, pub VarAttrs);
 
 /// Represents attributes of a shell variable
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
