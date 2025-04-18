@@ -119,16 +119,74 @@ impl DependencyAnalyzer {
                         if let Some(effects) = &m4_macro.effects {
                             if let Some(shell_vars) = &effects.shell_vars {
                                 for var in shell_vars {
-                                    vars.insert(var.0.clone());
+                                    if var.is_defined() {
+                                        vars.insert(var.0.clone());
+                                    }
                                 }
                             }
                         }
                         for arg in &m4_macro.args {
                             if let M4Argument::Commands(cmds) = arg {
                                 for c in cmds {
-                                    self.extract_defined_variables(&c.cmd);
+                                    let defined = self.extract_defined_variables(&c.cmd);
+                                    vars.extend(defined);
                                 }
                             }
+                        }
+                    }
+                    CompoundCommand::Brace(cmds) | CompoundCommand::Subshell(cmds) => {
+                        for c in cmds {
+                            let defined = self.extract_defined_variables(&c.cmd);
+                            vars.extend(defined);
+                        }
+                    }
+                    CompoundCommand::While(guard_body) | CompoundCommand::Until(guard_body) => {
+                        for c in &guard_body.body {
+                            let defined = self.extract_defined_variables(&c.cmd);
+                            vars.extend(defined);
+                        }
+                    }
+                    CompoundCommand::If {
+                        conditionals,
+                        else_branch,
+                    } => {
+                        for guard_body in conditionals {
+                            for c in &guard_body.body {
+                                let defined = self.extract_defined_variables(&c.cmd);
+                                vars.extend(defined);
+                            }
+                        }
+                        for c in else_branch {
+                            let defined = self.extract_defined_variables(&c.cmd);
+                            vars.extend(defined);
+                        }
+                    }
+                    CompoundCommand::For {
+                        var: _,
+                        words: _,
+                        body,
+                    } => {
+                        for c in body {
+                            let defined = self.extract_defined_variables(&c.cmd);
+                            vars.extend(defined);
+                        }
+                    }
+                    CompoundCommand::Case { word: _, arms } => {
+                        for arm in arms {
+                            for c in &arm.body {
+                                let defined = self.extract_defined_variables(&c.cmd);
+                                vars.extend(defined);
+                            }
+                        }
+                    }
+                    CompoundCommand::And(_, c) | CompoundCommand::Or(_, c) => {
+                        let defined = self.extract_defined_variables(&c.cmd);
+                        vars.extend(defined);
+                    }
+                    CompoundCommand::Pipe(_, cmds) => {
+                        for c in cmds {
+                            let defined = self.extract_defined_variables(&c.cmd);
+                            vars.extend(defined);
                         }
                     }
                     _ => {}
@@ -277,7 +335,8 @@ impl DependencyAnalyzer {
                 match subst.as_ref() {
                     ParameterSubstitution::Command(cmds) => {
                         for c in cmds {
-                            self.extract_used_variables(&c.cmd);
+                            let used = self.extract_used_variables(&c.cmd);
+                            vars.extend(used);
                         }
                     }
                     ParameterSubstitution::Arith(Some(arith)) => {
@@ -494,7 +553,9 @@ impl DependencyAnalyzer {
         if let Some(effects) = &m4_macro.effects {
             if let Some(shell_vars) = &effects.shell_vars {
                 for var in shell_vars {
-                    vars.insert(var.0.clone());
+                    if var.is_used() {
+                        vars.insert(var.0.clone());
+                    }
                 }
             }
         }

@@ -5,8 +5,11 @@ use autoconf_parser::analyzer::DependencyAnalyzer;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::MinimalParser;
 use owned_chars::OwnedCharsExt;
-
-use std::io::{stdin, BufRead, BufReader};
+use std::{
+    fmt::write,
+    fs::File,
+    io::{stdin, BufRead, BufReader, Write},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Read input from stdin
@@ -55,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nCommand dependencies:");
     for i in 0..analyzer.command_count() {
         print!("Command {}: ", i);
-        
+
         // Print the command (simplified)
         if let Some(cmd) = analyzer.get_command(i) {
             print!("{:?}", cmd);
@@ -117,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!();
             }
         }
-        
+
         println!();
     }
 
@@ -126,12 +129,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !all_vars.is_empty() {
         let example_var = all_vars.iter().next().unwrap();
         println!("Commands related to variable '{}': ", example_var);
-        
+
         let related_cmds = analyzer.find_commands_with_variable(example_var);
         for cmd_idx in related_cmds {
             println!("  Command {}: {:?}", cmd_idx, analyzer.get_command(cmd_idx));
         }
+
+        let mut groups = Vec::new();
+        let mut belongs_to = std::collections::HashMap::new();
+        for cmd_idx in 0..analyzer.command_count() {
+            if !belongs_to.contains_key(&cmd_idx) {
+                let grp_idx = groups.len();
+                let mut group = std::collections::HashSet::new();
+                let mut stack = vec![cmd_idx];
+                while let Some(cmd_idx) = stack.pop() {
+                    if !belongs_to.contains_key(&cmd_idx) {
+                        group.insert(cmd_idx);
+                        belongs_to.insert(cmd_idx, grp_idx);
+                        if let Some(deps) = analyzer.get_dependencies(cmd_idx) {
+                            for dep in deps {
+                                stack.push(*dep);
+                            }
+                        }
+                    }
+                }
+                groups.push(group);
+            }
+        }
+
+        let (groups, belongs_to) = (groups, belongs_to);
+        for (grp_idx, group) in groups.iter().enumerate() {
+            println!("Group {}: ", grp_idx);
+            for cmd_idx in group {
+                if let Some(cmd) = analyzer.get_command(*cmd_idx) {
+                    println!("  Command {}: {:?}", cmd_idx, cmd.range);
+                }
+            }
+        }
+
+        // println!("  Group {}: {:?}", group_idx, analyzer.get_command(cmd_idx));
     }
+
+    // Export graph in DOT format
+    let mut dot_file = File::create("/tmp/dependencies.dot")?;
+    writeln!(dot_file, "digraph Dependencies {{")?;
+    // writeln!(dot_file, "  rankdir=LR;")?;
+
+    // Node definitions
+    for i in 0..analyzer.command_count() {
+        let label = format!("Cmd {}", i);
+        writeln!(dot_file, r#"  {} [label="{}"];"#, i, label)?;
+    }
+
+    // Edges (dependencies)
+    for i in 0..analyzer.command_count() {
+        if let Some(deps) = analyzer.get_dependencies(i) {
+            for &dep in deps {
+                writeln!(dot_file, "  {} -> {};", dep, i)?; // dep must come before i
+            }
+        }
+    }
+    writeln!(dot_file, "}}")?;
+    println!("DOT graph written to dependencies.dot");
 
     Ok(())
 }

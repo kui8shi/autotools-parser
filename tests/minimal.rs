@@ -204,7 +204,7 @@ ENABLE_OPTION=default)"#;
     );
     // supplement side effects of AC_ARG_ENABLE
     ac_arg_enable.effects = Some(SideEffect {
-        shell_vars: Some(vec!["option".into(), Var::new_input("enable_option")]),
+        shell_vars: Some(vec!["option".into(), Var::define_input("enable_option")]),
         ..Default::default()
     });
     let expected = cmd_macro(ac_arg_enable);
