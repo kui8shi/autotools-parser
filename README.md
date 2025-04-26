@@ -1,25 +1,32 @@
 # autoconf-parser
 
-A Rust library for parsing, analyzing, and splitting autoconf script
+A Rust library for parsing, analyzing, and splitting Autoconf scripts (`configure.ac` and similar files).
 
 ## Quick Start
+
 First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-autoconf-parser = "0.1.0"
+autoconf-parser = "0.1.1"
 ```
 
-Next, you can get started with:
+Then you can get started with:
 
 ```rust
 use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::DefaultParser;
+use autoconf_parser::parse::MinimalParser;
 
 fn main() {
+    let input = r#"
+AC_INIT([MyProject], [1.0])
+AC_CONFIG_SRCDIR([src/main.c])
+AC_OUTPUT
+"#;
+
     // Initialize our token lexer and shell parser with the program's input
-    let lex = Lexer::new("echo foo bar".chars());
-    let parser = DefaultParser::new(lex);
+    let lex = Lexer::new(input.chars());
+    let parser = MinimalParser::new(lex);
 
     // Parse our input!
     for t in parser {
@@ -29,60 +36,61 @@ fn main() {
 ```
 
 ## About
-This library offers parsing shell commands as defined by the
-[POSIX.1-2008][POSIX] standard. The parser remains agnostic to the final AST
-representation by passing intermediate results to an AST `Builder`, allowing
-for easy changes to the final AST structure without having to walk and transform
-an entire AST produced by the parser. See the documentation for more information.
 
-[POSIX]: http://pubs.opengroup.org/onlinepubs/9699919799/
+`autoconf-parser` is designed for static analysis of Autoconf scripts,  
+which are written in a combination of shell and M4 macros.
 
-### Goals
-* Provide shell command parser which is correct and efficient, and agnostic to
-the final AST representation
-* Parsing should never require any form of runtime, thus no part of the source
-should have to be executed or evaluated when parsing
+This library provides:
+- Parsing of shell-like constructs (`if`, `case`, `for`, functions, etc.)
+- Basic M4 macro parsing and expansion support
+- An intermediate Abstract Syntax Tree (AST) representation
+- Tools for analyzing and transforming build scripts
+- Facilities for splitting and restructuring large configure scripts
 
-### Non-goals
-* 100% POSIX.1-2008 compliance: the standard is used as a baseline for
-implementation and features may be further added (or dropped) based on what
-makes sense or is most useful
-* Feature parity with all major shells: unless a specific feature is
-widely used (and considered common) or another compelling reason exists
-for inclusion. However, this is not to say that the library will never
-support extensions for adding additional syntax features.
+It is intended for use cases such as:
+- Migrating legacy Autoconf-based projects to modern build systems (e.g., Cargo)
+- Static analysis or transformation of complex `configure.ac` scripts
+- Research into build system structure
 
-## Supported grammar
-- [x] Conditional lists (`foo && bar || baz`)
-- [x] Pipelines (`! foo | bar`)
-- [x] Compound commands
-  - [x] Brace blocks (`{ foo; }`)
-  - [x] Subshells (`$(foo)`)
-  - [x] `for` / `case` / `if` / `while` / `until`
-- [x] Function declarations
-- [x] Redirections
+## Design Goals
+
+- Provide a parser that can accurately handle typical `configure.ac` scripts
+- Allow static analysis without executing or evaluating any script code
+- Remain extensible toward richer M4 processing
+
+## Non-goals
+
+- Full compliance with the POSIX.1-2008 shell specification
+- Emulating full runtime behavior of Autoconf scripts
+- Feature parity with all major shell implementations
+
+## Supported Grammar Features
+
+- [x] Shell conditionals (`if`, `case`, `for`, `while`, `until`)
+- [x] Pipelines and conditional execution (`&&`, `||`)
+- [x] Compound commands (`{ }`, subshells `(...)`)
+- [x] Function definitions
+- [x] I/O redirections
 - [x] Heredocs
-- [x] Comments
-- [x] Parameters (`$foo`, `$@`, etc.)
-- [x] Parameter substitutions (`${foo:-bar}`)
-- [x] Quoting (single, double, backticks, escaping)
-- [ ] Arithmetic substitutions
-  - [x] Common arithmetic operations required by the [standard][POSIX-arith]
-  - [x] Variable expansion
-  - [ ] Other inner abitrary parameter/substitution expansion
-
-[POSIX-arith]: http://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_04
+- [x] Parameter expansions (`$var`, `${var}`)
+- [x] Quoting (single, double, backtick, escape sequences)
+- [x] Basic arithmetic expressions
+- [x] M4 macro calls (partial)
 
 ## License
-Licensed under either of
 
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+Licensed under either of:
+
+- [MIT License](LICENSE-MIT) ([https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT))
+- [Apache License, Version 2.0](LICENSE-APACHE) ([https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0))
 
 at your option.
 
-### Contribution
-Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in the work by you, as defined in the Apache-2.0
-license, shall be dual licensed as above, without any additional terms or
-conditions.
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project  
+shall be dual licensed as above, without any additional terms or conditions.
+
+---
+
+Originally forked from [`conch-parser`](https://github.com/udoprog/conch-parser) by Ivan Petkov.
