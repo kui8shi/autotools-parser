@@ -113,6 +113,7 @@ pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
                  m4_define([m4_version_prereq], [$2])\n\
                  m4_define([AC_TRY_EVAL], [$$1])\n\
                  m4_define([AC_TRY_COMMAND], [$1])\n\
+                 m4_define([m4_foreach], [$1])\n\
                  m4_undefine([m4_pushdef])\n\
                  m4_undefine([m4_popdef])\n\
                  m4_undefine([m4_normalize])\n\

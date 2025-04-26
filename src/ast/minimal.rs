@@ -139,7 +139,7 @@ pub enum CompoundCommand<W, C> {
     Or(Condition<W, C>, Box<C>),
     /// Executes commands connecting stdout/in via a pipe.
     Pipe(bool, Vec<C>),
-    /// A command with an associated redirections.
+    /// A command with associated redirections.
     Redirect(Box<C>, Vec<Redirect<W>>),
     /// A command that is executed in the background.
     Background(Box<C>),

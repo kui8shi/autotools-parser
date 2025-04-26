@@ -649,7 +649,8 @@ where
                         "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
                         | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(OperatorKind::File),
                         _ => {
-                            return Err(BuilderError::UnsupportedSyntax);
+                            // return Err(BuilderError::UnsupportedSyntax);
+                            None
                         }
                     };
                     if operator_kind.is_some() {

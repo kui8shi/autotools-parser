@@ -58,6 +58,115 @@ AC_MSG_RESULT([$example_cv_feature])"#;
 }
 
 #[test]
+fn test_macro_with_simple_array_argument() {
+    let input = r#"
+dnl blank-separated array
+AC_CONFIG_FILES([
+Makefile
+src/Makefile
+src/codepages/Makefile
+doc/Makefile
+programs/Makefile
+examples/Makefile
+test/Makefile
+test/unit-testing/Makefile
+libredwg.pc
+vcpkg.json
+])
+
+
+# Don't demand an m4 unless it's actually needed.
+if test $found_asm = yes; then
+  AC_ARG_VAR(M4,[m4 macro processor])
+  AC_CACHE_CHECK([for suitable m4],
+  gmp_cv_prog_m4,
+  [if test -n "$M4"; then
+    gmp_cv_prog_m4="$M4"
+  else
+    cat >conftest.m4 <<\EOF
+  [define(dollarhash,``$][#'')ifelse(dollarhash(x),1,`define(t1,Y)',
+  ``bad: $][# not supported (SunOS /usr/bin/m4)
+  '')ifelse(eval(89),89,`define(t2,Y)',
+  `bad: eval() doesnt support 8 or 9 in a constant (OpenBSD 2.6 m4)
+  ')ifelse(eval(9,9),10,`define(t3,Y)',
+  `bad: eval() doesnt support radix in eval (FreeBSD 8.x,9.0,9.1,9.2 m4)
+  ')ifelse(t1`'t2`'t3,YYY,`good
+  ')]
+EOF
+  echo "trying m4" >&5
+  gmp_tmp_val=`(m4 conftest.m4) 2>&5`
+  echo "$gmp_tmp_val" >&5
+  if test "$gmp_tmp_val" = good; then
+    gmp_cv_prog_m4="m4"
+  else
+    IFS="${IFS= 	}"; ac_save_ifs="$IFS"; IFS=":"
+    ac_dummy="$PATH:/usr/5bin"
+    for ac_dir in $ac_dummy; do
+      test -z "$ac_dir" && ac_dir=.
+      echo "trying $ac_dir/m4" >&5
+      gmp_tmp_val=`($ac_dir/m4 conftest.m4) 2>&5`
+      echo "$gmp_tmp_val" >&5
+      if test "$gmp_tmp_val" = good; then
+        gmp_cv_prog_m4="$ac_dir/m4"
+        break
+      fi
+    done
+    IFS="$ac_save_ifs"
+    if test -z "$gmp_cv_prog_m4"; then
+      AC_MSG_ERROR([No usable m4 in \$PATH or /usr/5bin (see config.log for reasons).])
+    fi
+  fi
+  rm -f conftest.m4
+fi])
+M4="$gmp_cv_prog_m4"
+AC_SUBST(M4)
+
+  AC_CACHE_CHECK([if m4wrap produces spurious output],
+               gmp_cv_m4_m4wrap_spurious,
+[# hide the d-n-l from autoconf's error checking
+tmp_d_n_l=d""nl
+cat >conftest.m4 <<EOF
+[changequote({,})define(x,)m4wrap({x})$tmp_d_n_l]
+EOF
+echo test input is >&5
+cat conftest.m4 >&5
+tmp_chars=`$M4 conftest.m4 | wc -c`
+echo produces $tmp_chars chars output >&5
+rm -f conftest.m4
+if test $tmp_chars = 0; then
+  gmp_cv_m4_m4wrap_spurious=no
+else
+  gmp_cv_m4_m4wrap_spurious=yes
+fi
+])
+echo ["define(<M4WRAP_SPURIOUS>,<$gmp_cv_m4_m4wrap_spurious>)"] >> $gmp_tmpconfigm4
+
+
+# else
+# It's unclear why this m4-not-needed stuff was ever done.
+#  if test -z "$M4" ; then
+#    M4=m4-not-needed
+#  fi
+fi
+dnl comma-separated array
+AC_CHECK_TYPES([intmax_t, long double, long long, ptrdiff_t, quad_t,
+		uint_least32_t, intptr_t])
+"#;
+    let p = make_parser(input);
+    for res in p {
+        match res {
+            Ok(cmd) => {
+                dbg!(cmd);
+            }
+            Err(e) => {
+                println!("{}", e);
+                panic!();
+            }
+        }
+    }
+}
+
+#[test]
 fn test_macro_with_special_characters() {
     let input = r#"AC_DEFINE([EXAMPLE_PATH], ["${prefix}/share/example\nx=`date`\n"], [Path with special characters])"#;
 
@@ -111,7 +220,7 @@ MACRO(arg1, arg2)[]dnl unusual style of commentf
 
 #[test]
 fn test_condition() {
-    let input = r#"test "$foo" = "yes" && foo=1"#;
+    let input = r#"test "$foo" = "yes" && [foo]=1"#;
     let mut p = make_parser(input);
 
     // Create expected structure with AND condition

@@ -13,7 +13,6 @@ use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
 use crate::m4_macro::SideEffect;
-use crate::parse::SourcePos;
 
 mod default_builder;
 mod empty_builder;

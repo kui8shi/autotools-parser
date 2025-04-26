@@ -110,7 +110,7 @@ fn test_macro_quoted_positional_param() {
 
 #[test]
 fn test_macro_quoted_variable() {
-    let input = r#"test "[$][condition]" = yes"#;
+    let input = r#"test "[$][][condition]" = yes"#;
     let mut p = make_parser(input);
     let expected = cmd_from_simple(*cmd_args_words(
         "test",

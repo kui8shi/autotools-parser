@@ -43,6 +43,9 @@ impl Default for QuoteRewriteConfig {
                 ("AC_REQUIRE".into(), "dnl AC_REQUIRE".into()),
                 // Current autoconf-parser cannot recognize it.
                 ("AC_FD_CC".into(), "5".into()),
+                // Currently m4_foreach cannot not processed under environemtns with quotes changed
+                ("m4_foreach".into(), "M4_FOREACH".into()),
+                // ("m4_toupper".into(), "TO_UPPER".into()),
             ]),
         }
     }
@@ -80,6 +83,7 @@ struct Rewriter<I> {
     result: String,
     stack: Vec<InMacroState>,
     called_macros: HashSet<String>,
+    in_double_quote_string: bool,
 }
 
 impl<I: Iterator<Item = Token>> Rewriter<I> {
@@ -94,6 +98,7 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
             result: String::new(),
             stack: Vec::new(),
             called_macros: HashSet::new(),
+            in_double_quote_string: false,
         }
     }
 }
@@ -187,6 +192,10 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                         self.result.push_str(name)
                     }
                 }
+                Token::DoubleQuote => {
+                    self.in_double_quote_string = !self.in_double_quote_string;
+                    self.result.push('"');
+                }
                 Token::ParenOpen => {
                     if let Some(ctx) = self.stack.last_mut() {
                         if ctx.quote_level == 0 {
@@ -249,7 +258,10 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
             } else {
                 name
             };
-            if name.starts_with("m4_") {
+            if (!self.stack.is_empty() || self.in_double_quote_string) && is_define_macro {
+                // to prevent unintetional expansions, we ignore define macros inside other macros.
+                None
+            } else if name.starts_with("m4_") {
                 Some((name.to_string(), if is_define_macro { 1 } else { 1 }))
             } else {
                 None

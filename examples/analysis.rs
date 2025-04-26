@@ -6,7 +6,6 @@ use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::MinimalParser;
 use owned_chars::OwnedCharsExt;
 use std::{
-    fmt::write,
     fs::File,
     io::{stdin, BufRead, BufReader, Write},
 };
@@ -26,8 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let parser = MinimalParser::new(lex);
 
     // Create and run the dependency analyzer
-    let mut analyzer = DependencyAnalyzer::new(parser);
-    analyzer.analyze();
+    let analyzer = DependencyAnalyzer::new(parser);
 
     // Print information about the analyzed script
     println!("Total commands: {}", analyzer.command_count());
@@ -37,20 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..analyzer.command_count() {
         if let Some(defines) = analyzer.get_defined_variables(i) {
             all_vars.extend(defines.clone());
-        }
-    }
-
-    println!("\nVariable definitions:");
-    for var in all_vars.iter() {
-        if let Some(def_indices) = analyzer.get_definitions(var) {
-            print!("  {} defined at command(s): ", var);
-            for (idx, &cmd_idx) in def_indices.iter().enumerate() {
-                if idx > 0 {
-                    print!(", ");
-                }
-                print!("{}", cmd_idx);
-            }
-            println!();
         }
     }
 
@@ -148,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         belongs_to.insert(cmd_idx, grp_idx);
                         if let Some(deps) = analyzer.get_dependencies(cmd_idx) {
                             for dep in deps {
-                                stack.push(*dep);
+                                stack.push(dep);
                             }
                         }
                     }
@@ -161,8 +145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (grp_idx, group) in groups.iter().enumerate() {
             println!("Group {}: ", grp_idx);
             for cmd_idx in group {
-                if let Some(cmd) = analyzer.get_command(*cmd_idx) {
-                    println!("  Command {}: {:?}", cmd_idx, cmd.range);
+                if let Some(ranges) = analyzer.get_ranges(*cmd_idx) {
+                    println!("  Command {}: {:?}", cmd_idx, ranges);
                 }
             }
         }
@@ -177,20 +161,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Node definitions
     for i in 0..analyzer.command_count() {
-        let label = format!("Cmd {}", i);
+        let label = format!("{}", i);
         writeln!(dot_file, r#"  {} [label="{}"];"#, i, label)?;
     }
 
     // Edges (dependencies)
     for i in 0..analyzer.command_count() {
         if let Some(deps) = analyzer.get_dependencies(i) {
-            for &dep in deps {
+            for dep in deps {
                 writeln!(dot_file, "  {} -> {};", dep, i)?; // dep must come before i
             }
         }
     }
     writeln!(dot_file, "}}")?;
     println!("DOT graph written to dependencies.dot");
+
+    // === Variable dependency edge profiling ===
+    use std::collections::HashMap;
+
+    // This map will count how many times each variable appears as a dependency edge
+    let mut edge_counter: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+    for i in 0..analyzer.command_count() {
+        // Get variables used in the current command
+        if let Some(uses) = analyzer.get_used_variables(i) {
+            // Get the commands this one depends on
+            if let Some(deps) = analyzer.get_dependencies(i) {
+                for dep in deps {
+                    // For each dependency command, get the variables it defines
+                    if let Some(defs) = analyzer.get_defined_variables(dep) {
+                        for var in defs {
+                            // If the current command uses a variable defined in a dependency, count it
+                            if uses.contains(&var) && i != dep {
+                                edge_counter
+                                    .entry(var.clone())
+                                    .or_insert(Vec::new())
+                                    .push((i, dep));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort the variables by descending edge count
+    let mut edge_stats: Vec<(String, usize)> = edge_counter
+        .iter()
+        .map(|(k, v)| (k.clone(), v.len()))
+        .collect();
+    edge_stats.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count (descending)
+
+    // Print the top 50 variables with the most dependency edges
+    println!("\n=== Variable Edge Count Ranking ===");
+    for (var, count) in edge_stats.iter().take(50) {
+        println!(
+            "{:20} ({}): {:?}",
+            var,
+            count,
+            edge_counter.get(var).unwrap()
+        );
+    }
 
     Ok(())
 }

@@ -691,6 +691,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     pub fn simple_command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
         use crate::ast::{RedirectOrCmdWord, RedirectOrEnvVar};
 
+        let (_, quote_close) = self.get_quotes();
         let mut vars = Vec::new();
         let mut cmd_args = Vec::new();
 
@@ -701,7 +702,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let is_name = {
                 let mut peeked = self.iter.multipeek();
                 if let Some(&Name(_)) = peeked.peek_next() {
-                    Some(&Equals) == peeked.peek_next()
+                    let tok = peeked.peek_next();
+                    let maybe_equal = if tok == Some(&quote_close) {
+                        // var name might be quoted. (e.g. [var]=value)
+                        peeked.peek_next()
+                    } else {
+                        tok
+                    };
+                    Some(&Equals) == maybe_equal
                 } else {
                     false
                 }
@@ -709,6 +717,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
             if is_name {
                 if let Some(Name(var)) = self.iter.next() {
+                    self.may_close_quote(None, true);
                     self.iter.next(); // Consume the =
 
                     let value = if let Some(&Whitespace(_)) = self.iter.peek() {
@@ -1567,9 +1576,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     SingleQuoted(buf)
                 }
 
-                DoubleQuote => DoubleQuoted(
-                    self.word_interpolated_raw(Some((DoubleQuote, DoubleQuote)), start_pos)?,
-                ),
+                DoubleQuote => {
+                    let res =
+                        DoubleQuoted(self.word_interpolated_raw(Some(&[DoubleQuote]), start_pos)?);
+                    eat!(self, { DoubleQuote => {} });
+                    res
+                }
 
                 // Parameters and backticks should have been
                 // handled while peeking above.
@@ -1611,30 +1623,30 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// an error will result. If a `None` is provided as a delimeter tokens will be
     /// consumed until EOF is reached and no error will result.
     ///
-    /// `delim` argument structure is Option<(open token, close token)>. The close
-    /// token indicates when to stop parsing the word, while the open token will be
-    /// used to construct a `ParseError::new(Unmatched)` error.
+    /// `delim` argument structure is Option<(&[close tokens], consume)>. The close
+    /// token indicates when to stop parsing the word. If None, the parsing stops at EOF.
     fn word_interpolated_raw(
         &mut self,
-        delim: Option<(Token, Token)>,
+        delims: Option<&[Token]>,
         start_pos: SourcePos,
     ) -> ParseResult<Vec<SimpleWordKind<B::Command, B::M4Macro>>, B::Error> {
-        let (delim_open, delim_close) = match delim {
-            Some((o, c)) => (Some(o), Some(c)),
-            None => (None, None),
-        };
-
         let mut words = Vec::new();
         let mut buf = String::new();
         let (quote_open, quote_close) = self.get_quotes();
-        let is_delim_quote = delim_close.as_ref().is_some_and(|d| d == &quote_close);
+        let is_delim = |tok: Option<Token>| {
+            if let Some(delims) = delims {
+                delims.iter().find(|&d| Some(d) == tok.as_ref()).is_some()
+            } else {
+                tok.is_none()
+            }
+        };
+        let delim_is_quote = is_delim(Some(quote_close.clone()));
         loop {
-            if is_delim_quote {
+            if delim_is_quote {
                 if !self.in_quote() {
                     break;
                 }
-            } else if self.iter.peek() == delim_close.as_ref() {
-                self.iter.next();
+            } else if is_delim(self.iter.peek().cloned()) {
                 break;
             }
 
@@ -1700,7 +1712,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         _ => false,
                     };
 
-                    if special || self.iter.peek() == delim_close.as_ref() {
+                    if special || is_delim(self.iter.peek().cloned()) {
                         store!(SimpleWordKind::Escaped(
                             self.iter.next().unwrap().to_string()
                         ))
@@ -1717,8 +1729,13 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 }
 
                 Some(t) => buf.push_str(t.as_str()),
-                None => match delim_open {
-                    Some(delim) => return Err(ParseError::new(Unmatched(delim, start_pos))),
+                None => match delims {
+                    Some(delims) => {
+                        return Err(ParseError::new(Unmatched(
+                            delims.last().unwrap().clone(),
+                            start_pos,
+                        )))
+                    }
                     None => break,
                 },
             }
@@ -1791,6 +1808,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             Some(Dollar) => {
                 // dollar might be quoted (e.g. [$]var)
                 self.may_close_quote(None, false);
+                // an empty quote might be inserted (e.g. $[]var)
+                eat_maybe!(self, { EmptyQuotes => {} });
                 // parameter body might be quoted (e.g. $[var])
                 let in_quote = self.may_open_quote(None, false);
                 let p = match self.iter.peek() {
@@ -2269,15 +2288,22 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 let cmds = self.macro_call(&[&name])?;
                 self.may_close_quote(None, true);
 
-                // @kui8shi
-                // FIXME: Macro of commands sometimes don't end with newline but with another command
-                // which will be incorrectly treated as redirection words, leading to an error.
-                // To ease the problem, we ban the redirection after macro of commands.
-                // Offcourse by this dumb fix, the parser loses its support for redirection
-                // following a macro of command. So we may need an alternative fix later.
-                // let io = self.redirect_list()?;
+                self.skip_whitespace();
+                let io = match self.iter.peek() {
+                    Some(
+                        Less | Great | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber
+                        | LessGreat,
+                    ) => self.redirect_list()?,
+                    // @kui8shi
+                    // FIXME: Macro of commands sometimes don't end with newline but with another command
+                    // which will be incorrectly treated as redirection words, leading to an error.
+                    // To ease the problem, we ban the redirection after macro of commands.
+                    // Offcourse by this dumb fix, the parser loses its complete support for redirection
+                    // following a macro of command. So we may need an alternative fix later.
+                    _ => vec![],
+                };
 
-                self.builder.macro_into_compound_command(cmds, vec![])?
+                self.builder.macro_into_compound_command(cmds, io)?
             }
 
             None => return Err(self.make_unexpected_err()),
@@ -2706,7 +2732,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 .macro_call(name.to_string(), Vec::new(), effects)?);
         }
         self.stash_quote_context(QuoteContextKind::Macro(name.into()));
-        let (quote_open, quote_close) = self.get_quotes();
+        let (_, quote_close) = self.get_quotes();
         let peeked_args = self.peek_macro_args()?;
         let num_args = peeked_args.len();
         let args = if let Some(signature) = macro_entry {
@@ -2731,6 +2757,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         _ => &M4Type::Word,
                     }
                 } else {
+                    if arg_types.len() <= idx_arg_type {
+                        dbg!(&name, self.iter.pos(), &self.quote_stack);
+                    }
                     &arg_types[idx_arg_type]
                 };
                 if matches!(&arg_type, M4Type::Cmds) {
@@ -2790,7 +2819,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         self.skip_whitespace();
                         if self.in_quote() {
                             let words = self.word_interpolated_raw(
-                                Some((quote_open.clone(), quote_close.clone())),
+                                Some(&[quote_close.clone()]),
                                 self.iter.pos(),
                             )?;
                             M4Argument::Word(
@@ -2814,10 +2843,21 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         }
                     }
                     M4Type::Library(f) => {
-                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
-                            Some(&[Comma]),
-                            false,
-                        )? {
+                        if self.in_quote() {
+                            let words = self.word_interpolated_raw(
+                                Some(&[quote_close.clone()]),
+                                self.iter.pos(),
+                            )?;
+                            M4Argument::Word(
+                                self.builder
+                                    .word(Concat(words.into_iter().map(Simple).collect()))?,
+                            )
+                        } else if let Some(word) = self
+                            .word_preserve_trailing_whitespace_raw_with_delim(
+                                Some(&[Comma]),
+                                false,
+                            )?
+                        {
                             // TODO: How can we track side effects like defining `${var}_suffix`?
                             M4Argument::Word(self.builder.word(word)?)
                         } else {
@@ -2907,7 +2947,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         return Err(self.make_unexpected_err());
                     }
                 };
-                let tok = self.iter.peek().cloned();
                 self.linebreak();
                 self.may_close_quote(None, false);
                 self.linebreak();
@@ -2974,21 +3013,35 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         func: Option<M4ExportFunc>,
     ) -> ParseResult<M4Argument<B::Word, B::Command>, B::Error> {
         let (_, quote_close) = self.get_quotes();
-        let mut delims = match delim {
-            ArrayDelim::Blank => vec![Whitespace(" ".into()), Newline],
-            ArrayDelim::Comma => vec![Comma],
-        };
         let mut arr = Vec::new();
-        delims.push(end.clone());
         // Parse array argument
         loop {
+            self.skip_whitespace();
             // @kui8shi
             // FIXME: For brevity of the implementation, we include any tokens
             // that is taken to be an end of shell word (e.g. parenthesis)
             // to the delimiters of the array.
-            if let Some(word) =
-                self.word_preserve_trailing_whitespace_raw_with_delim(Some(&delims), false)?
-            {
+            let word = match delim {
+                ArrayDelim::Blank => {
+                    let delims = &[Whitespace(" ".into()), Newline, end.clone()];
+                    eat_maybe!(self, { Newline => { self.iter.next(); } });
+                    self.word_preserve_trailing_whitespace_raw_with_delim(Some(delims), false)?
+                }
+                ArrayDelim::Comma => {
+                    eat_maybe!(self, { Newline => { self.iter.next(); } });
+                    dbg!(&self.iter.peek());
+                    let words =
+                        self.word_interpolated_raw(Some(&[Comma, end.clone()]), self.iter.pos())?;
+                    if words.len() == 0 {
+                        None
+                    } else if words.len() == 1 {
+                        Some(Single(Simple(words.into_iter().last().unwrap())))
+                    } else {
+                        Some(Concat(words.into_iter().map(Simple).collect()))
+                    }
+                }
+            };
+            if let Some(word) = word {
                 if let Some(f) = func {
                     if let Single(Simple(SimpleWordKind::Literal(elm))) = &word {
                         for (export_type, val) in f(elm) {
@@ -3004,6 +3057,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let in_quote = self.in_quote();
             if let Some(tok) = self.iter.peek() {
                 if tok == &quote_close {
+                    self.iter.next();
                     *self.quote_level() -= 1;
                     self.skip_whitespace();
                     if self.iter.peek() == Some(end) {

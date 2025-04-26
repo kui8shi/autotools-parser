@@ -30,10 +30,7 @@ pub enum M4Type {
     /// e.g. path1:path2:path3
     Path(Option<M4ExportFunc>),
     /// array of path strings separated by whitespace.
-    Paths(
-        ArrayDelim,
-        Option<&'static (dyn Fn(&str) -> Vec<(M4ExportType, String)> + Sync)>,
-    ),
+    Paths(ArrayDelim, Option<M4ExportFunc>),
     /// the type string include struct member strings, e.g. `struct A.member`
     Type(Option<M4ExportFunc>),
     /// array of type strings separated by comma (expecting the array to be enclosed by quotes)
@@ -5268,11 +5265,21 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 },
             ),
             (
+                // FIXME: just a temporal solution to escape evaluation of m4_foreach
+                // see rewite_quotes.rs
+                // It's to dumb so will delete soon.
+                "M4_FOREACH",
+                M4MacroSignature {
+                    replaced_by: Some("m4_foreach".into()),
+                    ..Default::default()
+                },
+            ),
+            (
                 "m4_foreach_w",
                 M4MacroSignature {
                     arg_types: vec![
                         Lit,        // var
-                        Arr(Comma), // list
+                        Arr(Blank), // list
                         Cmds,       // expression
                     ],
                     ret_type: Some(Cmds),
@@ -7438,6 +7445,315 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_LTDL_SYMBOL_USCORE", // obsolete macro
                 M4MacroSignature {
                     replaced_by: Some("LT_SYS_SYMBOL_USCORE".into()),
+                    ..Default::default()
+                },
+            ),
+            // autoconf archive
+            (
+                "AX_COMPILER_FLAGS",
+                M4MacroSignature {
+                    arg_types: vec![
+                        VarName(Some(VarAttrs::read(None)), None), // cflags-variable
+                        VarName(Some(VarAttrs::read(None)), None), // ldflags-variable
+                        Word,                                      // [is-release]
+                        Arr(Blank),                                // [extra-base-cflags]
+                        Arr(Blank),                                // [extra-yes-cflags]
+                        Lit,                                       // [unused]
+                        Lit,                                       // [unused]
+                        Lit,                                       // [unused]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_COMPILE_CHECK_SIZEOF",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Type(Some(&|s| {
+                            // type
+                            vec![(ExCPP, format!("SIZE_OF_{}", sanitize_c_name(s)))]
+                        })),
+                        Prog, // headers
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_IS_RELEASE",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // policy
+                    ],
+                    ret_type: Some(Cmds),
+                    shell_vars: Some(vec!["ax_is_release".into()]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_PKG_SWIG",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit,  // major.minor.micro
+                        Cmds, // action-if-found
+                        Cmds, // action-if-not-found
+                    ],
+                    ret_type: Some(Cmds),
+                    shell_vars: Some(vec![
+                        Var::define_output("SWIG"),
+                        Var::define_output("SWIG_LIB"),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_VALGRIND_CHECK",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        Var::define_output("VALGRIND_CHECK_RULES"),
+                        Var::define_input("VALGRIND_ENABLED"),
+                    ]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_VALGRIND_DFLT",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // rule
+                        Lit, // on/off
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_CXX_COMPILE_STDCXX",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // version
+                        Lit, // ext/noext
+                        Lit, // mandatory/optional
+                        Lit, // (undocumented)
+                    ],
+                    shell_vars: Some(vec![Var::reference("CXX"), Var::reference("CXXCPP")]),
+                    cpp_symbols: Some(vec![
+                        "HAVE_CXX23".into(),
+                        "HAVE_CXX20".into(),
+                        "HAVE_CXX17".into(),
+                        "HAVE_CXX14".into(),
+                        "HAVE_CXX11".into(),
+                    ]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_ARCHFLAG",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit,  // portable?
+                        Cmds, // action-success
+                        Cmds, // action-failure
+                    ],
+                    shell_vars: Some(vec!["ax_cv_gcc_arcflag".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_BUILTIN",
+                M4MacroSignature {
+                    arg_types: vec![VarName(
+                        None,
+                        Some(&|s| {
+                            // builtin
+                            vec![
+                                (
+                                    ExVar(VarAttrs::default()),
+                                    format!("ax_cv_have_{}", sanitize_shell_name(s)),
+                                ),
+                                (ExCPP, format!("HAVE_{}", sanitize_c_name(s))),
+                            ]
+                        }),
+                    )],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_CONST_CALL",
+                M4MacroSignature {
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_FUNC_ATTRIBUTE",
+                M4MacroSignature {
+                    arg_types: vec![VarName(
+                        None,
+                        Some(&|s| {
+                            // attribute
+                            vec![
+                                (
+                                    ExVar(VarAttrs::default()),
+                                    format!("ax_cv_have_func_attribute_{}", sanitize_shell_name(s)),
+                                ),
+                                (ExCPP, format!("HAVE_FUNC_ATTRIBUTE_{}", sanitize_c_name(s))),
+                            ]
+                        }),
+                    )],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_LIB",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Library(None), // library
+                        Cmds,          // action-if-found
+                        Cmds,          // action-if-not-found
+                    ],
+                    shell_vars: Some(vec!["ax_cv_gcc_arcflag".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_GCC_LIBGCC_EH",
+                M4MacroSignature {
+                    arg_types: vec![
+                        VarName(Some(VarAttrs::default()), None), // variable
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_ADNS",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_POLL",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_PPOLL",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_QT",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        "have_qt".into(),
+                        Var::define_output("QT_CXXFLAGS"),
+                        Var::define_output("QT_LIBS"),
+                        Var::define_output("QT_MOC"),
+                        Var::define_output("QT_UIC"),
+                        Var::define_output("QT_RCC"),
+                        Var::define_output("QT_LRELEASE"),
+                        Var::define_output("QT_LUPDATE"),
+                        Var::define_output("QT_DIR"),
+                        Var::define_output("QMAKE"),
+                    ]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_SELECT",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_PSELECT",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_INCLUDE_STRCASECMP",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec!["AX_STRCASECMP_HEADER".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_INSTALL_FILES",
+                M4MacroSignature {
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_C_LONG_LONG",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec!["HAVE_LONG_LONG".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_C_RESTRICT",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec!["restrict".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_PRINTF_SIZE_T",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec!["PRI_SIZE_T_MODIFIER".into()]),
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_RECURSIVE_EVAL",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Word,                                     // value
+                        VarName(Some(VarAttrs::default()), None), // result
+                    ],
+                    ret_type: Some(Cmds),
                     ..Default::default()
                 },
             ),
