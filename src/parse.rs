@@ -2759,6 +2759,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 } else {
                     if arg_types.len() <= idx_arg_type {
                         dbg!(&name, self.iter.pos(), &self.quote_stack);
+                        panic!();
                     }
                     &arg_types[idx_arg_type]
                 };
@@ -3029,7 +3030,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 }
                 ArrayDelim::Comma => {
                     eat_maybe!(self, { Newline => { self.iter.next(); } });
-                    dbg!(&self.iter.peek());
                     let words =
                         self.word_interpolated_raw(Some(&[Comma, end.clone()]), self.iter.pos())?;
                     if words.len() == 0 {
