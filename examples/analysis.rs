@@ -39,7 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Print the command (simplified)
         if let Some(cmd) = analyzer.get_content(i) {
-            print!("{:?}\n{}", analyzer.get_ranges(i).unwrap(), cmd.join("END\n"));
+            print!(
+                "{:?}\n{}",
+                analyzer.get_ranges(i).unwrap(),
+                cmd.join("END\n")
+            );
         }
         println!();
 
@@ -169,6 +173,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     writeln!(dot_file, "}}")?;
     println!("DOT graph written to dependencies.dot");
+
+    // === Topological Sort ===
+    println!("\n=== Topological Sort ===");
+
+    let mut indegree = vec![0; analyzer.command_count()];
+    let mut adj = vec![Vec::new(); analyzer.command_count()];
+
+    // Build adjacency list and compute indegree
+    for i in 0..analyzer.command_count() {
+        if let Some(deps) = analyzer.get_dependencies(i) {
+            for dep in deps {
+                adj[dep].push(i); // dep -> i
+                indegree[i] += 1;
+            }
+        }
+    }
+
+    let mut queue = std::collections::VecDeque::new();
+    for (i, &deg) in indegree.iter().enumerate() {
+        if deg == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut topo_order = Vec::new();
+    while let Some(u) = queue.pop_front() {
+        topo_order.push(u);
+        for &v in &adj[u] {
+            indegree[v] -= 1;
+            if indegree[v] == 0 {
+                queue.push_back(v);
+            }
+        }
+    }
+
+    if topo_order.len() != analyzer.command_count() {
+        println!("Cycle detected! Cannot perform topological sort.");
+    } else {
+        println!("Topological order:");
+        for (i, cmd_idx) in topo_order.iter().enumerate() {
+            println!("  {}: Command {}", i, cmd_idx);
+        }
+    }
 
     // === Variable dependency edge profiling ===
     use std::collections::HashMap;
