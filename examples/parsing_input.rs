@@ -1,21 +1,14 @@
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::MinimalParser;
-use owned_chars::OwnedCharsExt;
 use std::error::Error;
 
-use std::io::{stdin, BufRead, BufReader};
+use std::io::{stdin, Read};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let stdin = BufReader::new(stdin())
-        .lines()
-        .map(Result::unwrap)
-        .flat_map(|mut line| {
-            line.push('\n'); // BufRead::lines unfortunately strips \n and \r\n
-            line.into_chars()
-        });
-
+    let mut input = String::new();
+    stdin().read_to_string(&mut input)?;
     // Initialize our token lexer and shell parser with the program's input
-    let lex = Lexer::new(stdin);
+    let lex = Lexer::new(input.chars());
     let parser = MinimalParser::new(lex);
 
     // Parse our input!

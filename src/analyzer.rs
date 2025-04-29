@@ -4,6 +4,7 @@ use crate::ast::minimal::{
     Command, CommandWrapper, CompoundCommand, Condition, GuardBodyPair, Word, WordFragment,
 };
 use crate::ast::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
+use crate::lexer::Lexer;
 use crate::m4_macro::{M4Argument, M4Macro};
 use crate::parse::MinimalParser;
 use crate::token::Token;
@@ -51,6 +52,8 @@ pub enum Guard {
 /// Analyzer that constructs dependency graph by tracking variable usages
 #[derive(Debug)]
 pub struct DependencyAnalyzer {
+    /// Original contents of analyzed script
+    lines: Vec<String>,
     /// Nodes in the dependency graph
     nodes: Vec<Node>,
     /// Map of variable names to indices of commands that define them
@@ -59,10 +62,10 @@ pub struct DependencyAnalyzer {
 
 impl DependencyAnalyzer {
     /// Analyze commands and build the dependency graph
-    pub fn new<I>(parser: MinimalParser<I>) -> Self
-    where
-        I: Iterator<Item = Token>,
-    {
+    pub fn new<S: AsRef<str>>(contents: S) -> Self {
+        let lexer = Lexer::new(contents.as_ref().chars());
+        let parser = MinimalParser::new(lexer);
+
         let mut commands = Vec::new();
 
         // Collect all complete commands from the parser
@@ -77,6 +80,7 @@ impl DependencyAnalyzer {
         let flatten_threshold = 100;
 
         let mut s = Self {
+            lines: contents.as_ref().lines().map(|s| s.to_string()).collect(),
             nodes: Self::flatten_commands_to_nodes(commands, flatten_threshold),
             var_definitions: HashMap::new(),
         };
@@ -119,6 +123,7 @@ impl DependencyAnalyzer {
         flatten_threshold: usize,
     ) -> Vec<Node> {
         let mut nodes = Vec::new();
+        let mut last = None;
 
         // 1st pass: flatten large commands.
         while let Some((c, parent)) = commands.pop() {
@@ -145,7 +150,18 @@ impl DependencyAnalyzer {
                     }
                     CompoundCommand::Case { word, arms } if do_flatten => {
                         let mut flattened = Vec::new();
-                        for arm in arms {
+                        // FIXME; Dirty codes.
+                        let whole_range = ranges.pop().unwrap();
+                        let header_range = (
+                            whole_range.0,
+                            arms.first().unwrap().body.first().unwrap().range.unwrap().0 - 1,
+                        );
+                        let footer_range = (
+                            arms.last().unwrap().body.last().unwrap().range.unwrap().1 + 1,
+                            whole_range.1,
+                        );
+                        ranges.push(footer_range);
+                        for arm in arms.into_iter().rev() {
                             flattened.push(PatternBodyPair {
                                 patterns: arm.patterns,
                                 body: Vec::new(),
@@ -155,6 +171,7 @@ impl DependencyAnalyzer {
                                 .first()
                                 .map(|c| c.range.unwrap().0)
                                 .zip(arm.body.last().map(|c| c.range.unwrap().1));
+                            ranges.push((range.unwrap().0 - 1, range.unwrap().0));
                             let body = CommandWrapper {
                                 comment: None,
                                 range,
@@ -162,6 +179,8 @@ impl DependencyAnalyzer {
                             };
                             commands.push((body, Some(id)));
                         }
+                        ranges.push(header_range);
+                        ranges.reverse();
                         CompoundCommand::Case {
                             word,
                             arms: flattened,
@@ -172,23 +191,21 @@ impl DependencyAnalyzer {
                         else_branch,
                     } if do_flatten => {
                         let mut flattened = Vec::new();
-                        for GuardBodyPair { condition, body } in conditionals {
-                            if body.len() > flatten_threshold {
-                                flattened.push(GuardBodyPair {
-                                    condition,
-                                    body: Vec::new(),
-                                });
-                                let range = body
-                                    .first()
-                                    .map(|c| c.range.unwrap().0)
-                                    .zip(body.last().map(|c| c.range.unwrap().1));
-                                let body = CommandWrapper {
-                                    comment: None,
-                                    range,
-                                    cmd: Command::Compound(CompoundCommand::Brace(body)),
-                                };
-                                commands.push((body, Some(id)));
-                            }
+                        for GuardBodyPair { condition, body } in conditionals.into_iter().rev() {
+                            flattened.push(GuardBodyPair {
+                                condition,
+                                body: Vec::new(),
+                            });
+                            let range = body
+                                .first()
+                                .map(|c| c.range.unwrap().0)
+                                .zip(body.last().map(|c| c.range.unwrap().1));
+                            let body = CommandWrapper {
+                                comment: None,
+                                range,
+                                cmd: Command::Compound(CompoundCommand::Brace(body)),
+                            };
+                            commands.push((body, Some(id)));
                         }
                         CompoundCommand::If {
                             conditionals: flattened,
@@ -201,6 +218,14 @@ impl DependencyAnalyzer {
             } else {
                 c.cmd
             };
+            let next = ranges.first().map(|r| r.0);
+            if let (Some(p), Some(n)) = (last, next) {
+                if !(p <= n) {
+                    dbg!(&ranges, id, last);
+                    panic!();
+                }
+            }
+            last = next;
             nodes.push(Node {
                 id,
                 comment: c.comment,
@@ -313,6 +338,25 @@ impl DependencyAnalyzer {
         }
 
         result
+    }
+
+    /// Get original content of commands in specified node
+    pub fn get_content(&self, node_id: usize) -> Option<Vec<String>> {
+        self.nodes.get(node_id).map(|node| {
+            node.ranges
+                .iter()
+                .map(|&(a, b)| {
+                    // FIXME: Poorly working with this lines extraction logic.
+                    // Will fix it later.
+                    self.lines[a - 1..b - 1]
+                        .iter()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .collect()
+        })
     }
 }
 

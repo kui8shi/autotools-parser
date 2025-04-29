@@ -5,21 +5,15 @@
 use autoconf_parser::ast;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::DefaultParser;
-use owned_chars::OwnedCharsExt;
 
-use std::io::{stdin, BufRead, BufReader};
+use std::io::{stdin, Read};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let stdin = BufReader::new(stdin())
-        .lines()
-        .map(|result| result.expect("stdin error"))
-        .flat_map(|mut line| {
-            line.push('\n'); // BufRead::lines unfortunately strips \n and \r\n
-            line.into_chars()
-        });
+    let mut input = String::new();
+    stdin().read_to_string(&mut input)?;
 
     // Initialize our token lexer and shell parser with the program's input
-    let lex = Lexer::new(stdin);
+    let lex = Lexer::new(input.chars());
     let parser = DefaultParser::new(lex);
 
     let mut num_echo = 0usize;

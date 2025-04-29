@@ -2,9 +2,6 @@
 //! in a shell script or autoconf file.
 
 use autoconf_parser::analyzer::DependencyAnalyzer;
-use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::MinimalParser;
-use owned_chars::OwnedCharsExt;
 use std::{
     fs::File,
     io::{stdin, BufRead, BufReader, Write},
@@ -15,17 +12,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = BufReader::new(stdin())
         .lines()
         .map(|result| result.expect("stdin error"))
-        .flat_map(|mut line| {
+        .map(|mut line| {
             line.push('\n'); // BufRead::lines unfortunately strips \n and \r\n
-            line.into_chars()
-        });
+            line
+        })
+        .collect::<String>();
 
     // Initialize the lexer and parser
-    let lex = Lexer::new(stdin);
-    let parser = MinimalParser::new(lex);
-
-    // Create and run the dependency analyzer
-    let analyzer = DependencyAnalyzer::new(parser);
+    let analyzer = DependencyAnalyzer::new(&stdin);
 
     // Print information about the analyzed script
     println!("Total commands: {}", analyzer.command_count());
@@ -44,8 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         print!("Command {}: ", i);
 
         // Print the command (simplified)
-        if let Some(cmd) = analyzer.get_command(i) {
-            print!("{:?}", cmd);
+        if let Some(cmd) = analyzer.get_content(i) {
+            print!("{:?}\n{}", analyzer.get_ranges(i).unwrap(), cmd.join("END\n"));
         }
         println!();
 
