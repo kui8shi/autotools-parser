@@ -62,7 +62,7 @@ pub struct DependencyAnalyzer {
 
 impl DependencyAnalyzer {
     /// Analyze commands and build the dependency graph
-    pub fn new<S: AsRef<str>>(contents: S) -> Self {
+    pub fn new<S: AsRef<str>>(contents: S, flatten_threshold: Option<usize>) -> Self {
         let lexer = Lexer::new(contents.as_ref().chars());
         let parser = MinimalParser::new(lexer);
 
@@ -77,7 +77,7 @@ impl DependencyAnalyzer {
 
         // `commands` becomes a stack to freely manipulate the head
         commands.reverse();
-        let flatten_threshold = 100;
+        let flatten_threshold = flatten_threshold.unwrap_or(100);
 
         let mut s = Self {
             lines: contents.as_ref().lines().map(|s| s.to_string()).collect(),

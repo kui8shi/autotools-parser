@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<String>();
 
     // Initialize the lexer and parser
-    let analyzer = DependencyAnalyzer::new(&stdin);
+    let analyzer = DependencyAnalyzer::new(&stdin, None);
 
     // Print information about the analyzed script
     println!("Total commands: {}", analyzer.command_count());
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             print!(
                 "{:?}\n{}",
                 analyzer.get_ranges(i).unwrap(),
-                cmd.join("END\n")
+                cmd.join("\n")
             );
         }
         println!();
