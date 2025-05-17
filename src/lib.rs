@@ -41,7 +41,6 @@
 #![deny(unused_qualifications)]
 #![forbid(unsafe_code)]
 
-pub mod analyzer;
 pub mod ast;
 pub mod lexer;
 pub mod m4_macro;
