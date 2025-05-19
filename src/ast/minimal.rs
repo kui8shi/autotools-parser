@@ -46,6 +46,19 @@ pub enum Word<T, C> {
     Empty,
 }
 
+impl<T, C> Word<T, C>
+where
+    T: PartialEq<str>,
+{
+    /// return true if the word is literal and equal to the given literal.
+    pub fn is_literal(&self, literal: &str) -> bool {
+        match self {
+            Word::Single(WordFragment::Literal(s)) if s == literal => true,
+            _ => false,
+        }
+    }
+}
+
 /// Operators used to compare words or check file properties.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Operator<W> {
