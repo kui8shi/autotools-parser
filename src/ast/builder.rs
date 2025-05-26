@@ -9,6 +9,8 @@
 //! the `Builder` trait for your AST. Otherwise you can provide the `DefaultBuilder`
 //! struct to the parser if you wish to use the default AST implementation.
 
+use std::fmt::Display;
+
 use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
@@ -17,10 +19,12 @@ use crate::m4_macro::SideEffect;
 mod default_builder;
 mod empty_builder;
 mod minimal_builder;
+mod node_builder;
 
 pub use self::default_builder::*;
 pub use self::empty_builder::EmptyBuilder;
 pub use self::minimal_builder::MinimalBuilder;
+pub use self::node_builder::NodeBuilder;
 
 /// An indicator to the builder of how complete commands are separated.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -664,4 +668,21 @@ impl<T: Builder + ?Sized> Builder for &mut T {
 
 impl<T: Builder + ?Sized> Builder for Box<T> {
     impl_builder_body!(T);
+}
+
+/// error produced by ast builder
+#[derive(Debug, Copy, Clone)]
+pub enum BuilderError {
+    /// when the selected builder has limited support
+    UnsupportedSyntax,
+}
+
+impl Display for BuilderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedSyntax => {
+                write!(f, "builder does not support the syntax")
+            }
+        }
+    }
 }

@@ -1,40 +1,163 @@
+//! Defines minimal representations of the shell source.
 use std::fmt::Debug;
-use std::marker::PhantomData;
 
-use super::{
-    Builder, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments, GuardBodyPairGroup,
-    IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind, SimpleWordKind, WordKind,
+use crate::ast::builder::{compress, WordKind};
+use crate::ast::minimal::WordFragment;
+use crate::ast::{
+    Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
 };
-
-use crate::ast::minimal::Command::*;
+use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
     ast::{
-        builder::compress,
-        minimal::{
-            CommandWrapper, CompoundCommand, Condition, GuardBodyPair, Operator, Word, WordFragment,
-        },
-        AndOr, Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
-        PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
+        minimal::{self, Condition, GuardBodyPair},
+        AndOr, PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
     },
-    m4_macro::{M4Argument, M4Macro, SideEffect},
+    m4_macro::M4Argument,
 };
 
-/// TODO: add doc comments
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct MinimalBuilder<T> {
-    phantom_data: PhantomData<T>,
+use super::minimal_builder::parse_condition;
+use super::{
+    Builder, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments,
+    GuardBodyPairGroup, IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind,
+    SimpleWordKind,
+};
+use slab::Slab;
+
+/// represents a unique node id
+pub type NodeId = usize;
+/// wraps minimal Word with node id
+pub type Word<L> = minimal::Word<L, NodeId>;
+
+/// Complete the parsed command with additional information such as comment, line numbers, etc.
+#[derive(Debug, Clone)]
+pub struct Node<L> {
+    /// trailing comments
+    pub comment: Option<String>,
+    /// range of line numbers in the original script.
+    pub range: Option<(usize, usize)>,
+    /// the command parsed
+    pub kind: NodeKind<L>,
+    /// the ids of children nodes
+    pub children: Option<Vec<NodeId>>,
 }
 
-impl<T> Builder for MinimalBuilder<T>
+impl<L> Node<L> {
+    pub fn new(
+        comment: Option<String>,
+        range: Option<(usize, usize)>,
+        kind: NodeKind<L>,
+        children: Option<Vec<NodeId>>,
+    ) -> Self {
+        Self {
+            comment,
+            range,
+            kind,
+            children,
+        }
+    }
+}
+
+/// represents any kinds of commands
+#[derive(Debug, Clone)]
+pub enum NodeKind<L> {
+    /// An assignment command that associates a value with a variable.
+    Assignment(L, Word<L>),
+    /// A simple command represented by a sequence of words.
+    Cmd(Vec<Word<L>>),
+    /// A group of commands that should be executed in the current environment.
+    Brace(Vec<NodeId>),
+    /// A group of commands that should be executed in a subshell environment.
+    Subshell(Vec<NodeId>),
+    /// A while loop, represented as a guard-body pair.
+    While(GuardBodyPair<Word<L>, NodeId>),
+    /// A until loop, represented as a guard-body pair.
+    Until(GuardBodyPair<Word<L>, NodeId>),
+    /// An if statement with one or more conditionals and an optional else branch.
+    If {
+        /// List of guard-body pairs for the if/else-if branches.
+        conditionals: Vec<GuardBodyPair<Word<L>, NodeId>>,
+        /// Commands to execute if none of the conditions are met (else branch).
+        else_branch: Vec<NodeId>,
+    },
+    /// A for loop that iterates over a list of words.
+    For {
+        /// The loop variable name.
+        var: String,
+        /// The list of words to iterate over.
+        words: Vec<Word<L>>,
+        /// The commands to execute in each iteration.
+        body: Vec<NodeId>,
+    },
+    /// A case statement for pattern matching.
+    Case {
+        /// The word to match against the provided patterns.
+        word: Word<L>,
+        /// A list of pattern-body pairs.
+        arms: Vec<PatternBodyPair<Word<L>, NodeId>>,
+    },
+    /// Executes a command if a condition holds (logical AND).
+    And(Condition<Word<L>, NodeId>, NodeId),
+    /// Executes a command if a condition holds (logical OR).
+    Or(Condition<Word<L>, NodeId>, NodeId),
+    /// Executes commands connecting stdout/in via a pipe.
+    Pipe(bool, Vec<NodeId>),
+    /// A command with associated redirections.
+    Redirect(NodeId, Vec<Redirect<Word<L>>>),
+    /// A command that is executed in the background.
+    Background(NodeId),
+    /// A function declaration
+    FunctionDef {
+        /// The function name
+        name: String,
+        /// Commands in the body
+        body: NodeId,
+    },
+    /// A macro call utilizing M4 macros.
+    Macro(M4Macro<Word<L>, NodeId>),
+}
+
+/// TODO: add doc comments
+#[derive(Debug, Default, Clone)]
+pub struct NodeBuilder<L> {
+    nodes: Slab<Node<L>>,
+}
+
+impl<L> NodeBuilder<L> {
+    fn new_node(&mut self, kind: NodeKind<L>) -> NodeId {
+        self.new_node_with_comment(kind, None)
+    }
+
+    fn new_node_with_comment(&mut self, kind: NodeKind<L>, comments: Option<String>) -> NodeId {
+        self.nodes.insert(Node::new(comments, None, kind, None))
+    }
+
+    fn node(&self, id: NodeId) -> &Node<L> {
+        &self.nodes[id]
+    }
+
+    fn node_mut(&mut self, id: NodeId) -> &mut Node<L> {
+        &mut self.nodes[id]
+    }
+
+    fn node_pop(&mut self, id: NodeId) -> Node<L> {
+        self.nodes.remove(id)
+    }
+
+    fn node_push(&mut self, node: Node<L>) -> usize {
+        self.nodes.insert(node)
+    }
+}
+
+impl<T> Builder for NodeBuilder<T>
 where
     T: Into<String> + From<String> + Clone + Debug,
 {
-    type Command = CommandWrapper<T>;
+    type Command = NodeId;
     type CommandList = Self::Command;
     type ListableCommand = Self::Command;
     type PipeableCommand = Self::Command;
-    type CompoundCommand = CompoundCommand<Self::Word, Self::Command>;
-    type Word = Word<T, Self::Command>;
+    type CompoundCommand = NodeId;
+    type Word = Word<T>;
     type Redirect = Redirect<Self::Word>;
     type Error = BuilderError;
     type M4Macro = M4Macro<Self::Word, Self::Command>;
@@ -50,14 +173,14 @@ where
         _cmd_comment: Option<Newline>,
         range: (usize, usize),
     ) -> Result<Self::Command, Self::Error> {
-        let mut raw_cmd = list;
+        let raw_cmd = self.node_mut(list);
         let comments = (!pre_cmd_comments.is_empty())
             .then_some(pre_cmd_comments.into_iter().filter_map(|n| n.0).collect())
             .filter(|c: &String| !c.is_empty());
         let complete_cmd = {
             raw_cmd.comment = comments;
             raw_cmd.range = Some(range);
-            raw_cmd
+            list
         };
         Ok(complete_cmd)
     }
@@ -77,16 +200,12 @@ where
                     .then_some(comments.into_iter().filter_map(|n| n.0).collect());
                 match andor {
                     AndOr::And(next) => {
-                        cmd = CommandWrapper::new_with_comment(
-                            Compound(CompoundCommand::And(make_condition(cmd)?, next.into())),
-                            comments,
-                        )
+                        let cond = self.make_condition(cmd)?;
+                        cmd = self.new_node_with_comment(NodeKind::And(cond, next.into()), comments)
                     }
                     AndOr::Or(next) => {
-                        cmd = CommandWrapper::new_with_comment(
-                            Compound(CompoundCommand::Or(make_condition(cmd)?, next.into())),
-                            comments,
-                        )
+                        let cond = self.make_condition(cmd)?;
+                        cmd = self.new_node_with_comment(NodeKind::Or(cond, next.into()), comments)
                     }
                 }
             }
@@ -103,16 +222,13 @@ where
     ) -> Result<Self::ListableCommand, Self::Error> {
         debug_assert!(!cmds.is_empty());
         if cmds.len() > 1 {
-            Ok(CommandWrapper::new(Compound(CompoundCommand::Pipe(
+            Ok(self.new_node(NodeKind::Pipe(
                 bang,
                 cmds.into_iter().map(|(_, c)| c).collect(),
-            ))))
+            )))
         } else if bang {
             // FIXME Suppport bang in the case of single command with other than fake Pipe.
-            Ok(CommandWrapper::new(Compound(CompoundCommand::Pipe(
-                bang,
-                vec![cmds.pop().unwrap().1],
-            ))))
+            Ok(self.new_node(NodeKind::Pipe(bang, vec![cmds.pop().unwrap().1])))
         } else {
             Ok(cmds.pop().unwrap().1)
         }
@@ -133,10 +249,9 @@ where
                     // to disallow redirections before any command word appears
                     Err(BuilderError::UnsupportedSyntax)
                 }
-                RedirectOrEnvVar::EnvVar(k, v) => Ok(CommandWrapper::new(Assignment(
-                    k.into(),
-                    v.unwrap_or(Word::Empty),
-                ))),
+                RedirectOrEnvVar::EnvVar(k, v) => {
+                    Ok(self.new_node(NodeKind::Assignment(k.into(), v.unwrap_or(Word::Empty))))
+                }
             })
             .collect::<Result<Vec<Self::Command>, _>>()?;
 
@@ -153,25 +268,18 @@ where
             if assignments.len() == 1 {
                 Ok(assignments.pop().unwrap())
             } else {
-                Ok(CommandWrapper::new(Compound(CompoundCommand::Brace(
-                    assignments,
-                ))))
+                Ok(self.new_node(NodeKind::Brace(assignments)))
             }
         } else {
-            let mut cmd = CommandWrapper::new(Cmd(cmd_words));
+            let mut cmd = self.new_node(NodeKind::Cmd(cmd_words));
             if !redirects.is_empty() {
-                cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
-                    Box::new(cmd),
-                    redirects,
-                )));
+                cmd = self.new_node(NodeKind::Redirect(cmd, redirects));
             }
             if assignments.is_empty() {
                 Ok(cmd)
             } else {
                 assignments.push(cmd);
-                Ok(CommandWrapper::new(Compound(CompoundCommand::Subshell(
-                    assignments,
-                ))))
+                Ok(self.new_node(NodeKind::Subshell(assignments)))
             }
         }
     }
@@ -185,9 +293,9 @@ where
         let mut cmds = cmd_group.commands;
         cmds.shrink_to_fit();
         redirects.shrink_to_fit();
-        let mut cmd = CompoundCommand::Brace(cmds);
+        let mut cmd = self.new_node(NodeKind::Brace(cmds));
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -201,9 +309,9 @@ where
         let mut cmds = cmd_group.commands;
         cmds.shrink_to_fit();
         redirects.shrink_to_fit();
-        let mut cmd = CompoundCommand::Subshell(cmds);
+        let mut cmd = self.new_node(NodeKind::Subshell(cmds));
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -223,16 +331,16 @@ where
         redirects.shrink_to_fit();
 
         let guard_body_pair = GuardBodyPair {
-            condition: make_condition(guard.pop().unwrap())?,
+            condition: self.make_condition(guard.pop().unwrap())?,
             body,
         };
 
         let mut cmd = match kind {
-            LoopKind::While => CompoundCommand::While(guard_body_pair),
-            LoopKind::Until => CompoundCommand::Until(guard_body_pair),
+            LoopKind::While => self.new_node(NodeKind::While(guard_body_pair)),
+            LoopKind::Until => self.new_node(NodeKind::Until(guard_body_pair)),
         };
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -258,7 +366,7 @@ where
                 body.shrink_to_fit();
 
                 Ok(GuardBodyPair {
-                    condition: make_condition(guard.pop().unwrap())?,
+                    condition: self.make_condition(guard.pop().unwrap())?,
                     body,
                 })
             })
@@ -277,12 +385,12 @@ where
 
         redirects.shrink_to_fit();
 
-        let mut cmd = CompoundCommand::If {
+        let mut cmd = self.new_node(NodeKind::If {
             conditionals,
             else_branch,
-        };
+        });
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -305,13 +413,13 @@ where
         body.shrink_to_fit();
         redirects.shrink_to_fit();
 
-        let mut cmd = CompoundCommand::For {
+        let mut cmd = self.new_node(NodeKind::For {
             var: fragments.var,
             words,
             body,
-        };
+        });
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -338,12 +446,12 @@ where
 
         redirects.shrink_to_fit();
 
-        let mut cmd = CompoundCommand::Case {
+        let mut cmd = self.new_node(NodeKind::Case {
             word: fragments.word,
             arms,
-        };
+        });
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -353,7 +461,7 @@ where
         &mut self,
         cmd: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(CommandWrapper::new(Compound(cmd)))
+        Ok(cmd)
     }
 
     /// Constructs a `Command::FunctionDef` node with the provided inputs.
@@ -363,12 +471,7 @@ where
         _post_name_comments: Vec<Newline>,
         body: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(CommandWrapper::new(Compound(
-            CompoundCommand::FunctionDef {
-                name,
-                body: Box::new(CommandWrapper::new(Compound(body))),
-            },
-        )))
+        Ok(self.new_node(NodeKind::FunctionDef { name, body }))
     }
 
     fn macro_into_compound_command(
@@ -376,9 +479,9 @@ where
         macro_call: M4Macro<Self::Word, Self::Command>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let mut cmd = CompoundCommand::Macro(macro_call);
+        let mut cmd = self.new_node(NodeKind::Macro(macro_call));
         if !redirects.is_empty() {
-            cmd = CompoundCommand::Redirect(Box::new(CommandWrapper::new(Compound(cmd))), redirects)
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
         }
         Ok(cmd)
     }
@@ -587,122 +690,53 @@ where
     }
 }
 
-pub(crate) fn parse_condition<T, C>(words: &[Word<T, C>]) -> Result<Operator<Word<T, C>>, BuilderError>
+impl<L> NodeBuilder<L>
 where
-    T: Into<String> + Clone,
-    Word<T, C>: Clone,
+    L: Into<String> + Clone + Debug,
 {
-    enum OperatorKind {
-        Eq,
-        Neq,
-        Ge,
-        Gt,
-        Le,
-        Lt,
-        Empty,
-        NonEmpty,
-        Dir,
-        File,
-        NoExists,
-    }
-
-    let mut lhs = Word::Empty;
-    let mut rhs = Word::Empty;
-    let mut operator_kind = None;
-    let mut flipped = false;
-    for word in words {
-        if operator_kind.is_none() {
-            if let Word::Single(w) = &word {
-                if let WordFragment::Literal(literal) = w {
-                    operator_kind = match literal.clone().into().as_str() {
-                        "!" => {
-                            flipped = true;
-                            continue;
+    fn make_condition(&mut self, cmd: NodeId) -> Result<Condition<Word<L>, NodeId>, BuilderError> {
+        let node = self.node_pop(cmd);
+        match &node.kind {
+            NodeKind::Cmd(words) => {
+                let first_word = words.first().unwrap();
+                if let Word::Single(w) = first_word {
+                    match w {
+                        WordFragment::Literal(v) if v.clone().into() == "test" => {
+                            Some(Condition::Cond(parse_condition(&words[1..])?))
                         }
-                        "!=" | "-ne" => Some(OperatorKind::Neq),
-                        "=" | "-eq" => Some(OperatorKind::Eq),
-                        "-ge" => Some(OperatorKind::Ge),
-                        "-gt" => Some(OperatorKind::Gt),
-                        "-le" => Some(OperatorKind::Le),
-                        "-lt" => Some(OperatorKind::Lt),
-                        "-z" => Some(OperatorKind::Empty),
-                        "-n" => Some(OperatorKind::NonEmpty),
-                        "-d" | "-f" if flipped => Some(OperatorKind::NoExists),
-                        "-d" => Some(OperatorKind::Dir),
-                        // TODO: More precision for file existance + extra operators
-                        "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
-                        | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(OperatorKind::File),
-                        _ => {
-                            // return Err(BuilderError::UnsupportedSyntax);
-                            None
+                        WordFragment::Literal(v) if v.clone().into() == "eval" => {
+                            Some(Condition::Eval(vec![
+                                self.new_node(NodeKind::Cmd(words[1..].to_owned()))
+                            ]))
                         }
-                    };
-                    if operator_kind.is_some() {
-                        continue;
-                    }
-                }
-            }
-            // before encountering an operator
-            // and the word is not an operator
-            lhs = word.clone();
-        } else {
-            rhs = word.clone();
-        }
-    }
-    let operator = match operator_kind.unwrap() {
-        OperatorKind::Neq => Operator::Neq(lhs, rhs),
-        OperatorKind::Eq => Operator::Eq(lhs, rhs),
-        OperatorKind::Ge => Operator::Ge(lhs, rhs),
-        OperatorKind::Gt => Operator::Gt(lhs, rhs),
-        OperatorKind::Le => Operator::Le(lhs, rhs),
-        OperatorKind::Lt => Operator::Lt(lhs, rhs),
-        OperatorKind::Empty => Operator::Empty(rhs),
-        OperatorKind::NonEmpty => Operator::NonEmpty(rhs),
-        OperatorKind::Dir => Operator::Dir(rhs),
-        OperatorKind::File => Operator::File(rhs),
-        OperatorKind::NoExists => Operator::NoExists(rhs),
-    };
-    Ok(operator)
-}
-
-type MinimalWord<V> = Word<V, CommandWrapper<V>>;
-
-fn make_condition<V>(
-    cmd: CommandWrapper<V>,
-) -> Result<Condition<MinimalWord<V>, CommandWrapper<V>>, BuilderError>
-where
-    V: Into<String> + Clone + Debug,
-{
-    match &cmd.cmd {
-        Cmd(words) => {
-            let first_word = words.first().unwrap();
-            if let Word::Single(w) = first_word {
-                match w {
-                    WordFragment::Literal(v) if v.clone().into() == "test" => {
-                        Some(Condition::Cond(parse_condition(&words[1..])?))
-                    }
-                    WordFragment::Literal(v) if v.clone().into() == "eval" => Some(
-                        Condition::Eval(vec![CommandWrapper::new(Cmd(words[1..].to_owned()))]),
-                    ),
-                    WordFragment::Subst(s) => match s.as_ref() {
-                        ParameterSubstitution::Command(cmds) => Some(Condition::Eval(cmds.clone())),
+                        WordFragment::Subst(s) => match s.as_ref() {
+                            ParameterSubstitution::Command(cmds) => {
+                                Some(Condition::Eval(cmds.clone()))
+                            }
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
+                    }
+                } else {
+                    None
                 }
-            } else {
-                None
             }
+            NodeKind::And(first, second) => Some(Condition::And(
+                Box::new(first.clone()),
+                Box::new(self.make_condition(second.clone())?),
+            )),
+            NodeKind::Or(first, second) => Some(Condition::Or(
+                Box::new(first.clone()),
+                Box::new(self.make_condition(second.clone())?),
+            )),
+            _ => None,
         }
-        Compound(CompoundCommand::And(first, second)) => Some(Condition::And(
-            Box::new(first.clone()),
-            Box::new(make_condition(*second.clone())?),
-        )),
-        Compound(CompoundCommand::Or(first, second)) => Some(Condition::Or(
-            Box::new(first.clone()),
-            Box::new(make_condition(*second.clone())?),
-        )),
-        _ => None,
+        .map_or(
+            {
+                self.node_push(node);
+                Ok(Condition::ReturnZero(Box::new(cmd)))
+            },
+            Ok,
+        )
     }
-    .map_or(Ok(Condition::ReturnZero(Box::new(cmd))), Ok)
 }
