@@ -1,15 +1,17 @@
-//! Defines minimal representations of the shell source.
+//! AST builder for node representations
 use std::fmt::Debug;
 
 use crate::ast::builder::{compress, WordKind};
 use crate::ast::minimal::WordFragment;
+use crate::ast::node::Word;
+use crate::ast::node::{Node, NodeId, NodeKind};
 use crate::ast::{
     Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
 };
 use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
     ast::{
-        minimal::{self, Condition, GuardBodyPair},
+        minimal::{Condition, GuardBodyPair},
         AndOr, PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
     },
     m4_macro::M4Argument,
@@ -23,103 +25,11 @@ use super::{
 };
 use slab::Slab;
 
-/// represents a unique node id
-pub type NodeId = usize;
-/// wraps minimal Word with node id
-pub type Word<L> = minimal::Word<L, NodeId>;
-
-/// Complete the parsed command with additional information such as comment, line numbers, etc.
-#[derive(Debug, Clone)]
-pub struct Node<L> {
-    /// trailing comments
-    pub comment: Option<String>,
-    /// range of line numbers in the original script.
-    pub range: Option<(usize, usize)>,
-    /// the command parsed
-    pub kind: NodeKind<L>,
-    /// the ids of children nodes
-    pub children: Option<Vec<NodeId>>,
-}
-
-impl<L> Node<L> {
-    pub fn new(
-        comment: Option<String>,
-        range: Option<(usize, usize)>,
-        kind: NodeKind<L>,
-        children: Option<Vec<NodeId>>,
-    ) -> Self {
-        Self {
-            comment,
-            range,
-            kind,
-            children,
-        }
-    }
-}
-
-/// represents any kinds of commands
-#[derive(Debug, Clone)]
-pub enum NodeKind<L> {
-    /// An assignment command that associates a value with a variable.
-    Assignment(L, Word<L>),
-    /// A simple command represented by a sequence of words.
-    Cmd(Vec<Word<L>>),
-    /// A group of commands that should be executed in the current environment.
-    Brace(Vec<NodeId>),
-    /// A group of commands that should be executed in a subshell environment.
-    Subshell(Vec<NodeId>),
-    /// A while loop, represented as a guard-body pair.
-    While(GuardBodyPair<Word<L>, NodeId>),
-    /// A until loop, represented as a guard-body pair.
-    Until(GuardBodyPair<Word<L>, NodeId>),
-    /// An if statement with one or more conditionals and an optional else branch.
-    If {
-        /// List of guard-body pairs for the if/else-if branches.
-        conditionals: Vec<GuardBodyPair<Word<L>, NodeId>>,
-        /// Commands to execute if none of the conditions are met (else branch).
-        else_branch: Vec<NodeId>,
-    },
-    /// A for loop that iterates over a list of words.
-    For {
-        /// The loop variable name.
-        var: String,
-        /// The list of words to iterate over.
-        words: Vec<Word<L>>,
-        /// The commands to execute in each iteration.
-        body: Vec<NodeId>,
-    },
-    /// A case statement for pattern matching.
-    Case {
-        /// The word to match against the provided patterns.
-        word: Word<L>,
-        /// A list of pattern-body pairs.
-        arms: Vec<PatternBodyPair<Word<L>, NodeId>>,
-    },
-    /// Executes a command if a condition holds (logical AND).
-    And(Condition<Word<L>, NodeId>, NodeId),
-    /// Executes a command if a condition holds (logical OR).
-    Or(Condition<Word<L>, NodeId>, NodeId),
-    /// Executes commands connecting stdout/in via a pipe.
-    Pipe(bool, Vec<NodeId>),
-    /// A command with associated redirections.
-    Redirect(NodeId, Vec<Redirect<Word<L>>>),
-    /// A command that is executed in the background.
-    Background(NodeId),
-    /// A function declaration
-    FunctionDef {
-        /// The function name
-        name: String,
-        /// Commands in the body
-        body: NodeId,
-    },
-    /// A macro call utilizing M4 macros.
-    Macro(M4Macro<Word<L>, NodeId>),
-}
-
 /// TODO: add doc comments
 #[derive(Debug, Default, Clone)]
 pub struct NodeBuilder<L> {
-    nodes: Slab<Node<L>>,
+    /// all nodes are put here
+    pub nodes: Slab<Node<L>>,
 }
 
 impl<L> NodeBuilder<L> {
@@ -129,10 +39,6 @@ impl<L> NodeBuilder<L> {
 
     fn new_node_with_comment(&mut self, kind: NodeKind<L>, comments: Option<String>) -> NodeId {
         self.nodes.insert(Node::new(comments, None, kind, None))
-    }
-
-    fn node(&self, id: NodeId) -> &Node<L> {
-        &self.nodes[id]
     }
 
     fn node_mut(&mut self, id: NodeId) -> &mut Node<L> {

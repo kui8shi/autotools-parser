@@ -6,6 +6,7 @@ use std::{fmt, ops};
 
 pub mod builder;
 pub mod minimal;
+pub mod node;
 
 /// Type alias for the default `Parameter` representation.
 pub type DefaultParameter = Parameter<String>;

@@ -45,6 +45,9 @@ pub type DefaultParser<I> = Parser<I, builder::StringBuilder>;
 /// A parser which will use a minimal set of AST builder implementation.
 pub type MinimalParser<I> = Parser<I, builder::MinimalBuilder<String>>;
 
+/// A parser which will use a node-based AST builder implementation.
+pub type NodeParser<I> = Parser<I, builder::NodeBuilder<String>>;
+
 /// A specialized `Result` type for parsing shell commands.
 pub type ParseResult<T, E> = Result<T, ParseError<E>>;
 
