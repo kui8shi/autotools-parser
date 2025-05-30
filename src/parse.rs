@@ -542,14 +542,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         }
     }
 
-    /// Returns a reference to the internal builder
-    pub fn get_builder(&self) -> &B {
-        &self.builder
-    }
-
-    /// Returns a mutable reference to the internal builder
-    pub fn get_mut_builder(&mut self) -> &mut B {
-        &mut self.builder
+    /// Returns the internal builder while consuming the parser instance.
+    /// Call this after parsing all commands.
+    pub fn take_builder(self) -> B {
+        self.builder
     }
 
     /// Returns the parser's current position in the source.
