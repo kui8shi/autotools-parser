@@ -38,7 +38,7 @@ impl<L> NodeBuilder<L> {
     }
 
     fn new_node_with_comment(&mut self, kind: NodeKind<L>, comments: Option<String>) -> NodeId {
-        self.nodes.insert(Node::new(comments, None, kind, None))
+        self.nodes.insert(Node::new(comments, None, kind))
     }
 
     fn node_mut(&mut self, id: NodeId) -> &mut Node<L> {

@@ -20,8 +20,6 @@ pub struct Node<L> {
     pub range: Option<(usize, usize)>,
     /// the command parsed
     pub kind: NodeKind<L>,
-    /// the ids of children nodes
-    pub children: Option<Vec<NodeId>>,
 }
 
 impl<L> Node<L> {
@@ -30,13 +28,11 @@ impl<L> Node<L> {
         comment: Option<String>,
         range: Option<(usize, usize)>,
         kind: NodeKind<L>,
-        children: Option<Vec<NodeId>>,
     ) -> Self {
         Self {
             comment,
             range,
             kind,
-            children,
         }
     }
 }
