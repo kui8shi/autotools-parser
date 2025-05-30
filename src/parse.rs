@@ -547,6 +547,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &self.builder
     }
 
+    /// Returns a mutable reference to the internal builder
+    pub fn get_mut_builder(&mut self) -> &mut B {
+        &mut self.builder
+    }
+
     /// Returns the parser's current position in the source.
     pub fn pos(&self) -> SourcePos {
         self.iter.pos()
