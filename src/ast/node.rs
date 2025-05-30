@@ -49,7 +49,7 @@ impl<L> Node<L> {
 }
 
 /// represents any kinds of commands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind<L> {
     /// An assignment command that associates a value with a variable.
     Assignment(L, Word<L>),
