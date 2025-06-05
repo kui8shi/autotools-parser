@@ -16,6 +16,7 @@ use self::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper
 use crate::ast::builder::ComplexWordKind::{self, Concat, Single};
 use crate::ast::builder::WordKind::{self, DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, Builder, SimpleWordKind};
+use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
 use crate::token::Token;
@@ -451,6 +452,23 @@ impl<I: Iterator<Item = Token>, B: Builder + Default> Parser<I, B> {
     }
 }
 
+impl<I, L> Parser<I, builder::NodeBuilder<L>>
+where
+    I: Iterator<Item = Token>,
+    L: Into<String> + From<String> + Clone + fmt::Debug,
+{
+    /// Parse all complete commands
+    /// (special method for NodeBuilder to easily take its state)
+    pub fn parse_all(mut self) -> (slab::Slab<Node<L>>, Vec<NodeId>) {
+        let mut top_ids = Vec::new();
+        // Parse all complete commands
+        while let Ok(Some(id)) = self.complete_command() {
+            top_ids.push(id);
+        }
+        (self.builder.nodes, top_ids)
+    }
+}
+
 /// A macro that will consume and return a token that matches a specified pattern
 /// from a parser's token iterator. If no matching token is found, None will be yielded.
 macro_rules! eat_maybe {
@@ -540,12 +558,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             last_quote_pos: None,
             detect_macro,
         }
-    }
-
-    /// Returns the internal builder while consuming the parser instance.
-    /// Call this after parsing all commands.
-    pub fn take_builder(self) -> B {
-        self.builder
     }
 
     /// Returns the parser's current position in the source.
