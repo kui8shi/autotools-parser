@@ -1,6 +1,7 @@
 //! Defines minimal representations of the shell source.
 use super::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
 use crate::m4_macro::M4Macro;
+use std::fmt;
 
 /// Represents the smallest fragment of any text.
 ///
@@ -212,4 +213,50 @@ pub enum Command<V> {
     Compound(CompoundCommand<Word<V, CommandWrapper<V>>, CommandWrapper<V>>),
     /// A simple command represented by a sequence of words.
     Cmd(Vec<Word<V, CommandWrapper<V>>>),
+}
+
+impl<W> fmt::Display for Operator<W>
+where
+    W: fmt::Display,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::Operator::*;
+        match self {
+            Eq(lhs, rhs) => write!(fmt, "{} = {}", lhs, rhs),
+            Neq(lhs, rhs) => write!(fmt, "{} != {}", lhs, rhs),
+            Ge(lhs, rhs) => write!(fmt, "{} -ge {}", lhs, rhs),
+            Gt(lhs, rhs) => write!(fmt, "{} -gt {}", lhs, rhs),
+            Le(lhs, rhs) => write!(fmt, "{} -le {}", lhs, rhs),
+            Lt(lhs, rhs) => write!(fmt, "{} -lt {}", lhs, rhs),
+            Empty(w) => write!(fmt, "-z {}", w),
+            NonEmpty(w) => write!(fmt, "-n {}", w),
+            Dir(w) => write!(fmt, "-d {}", w),
+            File(w) => write!(fmt, "-f {}", w),
+            NoExists(w) => write!(fmt, "! -e {}", w),
+        }
+    }
+}
+
+impl<W, C> fmt::Display for Condition<W, C>
+where
+    W: fmt::Display,
+    C: fmt::Display,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::Condition::*;
+        match self {
+            Cond(op) => write!(fmt, "test {}", op),
+            And(lhs, rhs) => write!(fmt, "{} && {}", lhs, rhs),
+            Or(lhs, rhs) => write!(fmt, "{} || {}", lhs, rhs),
+            Eval(cmds) => write!(
+                fmt,
+                "eval \"{}\"",
+                cmds.iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<String>>()
+                    .join(";")
+            ),
+            ReturnZero(cmd) => write!(fmt, "{}", cmd),
+        }
+    }
 }

@@ -1,5 +1,5 @@
 //! Defines abstract representations of the shell source.
-use super::m4_macro::{M4Argument, M4Macro};
+use crate::m4_macro::{M4Argument, M4Macro};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt, ops};
@@ -85,6 +85,17 @@ pub enum ParameterSubstitution<P, W, C, A> {
     /// Remove largest prefix pattern from a parameter's value, e.g. `${param##pattern}`
     RemoveLargestPrefix(P, Option<W>),
 }
+
+/*
+impl<P, W, C, A> Display for ParameterSubstitution<P, W, C, A>
+where
+    P: Display,
+    W: Display,
+    C: Display,
+    A: Display,
+{
+}
+*/
 
 /// A type alias for the default hiearchy for representing shell words.
 pub type ShellWord<T, W, C> = ComplexWord<
@@ -622,6 +633,110 @@ impl_top_level_word! {
     AtomicTopLevelCommand
 }
 
+impl<W: fmt::Display> fmt::Display for Redirect<W> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::Redirect::*;
+        match self {
+            Read(fd, file) => write!(
+                fmt,
+                "{}< {}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            Write(fd, file) => write!(
+                fmt,
+                "{}> {}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            ReadWrite(fd, file) => write!(
+                fmt,
+                "{}<> {}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            Append(fd, file) => write!(
+                fmt,
+                "{}>> {}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            Clobber(fd, file) => write!(
+                fmt,
+                "{}>| {}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            Heredoc(fd, file) => write!(
+                fmt,
+                "{}<<EOF\n{}\nEOF",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            DupRead(fd, file) => write!(
+                fmt,
+                "{}<&{}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+            DupWrite(fd, file) => write!(
+                fmt,
+                "{}>&{}",
+                fd.map_or("".to_string(), |f| f.to_string()),
+                file
+            ),
+        }
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Arithmetic<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::Arithmetic::*;
+        match self {
+            Var(v) => write!(fmt, "${}", v),
+            Literal(v) => write!(fmt, "{}", v),
+            Pow(lhs, rhs) => write!(fmt, "{} ** {}", lhs, rhs),
+            PostIncr(v) => write!(fmt, "{}++", v),
+            PostDecr(v) => write!(fmt, "{}--", v),
+            PreIncr(v) => write!(fmt, "++{}", v),
+            PreDecr(v) => write!(fmt, "--{}", v),
+            UnaryPlus(a) => write!(fmt, "+({})", a),
+            UnaryMinus(a) => write!(fmt, "-({})", a),
+            LogicalNot(a) => write!(fmt, "!{}", a),
+            BitwiseNot(a) => write!(fmt, "~{}", a),
+            Mult(lhs, rhs) => write!(fmt, "{} * {}", lhs, rhs),
+            Div(lhs, rhs) => write!(fmt, "{} / {}", lhs, rhs),
+            Modulo(lhs, rhs) => write!(fmt, "{} % {}", lhs, rhs),
+            Add(lhs, rhs) => write!(fmt, "{} + {}", lhs, rhs),
+            Sub(lhs, rhs) => write!(fmt, "{} - {}", lhs, rhs),
+            ShiftLeft(lhs, rhs) => write!(fmt, "{} << {}", lhs, rhs),
+            ShiftRight(lhs, rhs) => write!(fmt, "{} >> {}", lhs, rhs),
+            Less(lhs, rhs) => write!(fmt, "{} < {}", lhs, rhs),
+            LessEq(lhs, rhs) => write!(fmt, "{} <= {}", lhs, rhs),
+            Great(lhs, rhs) => write!(fmt, "{} > {}", lhs, rhs),
+            GreatEq(lhs, rhs) => write!(fmt, "{} >= {}", lhs, rhs),
+            Eq(lhs, rhs) => write!(fmt, "{} == {}", lhs, rhs),
+            NotEq(lhs, rhs) => write!(fmt, "{} != {}", lhs, rhs),
+            BitwiseAnd(lhs, rhs) => write!(fmt, "{} & {}", lhs, rhs),
+            BitwiseXor(lhs, rhs) => write!(fmt, "{} ^ {}", lhs, rhs),
+            BitwiseOr(lhs, rhs) => write!(fmt, "{} | {}", lhs, rhs),
+            LogicalAnd(lhs, rhs) => write!(fmt, "{} && {}", lhs, rhs),
+            LogicalOr(lhs, rhs) => write!(fmt, "{} || {}", lhs, rhs),
+            Ternary(first, second, third) => write!(fmt, "{} ? {} : {}", first, second, third),
+            Assign(lhs, rhs) => write!(fmt, "{} = {}", lhs, rhs),
+            Sequence(arithmetics) => write!(
+                fmt,
+                "{}",
+                arithmetics
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
 impl<T: fmt::Display> fmt::Display for Parameter<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::Parameter::*;
@@ -643,6 +758,93 @@ impl<T: fmt::Display> fmt::Display for Parameter<T> {
                     write!(fmt, "${{{}}}", p)
                 }
             }
+        }
+    }
+}
+
+impl<T, W, C, A> fmt::Display for ParameterSubstitution<Parameter<T>, W, C, A>
+where
+    T: fmt::Display,
+    W: fmt::Display,
+    C: fmt::Display,
+    A: fmt::Display,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Parameter::*;
+        use ParameterSubstitution::*;
+        match self {
+            Command(cmds) => write!(
+                fmt,
+                "$({})",
+                cmds.iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<String>>()
+                    .join(";")
+            ),
+            Len(param) => match param {
+                At => write!(fmt, "${{#@}}"),
+                Star => write!(fmt, "${{#*}}"),
+                Pound => write!(fmt, "${{##}}"),
+                Question => write!(fmt, "${{#?}}"),
+                Dash => write!(fmt, "${{#-}}"),
+                Dollar => write!(fmt, "${{#$}}"),
+                Bang => write!(fmt, "${{#!}}"),
+                Positional(p) => write!(fmt, "${{#{}}}", p),
+                Var(v) => write!(fmt, "${{#{}}}", v),
+            },
+            Arith(arith) => write!(
+                fmt,
+                "$(( {} ))",
+                arith.as_ref().map_or("".to_string(), |a| a.to_string())
+            ),
+            Default(_, param, word) => write!(
+                fmt,
+                "${{{}:-{}}}",
+                param,
+                word.as_ref().map_or("".to_string(), |w| w.to_string())
+            ),
+            Assign(_, param, word) => write!(
+                fmt,
+                "${{{}:={}}}",
+                param,
+                word.as_ref().map_or("".to_string(), |w| w.to_string())
+            ),
+            Error(_, param, word) => write!(
+                fmt,
+                "${{{}:?{}}}",
+                param,
+                word.as_ref().map_or("".to_string(), |w| w.to_string())
+            ),
+            Alternative(_, param, word) => write!(
+                fmt,
+                "${{{}:+{}}}",
+                param,
+                word.as_ref().map_or("".to_string(), |w| w.to_string())
+            ),
+            RemoveSmallestSuffix(param, pattern) => write!(
+                fmt,
+                "${{{}%{}}}",
+                param,
+                pattern.as_ref().map_or("".to_string(), |p| p.to_string())
+            ),
+            RemoveLargestSuffix(param, pattern) => write!(
+                fmt,
+                "${{{}%%{}}}",
+                param,
+                pattern.as_ref().map_or("".to_string(), |p| p.to_string())
+            ),
+            RemoveSmallestPrefix(param, pattern) => write!(
+                fmt,
+                "${{{}#{}}}",
+                param,
+                pattern.as_ref().map_or("".to_string(), |p| p.to_string())
+            ),
+            RemoveLargestPrefix(param, pattern) => write!(
+                fmt,
+                "${{{}##{}}}",
+                param,
+                pattern.as_ref().map_or("".to_string(), |p| p.to_string())
+            ),
         }
     }
 }
