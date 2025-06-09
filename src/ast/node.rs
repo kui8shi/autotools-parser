@@ -289,7 +289,7 @@ where
         use crate::m4_macro::M4Argument::*;
         let newline = format!("\n{}", " ".repeat(indent));
         match arg {
-            Literal(lit) => lit.to_string(),
+            Literal(lit) => format!("[{}]", lit),
             Word(word) => self.word_to_string(word),
             Array(words) => format!(
                 "{}",
@@ -299,15 +299,15 @@ where
                     .collect::<Vec<String>>()
                     .join(if words.len() < 10 { " " } else { &newline })
             ),
-            Program(prog) => prog.replace("\n", &newline),
+            Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
             Commands(cmds) => format!(
-                "{}",
+                "[{}]",
                 cmds.iter()
                     .map(|c| self.node_to_string(*c, indent))
                     .collect::<Vec<String>>()
                     .join(&newline)
             ),
-            Unknown(unknown) => unknown.to_string(),
+            Unknown(unknown) => format!("[{}]", unknown),
         }
     }
 
@@ -639,7 +639,7 @@ mod tests {
     fn test_m4_argument_to_string_literal() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
         let arg = M4Argument::Literal("lit".to_string());
-        assert_eq!(pool.m4_argument_to_string(&arg, 0), "lit");
+        assert_eq!(pool.m4_argument_to_string(&arg, 0), "[lit]");
     }
 
     #[test]
@@ -848,6 +848,6 @@ mod tests {
         let mac = Node::new(None, None, NodeKind::Macro(m4.clone()));
         let pool = DummyPool::new(vec![body.clone(), func.clone(), mac.clone()]);
         assert_eq!(pool.node_to_string(1, 0), "function f () b");
-        assert_eq!(pool.node_to_string(2, 0), "m(a,\n  w)");
+        assert_eq!(pool.node_to_string(2, 0), "m([a],\n  w)");
     }
 }
