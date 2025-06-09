@@ -35,7 +35,7 @@ fn test_macro_with_command() {
 
 #[test]
 fn test_macro_complex() {
-    let input = r#"
+   let input = r#"
 AC_COMPILE_IFELSE([
     AC_LANG_SOURCE([example_feature int v;]) ], [
     AC_DEFINE([FEATURE_TYPE], [example_feature], [Feature specifier]) ], [
@@ -46,6 +46,10 @@ AC_COMPILE_IFELSE([
     AC_LANG_SOURCE([__attribute((example)) int v;]) ], [
     AC_DEFINE([FEATURE_TYPE], [__attribute((example))], [Feature specifier]) ], [
 ])])])
+AC_C_BIGENDIAN(
+    [a],
+    [hi > path],
+    [:])
 "#;
 
     let p = make_parser(input);

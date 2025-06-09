@@ -279,7 +279,7 @@ where
                     .collect::<Vec<String>>()
                     .join("; ")
             ),
-            ReturnZero(cmd) => format!("{}", cmd),
+            ReturnZero(cmd) => format!("{}", self.node_to_string(**cmd, 0)),
         }
     }
 
@@ -301,9 +301,9 @@ where
             ),
             Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
             Commands(cmds) => format!(
-                "[{}]",
+                "[\n{}{newline}]",
                 cmds.iter()
-                    .map(|c| self.node_to_string(*c, indent))
+                    .map(|c| self.node_to_string(*c, indent+2))
                     .collect::<Vec<String>>()
                     .join(&newline)
             ),
@@ -342,7 +342,7 @@ where
                 self.word_to_string(file)
             ),
             Heredoc(fd, file) => format!(
-                "{}<<EOF\n{}\nEOF",
+                "{}<<EOF\n{}EOF",
                 fd.map_or("".to_string(), |f| f.to_string()),
                 self.word_to_string(file)
             ),
@@ -433,7 +433,7 @@ where
             Command(cmds) => format!(
                 "$({})",
                 cmds.iter()
-                    .map(|c| c.to_string())
+                    .map(|c| self.node_to_string(*c, 0))
                     .collect::<Vec<String>>()
                     .join(";")
             ),

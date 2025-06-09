@@ -462,8 +462,19 @@ where
     pub fn parse_all(mut self) -> (slab::Slab<Node<L>>, Vec<NodeId>) {
         let mut top_ids = Vec::new();
         // Parse all complete commands
-        while let Ok(Some(id)) = self.complete_command() {
-            top_ids.push(id);
+        let mut take = || match self.complete_command() {
+            Ok(Some(c)) => Some(Ok(c)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        };
+        while let Some(id) = take() {
+            match id {
+                Ok(id) => top_ids.push(id),
+                Err(e) => {
+                    println!("{}", e);
+                    panic!();
+                }
+            }
         }
         (self.builder.nodes, top_ids)
     }
@@ -709,6 +720,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     ///
     /// A valid command is expected to have at least an executable name, or a single
     /// variable assignment or redirection. Otherwise an error will be returned.
+    ///
+    /// The format of a simple command is
+    /// [<env> | <redirect>]* <executable_name> [<cmd_word> | <redirect>]*
+    /// This function iterates over two loops: the first half for parsing till <executable_name>,
+    /// and the second half for rest words or redirects.
     pub fn simple_command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
         use crate::ast::{RedirectOrCmdWord, RedirectOrEnvVar};
 
@@ -718,6 +734,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         self.may_open_quote(Some(1), true);
 
+        // 1st loop: [EnvVar | Redirect]* + CmdWord(exec)
         loop {
             self.skip_whitespace();
             let is_name = {
@@ -922,7 +939,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         macro_rules! get_path {
             ($parser:expr) => {
-                match $parser.word_preserve_trailing_whitespace_raw()? {
+                match $parser.word_preserve_trailing_whitespace_raw_with_delim(
+                    $parser.in_root().not().then_some(&[Comma, ParenClose]),
+                    false,
+                )? {
                     Some(p) => $parser.builder.word(p)?,
                     None => return Err(self.make_unexpected_err()),
                 }
@@ -936,7 +956,11 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     Single(Simple(SimpleWordKind::Literal(dash.to_string())))
                 } else {
                     let path_start_pos = $parser.iter.pos();
-                    let path = if let Some(p) = $parser.word_preserve_trailing_whitespace_raw()? {
+                    let path = if let Some(p) = $parser
+                        .word_preserve_trailing_whitespace_raw_with_delim(
+                            $parser.in_root().not().then_some(&[Comma, ParenClose]),
+                            false,
+                        )? {
                         p
                     } else {
                         return Err($parser.make_unexpected_err());
