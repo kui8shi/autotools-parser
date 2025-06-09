@@ -117,7 +117,7 @@ where
     L: fmt::Display,
 {
     /// Retrieve a reference to the AST `Node` identified by `node_id`.
-    fn get_node(&self, node_id: NodeId) -> &Node<L>;
+    fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<L>;
 
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
@@ -132,7 +132,7 @@ where
                 .join("\n")
         };
 
-        match &self.get_node(node_id).kind {
+        match &self.get_node_kind(node_id) {
             Assignment(name, word) => format!("{tab}{}={}", name, self.word_to_string(word)),
             Cmd(words) => format!(
                 "{tab}{}",
@@ -544,7 +544,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Arithmetic, Parameter};
+    use crate::ast::Parameter;
     use crate::m4_macro::{M4Argument, M4Macro};
 
     struct DummyPool<L> {
@@ -558,16 +558,16 @@ mod tests {
     }
 
     impl<L: fmt::Display> NodePool<L> for DummyPool<L> {
-        fn get_node(&self, node_id: NodeId) -> &Node<L> {
-            &self.nodes[node_id]
+        fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<L> {
+            &self.nodes[node_id].kind
         }
     }
 
     #[test]
-    fn test_get_node() {
+    fn test_get_node_kind() {
         let node = Node::new(None, None, NodeKind::<String>::Cmd(vec![]));
         let pool = DummyPool::new(vec![node.clone()]);
-        assert_eq!(pool.get_node(0).kind, node.kind);
+        assert_eq!(pool.get_node_kind(0), &node.kind);
     }
 
     #[test]
