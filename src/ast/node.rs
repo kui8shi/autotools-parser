@@ -252,7 +252,7 @@ where
                     .iter()
                     .map(|arg| self.m4_argument_to_string(arg, indent + 2))
                     .collect::<Vec<String>>()
-                    .join(",\n{tab}  ")
+                    .join(&format!(",\n{tab}  "))
             ),
         }
     }
@@ -573,8 +573,12 @@ mod tests {
     #[test]
     fn test_node_to_string_assignment_and_cmd() {
         let word = Word::Single(WordFragment::Literal("value".to_string()));
-        let assign_node = Node::new(None, None, NodeKind::Assignment("var".into(), word.clone()));
-        let echo = Word::Single(WordFragment::Literal("echo".into()));
+        let assign_node = Node::new(
+            None,
+            None,
+            NodeKind::Assignment("var".to_string(), word.clone()),
+        );
+        let echo = Word::Single(WordFragment::Literal("echo".to_string()));
         let cmd_node = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), word.clone()]));
         let pool = DummyPool::new(vec![assign_node, cmd_node]);
         assert_eq!(pool.node_to_string(0, 0), "var=value");
@@ -585,8 +589,8 @@ mod tests {
     fn test_operator_to_string() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
         let op = Operator::Eq(
-            Word::Single(WordFragment::Literal("a".into())),
-            Word::Single(WordFragment::Literal("b".into())),
+            Word::Single(WordFragment::Literal("a".to_string())),
+            Word::Single(WordFragment::Literal("b".to_string())),
         );
         assert_eq!(pool.operator_to_string(&op), "a = b");
     }
@@ -594,11 +598,11 @@ mod tests {
     #[test]
     fn test_word_and_fragment_to_string() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
-        let frag = WordFragment::DoubleQuoted(vec![WordFragment::Literal("hi".into())]);
+        let frag = WordFragment::DoubleQuoted(vec![WordFragment::Literal("hi".to_string())]);
         assert_eq!(pool.word_fragment_to_string(&frag), "\"hi\"");
         let word = Word::Concat(vec![
-            WordFragment::Literal("a".into()),
-            WordFragment::Literal("b".into()),
+            WordFragment::Literal("a".to_string()),
+            WordFragment::Literal("b".to_string()),
         ]);
         assert_eq!(pool.word_to_string(&word), "ab");
     }
@@ -607,8 +611,8 @@ mod tests {
     fn test_condition_to_string() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
         let cond = Condition::Cond(Operator::Neq(
-            Word::Single(WordFragment::Literal("x".into())),
-            Word::Single(WordFragment::Literal("y".into())),
+            Word::Single(WordFragment::Literal("x".to_string())),
+            Word::Single(WordFragment::Literal("y".to_string())),
         ));
         assert_eq!(pool.condition_to_string(&cond), "test x != y");
     }
@@ -616,7 +620,7 @@ mod tests {
     #[test]
     fn test_redirect_to_string() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
-        let redir = Redirect::Write(None, Word::Single(WordFragment::Literal("out".into())));
+        let redir = Redirect::Write(None, Word::Single(WordFragment::Literal("out".to_string())));
         assert_eq!(pool.redirect_to_string(&redir), "> out");
     }
 
@@ -625,8 +629,8 @@ mod tests {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
         let subst = ParameterSubstitution::Default(
             false,
-            Parameter::Var("v".into()),
-            Some(Word::Single(WordFragment::Literal("w".into()))),
+            Parameter::Var("v".to_string()),
+            Some(Word::Single(WordFragment::Literal("w".to_string()))),
         );
         assert_eq!(pool.parameter_substitution_to_string(&subst), "${v:-w}");
     }
@@ -634,7 +638,216 @@ mod tests {
     #[test]
     fn test_m4_argument_to_string_literal() {
         let pool: DummyPool<String> = DummyPool::new(vec![]);
-        let arg = M4Argument::Literal("lit".into());
+        let arg = M4Argument::Literal("lit".to_string());
         assert_eq!(pool.m4_argument_to_string(&arg, 0), "lit");
+    }
+
+    #[test]
+    fn test_node_to_string_brace_and_subshell() {
+        let echo = Word::Single(WordFragment::Literal("echo".to_string()));
+        let hi = Word::Single(WordFragment::Literal("hi".to_string()));
+        let cmd = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), hi.clone()]));
+        let brace = Node::new(None, None, NodeKind::Brace(vec![0]));
+        let subshell = Node::new(None, None, NodeKind::Subshell(vec![0]));
+        let pool = DummyPool::new(vec![cmd.clone(), brace.clone(), subshell.clone()]);
+        assert_eq!(pool.node_to_string(1, 0), "{\n  echo hi\n}");
+        assert_eq!(pool.node_to_string(2, 0), "(\n  echo hi\n)");
+    }
+
+    #[test]
+    fn test_node_to_string_while_until() {
+        let w = Word::Single(WordFragment::Literal("f".to_string()));
+        let cond = Condition::Cond(Operator::Empty(w.clone()));
+        let body = Node::new(None, None, NodeKind::Cmd(vec![w.clone()]));
+        let gbp = GuardBodyPair {
+            condition: cond.clone(),
+            body: vec![0],
+        };
+        let while_node = Node::new(None, None, NodeKind::While(gbp.clone()));
+        let until_node = Node::new(None, None, NodeKind::Until(gbp));
+        let pool = DummyPool::new(vec![body.clone(), while_node.clone(), until_node.clone()]);
+        assert_eq!(pool.node_to_string(1, 0), "while test -z f; do\n  f\ndone");
+        assert_eq!(pool.node_to_string(2, 0), "until test -z f; do\n  f\ndone");
+    }
+
+    #[test]
+    fn test_node_to_string_if_else() {
+        let w = Word::Single(WordFragment::Literal("t".to_string()));
+        let cond = Condition::Cond(Operator::Empty(w.clone()));
+        let cmd_true = Node::new(None, None, NodeKind::Cmd(vec![w.clone()]));
+        let cmd_false = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("f".to_string()))]),
+        );
+        let cmd_else = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("e".to_string()))]),
+        );
+        let gbp1 = GuardBodyPair {
+            condition: cond.clone(),
+            body: vec![0],
+        };
+        let gbp2 = GuardBodyPair {
+            condition: cond.clone(),
+            body: vec![1],
+        };
+        let if_node = Node::new(
+            None,
+            None,
+            NodeKind::If {
+                conditionals: vec![gbp1.clone()],
+                else_branch: vec![],
+            },
+        );
+        let if_else_node = Node::new(
+            None,
+            None,
+            NodeKind::If {
+                conditionals: vec![gbp1, gbp2],
+                else_branch: vec![2],
+            },
+        );
+        let pool = DummyPool::new(vec![
+            cmd_true.clone(),
+            cmd_false.clone(),
+            cmd_else.clone(),
+            if_node.clone(),
+            if_else_node.clone(),
+        ]);
+        assert_eq!(pool.node_to_string(3, 0), "if test -z t; then\n  t\nfi");
+        assert_eq!(
+            pool.node_to_string(4, 0),
+            "if test -z t; then\n  t\nelse if test -z t; then\n  f\nelse\n  e\nfi"
+        );
+    }
+
+    #[test]
+    fn test_node_to_string_for() {
+        let cmd = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("x".to_string()))]),
+        );
+        let words = vec![
+            Word::Single(WordFragment::Literal("1".to_string())),
+            Word::Single(WordFragment::Literal("2".to_string())),
+        ];
+        let for_node = Node::new(
+            None,
+            None,
+            NodeKind::For {
+                var: "i".to_string(),
+                words: words.clone(),
+                body: vec![0],
+            },
+        );
+        let pool = DummyPool::new(vec![cmd.clone(), for_node.clone()]);
+        assert_eq!(pool.node_to_string(1, 0), "for i in 1 2; do\n  x\ndone");
+    }
+
+    #[test]
+    fn test_node_to_string_case() {
+        let cmd = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("c".to_string()))]),
+        );
+        let pat1 = Word::Single(WordFragment::Literal("a".to_string()));
+        let pat2 = Word::Single(WordFragment::Literal("b".to_string()));
+        let arm = PatternBodyPair {
+            patterns: vec![pat1.clone(), pat2.clone()],
+            body: vec![0],
+        };
+        let case_node = Node::new(
+            None,
+            None,
+            NodeKind::Case {
+                word: Word::Single(WordFragment::Literal("x".to_string())),
+                arms: vec![arm],
+            },
+        );
+        let pool = DummyPool::new(vec![cmd.clone(), case_node.clone()]);
+        assert_eq!(
+            pool.node_to_string(1, 0),
+            "case x in\n  a|b)\n    c\n    ;;\nesac"
+        );
+    }
+
+    #[test]
+    fn test_node_to_string_and_or_pipe() {
+        let cmd = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("c".to_string()))]),
+        );
+        let eq = Operator::Eq(
+            Word::Single(WordFragment::Literal("a".to_string())),
+            Word::Single(WordFragment::Literal("b".to_string())),
+        );
+        let cond = Condition::Cond(eq.clone());
+        let and_node = Node::new(None, None, NodeKind::And(cond.clone(), 0));
+        let or_node = Node::new(None, None, NodeKind::Or(cond.clone(), 0));
+        let pipe_node = Node::new(None, None, NodeKind::Pipe(false, vec![0, 0]));
+        let bang_pipe = Node::new(None, None, NodeKind::Pipe(true, vec![0, 0]));
+        let pool = DummyPool::new(vec![
+            cmd.clone(),
+            and_node.clone(),
+            or_node.clone(),
+            pipe_node.clone(),
+            bang_pipe.clone(),
+        ]);
+        assert_eq!(pool.node_to_string(1, 0), "test a = b && c");
+        assert_eq!(pool.node_to_string(2, 0), "test a = b || c");
+        assert_eq!(pool.node_to_string(3, 0), "c | c");
+        assert_eq!(pool.node_to_string(4, 0), "!c | c");
+    }
+
+    #[test]
+    fn test_node_to_string_redirect_and_background() {
+        let cmd = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("cmd".to_string()))]),
+        );
+        let r1 = Redirect::Read(None, Word::Single(WordFragment::Literal("in".to_string())));
+        let r2 = Redirect::Write(
+            Some(1),
+            Word::Single(WordFragment::Literal("out".to_string())),
+        );
+        let rd_node = Node::new(None, None, NodeKind::Redirect(0, vec![r1, r2]));
+        let bg_node = Node::new(None, None, NodeKind::Background(0));
+        let pool = DummyPool::new(vec![cmd.clone(), rd_node.clone(), bg_node.clone()]);
+        assert_eq!(pool.node_to_string(1, 0), "cmd < in 1> out");
+        assert_eq!(pool.node_to_string(2, 0), "cmd &");
+    }
+
+    #[test]
+    fn test_node_to_string_functiondef_and_macro() {
+        let body = Node::new(
+            None,
+            None,
+            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("b".to_string()))]),
+        );
+        let func = Node::new(
+            None,
+            None,
+            NodeKind::FunctionDef {
+                name: "f".to_string(),
+                body: 0,
+            },
+        );
+        let m4 = M4Macro::new(
+            "m".to_string(),
+            vec![
+                M4Argument::Literal("a".to_string()),
+                M4Argument::Word(Word::Single(WordFragment::Literal("w".to_string()))),
+            ],
+        );
+        let mac = Node::new(None, None, NodeKind::Macro(m4.clone()));
+        let pool = DummyPool::new(vec![body.clone(), func.clone(), mac.clone()]);
+        assert_eq!(pool.node_to_string(1, 0), "function f () b");
+        assert_eq!(pool.node_to_string(2, 0), "m(a,\n  w)");
     }
 }
