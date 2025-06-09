@@ -750,7 +750,7 @@ impl<T: fmt::Display> fmt::Display for Parameter<T> {
             Dollar => fmt.write_str("$$"),
             Bang => fmt.write_str("$!"),
 
-            Var(ref p) => write!(fmt, "${{{}}}", p),
+            Var(ref p) => write!(fmt, "${}", p),
             Positional(p) => {
                 if p <= 9 {
                     write!(fmt, "${}", p)
