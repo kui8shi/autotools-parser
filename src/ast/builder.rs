@@ -479,6 +479,7 @@ pub trait Builder {
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
         effects: Option<SideEffect>,
+        original_name: Option<String>,
     ) -> Result<Self::M4Macro, Self::Error>;
 
     /// Invoked when only comments are parsed with no commands following.
@@ -629,8 +630,9 @@ macro_rules! impl_builder_body {
             name: String,
             args: Vec<M4Argument<Self::Word, Self::Command>>,
             effects: Option<SideEffect>,
+            original_name: Option<String>,
         ) -> Result<Self::M4Macro, Self::Error> {
-            (**self).macro_call(name, args, effects)
+            (**self).macro_call(name, args, effects, original_name)
         }
 
         fn function_declaration(

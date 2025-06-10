@@ -407,8 +407,14 @@ where
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
         effects: Option<SideEffect>,
+        original_name: Option<String>,
     ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(M4Macro::new_with_side_effect(name, args, effects))
+        Ok(M4Macro::new_with_side_effect(
+            name,
+            args,
+            effects,
+            original_name,
+        ))
     }
 
     /// Ignored by the builder.

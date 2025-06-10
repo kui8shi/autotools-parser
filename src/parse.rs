@@ -418,7 +418,7 @@ pub struct Parser<I, B> {
     quotes: (Token, Token),
     quote_stack: Vec<QuoteContext>,
     last_quote_pos: Option<SourcePos>,
-    detect_macro: bool,
+    detect_user_macro: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -557,7 +557,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     }
 
     /// Creates a new Parser from a Token iterator and provided AST builder.
-    pub fn with_builder(iter: I, builder: B, detect_macro: bool) -> Self {
+    pub fn with_builder(iter: I, builder: B, detect_user_macro: bool) -> Self {
         Parser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
@@ -567,7 +567,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 quote_level: 0,
             }],
             last_quote_pos: None,
-            detect_macro,
+            detect_user_macro,
         }
     }
 
@@ -1140,6 +1140,17 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self.quote_stack.last_mut().unwrap().quote_level
     }
 
+    fn should_skip_macro_evaluation(&self) -> bool {
+        use QuoteContextKind::*;
+        // we skip macro evaluationwhen in quotes.
+        // in the actual configure.ac, such macro calls quoted are not evaluated.
+        let quote_context = self.quote_stack.last().unwrap();
+        match &quote_context.kind {
+            Root | Other(_) => quote_context.quote_level >= 1,
+            Macro(_) => quote_context.quote_level >= 2,
+        }
+    }
+
     /// Parses a heredoc redirection and the heredoc's body.
     ///
     /// This method will look ahead after the next unquoted/unescaped newline
@@ -1179,7 +1190,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             DLessDash => { true },
         });
 
-        self.stash_quote_context(QuoteContextKind::Other("heredoc".into()));
         self.skip_whitespace();
 
         // Unfortunately we're going to have to capture the delimeter word "manually"
@@ -1331,8 +1341,8 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             let mut line_start_pos = self.iter.pos();
             let mut line = Vec::new();
             'line: loop {
-                self.may_open_quote(None, false);
-                self.may_close_quote(None, false);
+                // self.may_open_quote(None, false);
+                // self.may_close_quote(None, false);
                 if strip_tabs {
                     let skip_next = if let Some(Whitespace(w)) = self.iter.peek() {
                         let stripped = w.trim_start_matches('\t');
@@ -1400,9 +1410,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
             heredoc.push((line, line_start_pos));
         }
-
         self.iter
             .buffer_tokens_to_yield_first(saved_tokens, saved_pos);
+
+        self.stash_quote_context(QuoteContextKind::Other("heredoc".into()));
 
         let body = if quoted {
             let body = heredoc.into_iter().flat_map(|(t, _)| t).collect::<Vec<_>>();
@@ -1428,7 +1439,6 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             }
         };
 
-        self.may_close_quote(None, false);
         self.pop_quote_context();
 
         let word = self.builder.word(body)?;
@@ -2694,9 +2704,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// Parses a m4 macro call if present. If no macro call is present,
     /// nothing is consumed from the token stream.
     pub fn maybe_macro_call(&mut self) -> Option<String> {
-        if self.in_root() && self.in_quote() {
-            // we skip checking when in root & in quotes.
-            // in the actual configure.ac, such macro calls quoted in raw scripts are not evaluated.
+        if self.should_skip_macro_evaluation() {
             return None;
         }
         let names = m4_macro::MACROS
@@ -2718,7 +2726,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             } else {
                 Some(name.to_string())
             }
-        } else if self.detect_macro {
+        } else if self.detect_user_macro {
             // check if user-defined macro call
             let found_quote_open = self.iter.peek() == Some(&quote_open);
             let mut peeked = self.iter.multipeek();
@@ -2762,9 +2770,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let name = self
             .reserved_word(name_candidates)
             .map_err(|()| self.make_unexpected_err())?;
-        let (name, macro_entry) = match m4_macro::get_macro(name) {
-            Some((k, v)) => (k.as_ref(), Some(v)),
-            None => (name, None),
+        let (name, macro_entry, original_name) = match m4_macro::get_macro(name) {
+            Some((k, v, o)) => (k.as_ref(), Some(v), o),
+            None => (name, None, None),
         };
         let mut effects = macro_entry
             .and_then(|sig| (!sig.has_no_exports()).then_some(sig))
@@ -2772,9 +2780,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
-            return Ok(self
-                .builder
-                .macro_call(name.to_string(), Vec::new(), effects)?);
+            return Ok(self.builder.macro_call(
+                name.to_string(),
+                Vec::new(),
+                effects,
+                original_name.map(|s| s.to_string()),
+            )?);
         }
         self.stash_quote_context(QuoteContextKind::Macro(name.into()));
         let (_, quote_close) = self.get_quotes();
@@ -2791,7 +2802,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 self.may_open_quote(None, false);
                 let found_macro = self
                     .maybe_macro_call()
-                    .and_then(|name| m4_macro::get_macro(&name).map(|(_, v)| v.clone()))
+                    .and_then(|name| m4_macro::get_macro(&name).map(|(_, v, _)| v.clone()))
                     .is_some_and(|sig| {
                         sig.ret_type
                             .is_some_and(|ref t| t == &arg_types[idx_arg_type])
@@ -3022,7 +3033,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         self.pop_quote_context();
         // A whitespace is not allowed between m4 macro name and the opening parenthesis
         // eat!(self, { ParenOpen => {} });
-        Ok(self.builder.macro_call(name.to_string(), args, effects)?)
+        Ok(self.builder.macro_call(
+            name.to_string(),
+            args,
+            effects,
+            original_name.map(|s| s.to_string()),
+        )?)
     }
 
     // multipeek does not have pos() trait

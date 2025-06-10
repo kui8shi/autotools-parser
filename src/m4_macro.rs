@@ -134,12 +134,14 @@ pub struct M4Macro<W, C> {
     pub args: Vec<M4Argument<W, C>>,
     /// side effects from the call
     pub effects: Option<SideEffect>,
+    /// original m4 macro name if an alternative macro was adopted
+    pub original_name: Option<String>,
 }
 
 impl<W, C> M4Macro<W, C> {
     /// Create a new M4 macro call node.
     pub fn new(name: String, args: Vec<M4Argument<W, C>>) -> Self {
-        Self::new_with_side_effect(name, args, None)
+        Self::new_with_side_effect(name, args, None, None)
     }
 
     /// Create a new M4 macro call node with information about side effects.
@@ -147,11 +149,13 @@ impl<W, C> M4Macro<W, C> {
         name: String,
         args: Vec<M4Argument<W, C>>,
         effects: Option<SideEffect>,
+        original_name: Option<String>,
     ) -> Self {
         Self {
             name,
             args,
             effects,
+            original_name,
         }
     }
 }
@@ -505,12 +509,13 @@ fn split_tag(tag: &str) -> Vec<(M4ExportType, String)> {
 }
 
 /// Return macro signature if a predefined macro found.
-pub fn get_macro(name: &str) -> Option<(&String, &M4MacroSignature)> {
+pub fn get_macro(name: &str) -> Option<(&String, &M4MacroSignature, Option<&String>)> {
     MACROS.get_key_value(name).map(|(key, signature)| {
         if let Some(ref alternative) = signature.replaced_by {
-            MACROS.get_key_value(alternative).unwrap()
+            let signature = MACROS.get(alternative).unwrap();
+            (alternative, signature, Some(key))
         } else {
-            (key, signature)
+            (key, signature, None)
         }
     })
 }

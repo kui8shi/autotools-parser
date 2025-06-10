@@ -43,7 +43,7 @@ impl Default for QuoteRewriteConfig {
                 ("AC_REQUIRE".into(), "dnl AC_REQUIRE".into()),
                 // Current autoconf-parser cannot recognize it.
                 ("AC_FD_CC".into(), "5".into()),
-                // Currently m4_foreach cannot not processed under environemtns with quotes changed
+                // Currently m4_foreach cannot not be processed under an environment with quotes changed
                 ("m4_foreach".into(), "M4_FOREACH".into()),
                 // ("m4_toupper".into(), "TO_UPPER".into()),
             ]),
@@ -249,20 +249,20 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
     }
 
     fn macro_name(&mut self, name: &str) -> Option<(String, isize)> {
-        if let Some((name, sig)) = get_macro(name) {
-            let is_define_macro = matches!(sig.ret_type, Some(M4Type::Def));
-            let name = if !name.starts_with("m4_") && is_define_macro {
+        if let Some((name, sig, _)) = get_macro(name) {
+            let is_defining_macro = matches!(sig.ret_type, Some(M4Type::Def));
+            let name = if !name.starts_with("m4_") && is_defining_macro {
                 // The condition is a heuristic to detect macro defining macros such as AC_DEFUN.
                 // we intentionally overwrite the macro name for m4sugar language.
                 "m4_define"
             } else {
                 name
             };
-            if (!self.stack.is_empty() || self.in_double_quote_string) && is_define_macro {
+            if (!self.stack.is_empty() || self.in_double_quote_string) && is_defining_macro {
                 // to prevent unintetional expansions, we ignore define macros inside other macros.
                 None
             } else if name.starts_with("m4_") {
-                Some((name.to_string(), if is_define_macro { 1 } else { 1 }))
+                Some((name.to_string(), if is_defining_macro { 1 } else { 1 }))
             } else {
                 None
             }

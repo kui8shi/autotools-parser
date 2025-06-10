@@ -322,6 +322,26 @@ ENABLE_OPTION=default)"#;
 }
 
 #[test]
+fn test_unevaluated_define_macro() {
+    let input = r#"echo ["define(<VAR>,<$var>)"] >> config.m4"#;
+
+    let expected = MinimalCommand::new(Compound(CompoundCommand::Redirect(
+        Box::new(MinimalCommand::new(Cmd(vec![
+            word(lit("echo")),
+            word(double_quoted(&[
+                lit("define(<VAR>,<"),
+                var("var"),
+                lit(">)"),
+            ])),
+        ]))),
+        vec![Redirect::Append(None, word(lit("config.m4")))],
+    )));
+
+    let mut p = make_parser(input);
+    assert_eq!(p.complete_command().unwrap().unwrap(), expected);
+}
+
+#[test]
 fn test_quoted_command_in_root() {
     let input = r#"
 [if test "${ENABLE_OPTION}" = "no" ; then
@@ -479,21 +499,21 @@ fn test_backticked_command_in_macro_argument() {
 
 #[test]
 fn test_macro_patsubst_nested() {
-    let input = "AC_INIT(PROGRAM, [patsubst(patsubst(esyscmd(
+    let input = "AC_INIT(PROGRAM, [m4_bpatsubst(m4_bpatsubst(m4_esyscmd(
                 grep \"^#define VERSION \" config.h.in /dev/null 2>/dev/null),
                 [^.*VERSION\t+],
                 []
               ),
               [\t*$],
               []
-            ).patsubst(patsubst(esyscmd(
+            ).m4_bpatsubst(m4_bpatsubst(m4_esyscmd(
                     grep \"^#define VERSION_MINOR \" config.h.in /dev/null 2>/dev/null),
                     [^.*VERSION_MINOR \t+],
                     []
                   ),
                   [\t*$],
                   []
-                ).patsubst(patsubst(esyscmd(
+                ).m4_bpatsubst(m4_bpatsubst(m4_esyscmd(
                         grep \"^#define VERSION_PATCHLEVEL \" config.h.in /dev/null 2>/dev/null),
                         [^.*VERSION_PATCHLEVEL\t+],
                         []

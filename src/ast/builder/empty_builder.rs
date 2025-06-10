@@ -147,6 +147,7 @@ impl Builder for EmptyBuilder {
         _name: String,
         _args: Vec<M4Argument<Self::Word, Self::Command>>,
         _effects: Option<SideEffect>,
+        _original_name: Option<String>,
     ) -> Result<Self::M4Macro, Self::Error> {
         Ok(())
     }

@@ -114,7 +114,7 @@ pub enum NodeKind<L> {
 /// `fmt::Display` for formatting.
 pub trait NodePool<L>
 where
-    L: fmt::Display,
+    L: fmt::Display + fmt::Debug,
 {
     /// Retrieve a reference to the AST `Node` identified by `node_id`.
     fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<L>;
@@ -133,12 +133,12 @@ where
         };
 
         match &self.get_node_kind(node_id) {
-            Assignment(name, word) => format!("{tab}{}={}", name, self.word_to_string(word)),
+            Assignment(name, word) => format!("{tab}{}={}", name, self.word_to_string(word, true)),
             Cmd(words) => format!(
                 "{tab}{}",
                 words
                     .iter()
-                    .map(|w| self.word_to_string(w))
+                    .map(|w| self.word_to_string(w, false))
                     .collect::<Vec<String>>()
                     .join(" ")
             ),
@@ -192,20 +192,20 @@ where
                 "{tab}for {var} in {}; do\n{}\n{tab}done",
                 words
                     .iter()
-                    .map(|w| self.word_to_string(w))
+                    .map(|w| self.word_to_string(w, true))
                     .collect::<Vec<String>>()
                     .join(" "),
                 body_to_string(body, indent + 2)
             ),
             Case { word, arms } => format!(
                 "{tab}case {} in\n{}\n{tab}esac",
-                self.word_to_string(word),
+                self.word_to_string(word, false),
                 arms.iter()
                     .map(|arm| format!(
                         "{tab}  {})\n{}\n{tab}    ;;",
                         arm.patterns
                             .iter()
-                            .map(|w| self.word_to_string(w))
+                            .map(|w| self.word_to_string(w, false))
                             .collect::<Vec<String>>()
                             .join("|"),
                         body_to_string(&arm.body, indent + 4)
@@ -246,7 +246,7 @@ where
             }
             Macro(m4_macro) => format!(
                 "{tab}{}({})",
-                m4_macro.name,
+                m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
                 m4_macro
                     .args
                     .iter()
@@ -290,12 +290,12 @@ where
         let newline = format!("\n{}", " ".repeat(indent));
         match arg {
             Literal(lit) => format!("[{}]", lit),
-            Word(word) => self.word_to_string(word),
+            Word(word) => self.word_to_string(word, false),
             Array(words) => format!(
                 "{}",
                 words
                     .iter()
-                    .map(|w| self.word_to_string(w))
+                    .map(|w| self.word_to_string(w, false))
                     .collect::<Vec<String>>()
                     .join(if words.len() < 10 { " " } else { &newline })
             ),
@@ -303,9 +303,9 @@ where
             Commands(cmds) => format!(
                 "[\n{}{newline}]",
                 cmds.iter()
-                    .map(|c| self.node_to_string(*c, indent+2))
+                    .map(|c| self.node_to_string(*c, indent + 2))
                     .collect::<Vec<String>>()
-                    .join(&newline)
+                    .join("\n")
             ),
             Unknown(unknown) => format!("[{}]", unknown),
         }
@@ -319,42 +319,42 @@ where
             Read(fd, file) => format!(
                 "{}< {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             Write(fd, file) => format!(
                 "{}> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             ReadWrite(fd, file) => format!(
                 "{}<> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             Append(fd, file) => format!(
                 "{}>> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             Clobber(fd, file) => format!(
                 "{}>| {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             Heredoc(fd, file) => format!(
                 "{}<<EOF\n{}EOF",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             DupRead(fd, file) => format!(
                 "{}<&{}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
             DupWrite(fd, file) => format!(
                 "{}>&{}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file)
+                self.word_to_string(file, false)
             ),
         }
     }
@@ -396,10 +396,11 @@ where
     }
 
     /// Format a complete `Word` (which may consist of fragments) into its shell script string form.
-    fn word_to_string(&self, word: &Word<L>) -> String {
+    fn word_to_string(&self, word: &Word<L>, quote: bool) -> String {
         use super::minimal::Word::*;
+        use super::minimal::WordFragment::DoubleQuoted;
         match word {
-            Empty => "".to_string(),
+            Empty => "\"\"".to_string(),
             Concat(frags) => {
                 format!(
                     "{}",
@@ -410,7 +411,14 @@ where
                         .concat()
                 )
             }
-            Single(frag) => self.word_fragment_to_string(frag),
+            Single(frag) => {
+                let s = self.word_fragment_to_string(frag);
+                if quote && !matches!(frag, DoubleQuoted(_)) {
+                    format!("\"{}\"", s)
+                } else {
+                    s
+                }
+            }
         }
     }
 
@@ -446,53 +454,53 @@ where
                 "${{{}:-{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             Assign(_, param, word) => format!(
                 "${{{}:={}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             Error(_, param, word) => format!(
                 "${{{}:?{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             Alternative(_, param, word) => format!(
                 "${{{}:+{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             RemoveSmallestSuffix(param, pattern) => format!(
                 "${{{}%{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             RemoveLargestSuffix(param, pattern) => format!(
                 "${{{}%%{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             RemoveSmallestPrefix(param, pattern) => format!(
                 "${{{}#{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
             RemoveLargestPrefix(param, pattern) => format!(
                 "${{{}##{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w))
+                    .map_or("".to_string(), |w| self.word_to_string(w, false))
             ),
         }
     }
@@ -504,39 +512,39 @@ where
         match op {
             Eq(lhs, rhs) => format!(
                 "{} = {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
             Neq(lhs, rhs) => format!(
                 "{} != {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
             Ge(lhs, rhs) => format!(
                 "{} -ge {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
             Gt(lhs, rhs) => format!(
                 "{} -gt {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
             Le(lhs, rhs) => format!(
                 "{} -le {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
             Lt(lhs, rhs) => format!(
                 "{} -lt {}",
-                self.word_to_string(lhs),
-                self.word_to_string(rhs)
+                self.word_to_string(lhs, false),
+                self.word_to_string(rhs, false)
             ),
-            Empty(w) => format!("-z {}", self.word_to_string(w)),
-            NonEmpty(w) => format!("-n {}", self.word_to_string(w)),
-            Dir(w) => format!("-d {}", self.word_to_string(w)),
-            File(w) => format!("-f {}", self.word_to_string(w)),
-            NoExists(w) => format!("! -e {}", self.word_to_string(w)),
+            Empty(w) => format!("-z {}", self.word_to_string(w, false)),
+            NonEmpty(w) => format!("-n {}", self.word_to_string(w, false)),
+            Dir(w) => format!("-d {}", self.word_to_string(w, false)),
+            File(w) => format!("-f {}", self.word_to_string(w, false)),
+            NoExists(w) => format!("! -e {}", self.word_to_string(w, false)),
         }
     }
 }
@@ -547,18 +555,18 @@ mod tests {
     use crate::ast::Parameter;
     use crate::m4_macro::{M4Argument, M4Macro};
 
-    struct DummyPool<L> {
-        nodes: Vec<Node<L>>,
+    struct DummyPool {
+        nodes: Vec<Node<String>>,
     }
 
-    impl<L: fmt::Display> DummyPool<L> {
-        fn new(nodes: Vec<Node<L>>) -> Self {
+    impl DummyPool {
+        fn new(nodes: Vec<Node<String>>) -> Self {
             DummyPool { nodes }
         }
     }
 
-    impl<L: fmt::Display> NodePool<L> for DummyPool<L> {
-        fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<L> {
+    impl NodePool<String> for DummyPool {
+        fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<String> {
             &self.nodes[node_id].kind
         }
     }
@@ -581,13 +589,13 @@ mod tests {
         let echo = Word::Single(WordFragment::Literal("echo".to_string()));
         let cmd_node = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), word.clone()]));
         let pool = DummyPool::new(vec![assign_node, cmd_node]);
-        assert_eq!(pool.node_to_string(0, 0), "var=value");
+        assert_eq!(pool.node_to_string(0, 0), "var=\"value\"");
         assert_eq!(pool.node_to_string(1, 2), "  echo value");
     }
 
     #[test]
     fn test_operator_to_string() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let op = Operator::Eq(
             Word::Single(WordFragment::Literal("a".to_string())),
             Word::Single(WordFragment::Literal("b".to_string())),
@@ -597,19 +605,19 @@ mod tests {
 
     #[test]
     fn test_word_and_fragment_to_string() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let frag = WordFragment::DoubleQuoted(vec![WordFragment::Literal("hi".to_string())]);
         assert_eq!(pool.word_fragment_to_string(&frag), "\"hi\"");
         let word = Word::Concat(vec![
             WordFragment::Literal("a".to_string()),
             WordFragment::Literal("b".to_string()),
         ]);
-        assert_eq!(pool.word_to_string(&word), "ab");
+        assert_eq!(pool.word_to_string(&word, false), "ab");
     }
 
     #[test]
     fn test_condition_to_string() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let cond = Condition::Cond(Operator::Neq(
             Word::Single(WordFragment::Literal("x".to_string())),
             Word::Single(WordFragment::Literal("y".to_string())),
@@ -619,14 +627,14 @@ mod tests {
 
     #[test]
     fn test_redirect_to_string() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let redir = Redirect::Write(None, Word::Single(WordFragment::Literal("out".to_string())));
         assert_eq!(pool.redirect_to_string(&redir), "> out");
     }
 
     #[test]
     fn test_parameter_substitution_to_string_default() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let subst = ParameterSubstitution::Default(
             false,
             Parameter::Var("v".to_string()),
@@ -637,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_m4_argument_to_string_literal() {
-        let pool: DummyPool<String> = DummyPool::new(vec![]);
+        let pool: DummyPool = DummyPool::new(vec![]);
         let arg = M4Argument::Literal("lit".to_string());
         assert_eq!(pool.m4_argument_to_string(&arg, 0), "[lit]");
     }
@@ -744,7 +752,10 @@ mod tests {
             },
         );
         let pool = DummyPool::new(vec![cmd.clone(), for_node.clone()]);
-        assert_eq!(pool.node_to_string(1, 0), "for i in 1 2; do\n  x\ndone");
+        assert_eq!(
+            pool.node_to_string(1, 0),
+            "for i in \"1\" \"2\"; do\n  x\ndone"
+        );
     }
 
     #[test]

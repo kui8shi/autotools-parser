@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use super::{
     Builder, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments, GuardBodyPairGroup,
-    IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind, SimpleWordKind, WordKind,
+    IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind, SimpleWordKind
 };
 
 use crate::ast::minimal::Command::*;
@@ -398,8 +398,9 @@ where
         name: String,
         args: Vec<M4Argument<Self::Word, Self::Command>>,
         effects: Option<SideEffect>,
+        original_name: Option<String>,
     ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(M4Macro::new_with_side_effect(name, args, effects))
+        Ok(M4Macro::new_with_side_effect(name, args, effects, original_name))
     }
 
     /// Ignored by the builder.
@@ -479,25 +480,26 @@ where
         };
 
         let mut map_simple = |kind| {
-            use crate::ast::builder::ParameterSubstitutionKind::*;
+            use super::ParameterSubstitutionKind::*;
+            use super::SimpleWordKind::*;
 
             let simple = match kind {
-                SimpleWordKind::Literal(s) => WordFragment::Literal(s.into()),
-                SimpleWordKind::Escaped(s) => WordFragment::Escaped(s.into()),
-                SimpleWordKind::Param(p) => WordFragment::Param(map_param(p)),
-                SimpleWordKind::Star => WordFragment::Star,
-                SimpleWordKind::Question => WordFragment::Question,
-                SimpleWordKind::SquareOpen => WordFragment::SquareOpen,
-                SimpleWordKind::SquareClose => WordFragment::SquareClose,
-                SimpleWordKind::Tilde => WordFragment::Tilde,
-                SimpleWordKind::Colon => WordFragment::Colon,
-                SimpleWordKind::Macro(_, m) => WordFragment::Macro(m),
+                Literal(s) => WordFragment::Literal(s.into()),
+                Escaped(s) => WordFragment::Escaped(s.into()),
+                Param(p) => WordFragment::Param(map_param(p)),
+                Star => WordFragment::Star,
+                Question => WordFragment::Question,
+                SquareOpen => WordFragment::SquareOpen,
+                SquareClose => WordFragment::SquareClose,
+                Tilde => WordFragment::Tilde,
+                Colon => WordFragment::Colon,
+                Macro(_, m) => WordFragment::Macro(m),
 
-                SimpleWordKind::CommandSubst(c) => {
+                CommandSubst(c) => {
                     WordFragment::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
                 }
 
-                SimpleWordKind::Subst(s) => {
+                Subst(s) => {
                     // Force a move out of the boxed substitution. For some reason doing
                     // the deref in the match statment gives a strange borrow failure
                     let s = *s;
@@ -533,15 +535,17 @@ where
         };
 
         let mut map_word = |kind| {
+            use super::SimpleWordKind::*;
+            use super::WordKind::*;
             let word = match kind {
-                WordKind::Simple(SimpleWordKind::Literal(s)) | WordKind::SingleQuoted(s)
+                Simple(Literal(s)) | SingleQuoted(s)
                     if s.is_empty() =>
                 {
                     None // empty string
                 }
-                WordKind::Simple(s) => Some(map_simple(s)?),
-                WordKind::SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
-                WordKind::DoubleQuoted(mut v) => match v.len() {
+                Simple(s) => Some(map_simple(s)?),
+                SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
+                DoubleQuoted(mut v) => match v.len() {
                     0 => None,                                // empty string
                     1 => Some(map_simple(v.pop().unwrap())?), // like "foo", "${foo}"
                     _ => Some(WordFragment::DoubleQuoted(
@@ -572,15 +576,16 @@ where
 
     /// Constructs a `ast::Redirect` from the provided input.
     fn redirect(&mut self, kind: RedirectKind<Self::Word>) -> Result<Self::Redirect, Self::Error> {
+        use super::RedirectKind::*;
         let io = match kind {
-            RedirectKind::Read(fd, path) => Redirect::Read(fd, path),
-            RedirectKind::Write(fd, path) => Redirect::Write(fd, path),
-            RedirectKind::ReadWrite(fd, path) => Redirect::ReadWrite(fd, path),
-            RedirectKind::Append(fd, path) => Redirect::Append(fd, path),
-            RedirectKind::Clobber(fd, path) => Redirect::Clobber(fd, path),
-            RedirectKind::Heredoc(fd, body) => Redirect::Heredoc(fd, body),
-            RedirectKind::DupRead(src, dst) => Redirect::DupRead(src, dst),
-            RedirectKind::DupWrite(src, dst) => Redirect::DupWrite(src, dst),
+            Read(fd, path) => Redirect::Read(fd, path),
+            Write(fd, path) => Redirect::Write(fd, path),
+            ReadWrite(fd, path) => Redirect::ReadWrite(fd, path),
+            Append(fd, path) => Redirect::Append(fd, path),
+            Clobber(fd, path) => Redirect::Clobber(fd, path),
+            Heredoc(fd, body) => Redirect::Heredoc(fd, body),
+            DupRead(src, dst) => Redirect::DupRead(src, dst),
+            DupWrite(src, dst) => Redirect::DupWrite(src, dst),
         };
 
         Ok(io)
@@ -605,6 +610,7 @@ where
         File,
         NoExists,
     }
+    use OperatorKind::*;
 
     let mut lhs = Word::Empty;
     let mut rhs = Word::Empty;
@@ -619,19 +625,19 @@ where
                             flipped = true;
                             continue;
                         }
-                        "!=" | "-ne" => Some(OperatorKind::Neq),
-                        "=" | "-eq" => Some(OperatorKind::Eq),
-                        "-ge" => Some(OperatorKind::Ge),
-                        "-gt" => Some(OperatorKind::Gt),
-                        "-le" => Some(OperatorKind::Le),
-                        "-lt" => Some(OperatorKind::Lt),
-                        "-z" => Some(OperatorKind::Empty),
-                        "-n" => Some(OperatorKind::NonEmpty),
-                        "-d" | "-f" if flipped => Some(OperatorKind::NoExists),
-                        "-d" => Some(OperatorKind::Dir),
+                        "!=" | "-ne" => Some(Neq),
+                        "=" | "-eq" => Some(Eq),
+                        "-ge" => Some(Ge),
+                        "-gt" => Some(Gt),
+                        "-le" => Some(Le),
+                        "-lt" => Some(Lt),
+                        "-z" => Some(Empty),
+                        "-n" => Some(NonEmpty),
+                        "-d" | "-f" if flipped => Some(NoExists),
+                        "-d" => Some(Dir),
                         // TODO: More precision for file existance + extra operators
                         "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
-                        | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(OperatorKind::File),
+                        | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(File),
                         _ => {
                             // return Err(BuilderError::UnsupportedSyntax);
                             None
@@ -650,17 +656,17 @@ where
         }
     }
     let operator = match operator_kind.unwrap() {
-        OperatorKind::Neq => Operator::Neq(lhs, rhs),
-        OperatorKind::Eq => Operator::Eq(lhs, rhs),
-        OperatorKind::Ge => Operator::Ge(lhs, rhs),
-        OperatorKind::Gt => Operator::Gt(lhs, rhs),
-        OperatorKind::Le => Operator::Le(lhs, rhs),
-        OperatorKind::Lt => Operator::Lt(lhs, rhs),
-        OperatorKind::Empty => Operator::Empty(rhs),
-        OperatorKind::NonEmpty => Operator::NonEmpty(rhs),
-        OperatorKind::Dir => Operator::Dir(rhs),
-        OperatorKind::File => Operator::File(rhs),
-        OperatorKind::NoExists => Operator::NoExists(rhs),
+        Neq => Operator::Neq(lhs, rhs),
+        Eq => Operator::Eq(lhs, rhs),
+        Ge => Operator::Ge(lhs, rhs),
+        Gt => Operator::Gt(lhs, rhs),
+        Le => Operator::Le(lhs, rhs),
+        Lt => Operator::Lt(lhs, rhs),
+        Empty => Operator::Empty(rhs),
+        NonEmpty => Operator::NonEmpty(rhs),
+        Dir => Operator::Dir(rhs),
+        File => Operator::File(rhs),
+        NoExists => Operator::NoExists(rhs),
     };
     Ok(operator)
 }
