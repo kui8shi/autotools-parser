@@ -116,8 +116,9 @@ pub trait NodePool<L>
 where
     L: fmt::Display + fmt::Debug,
 {
-    /// Retrieve a reference to the AST `Node` identified by `node_id`.
-    fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<L>;
+    /// Retrieve an optional reference to the AST `Node` identified by `node_id`.
+    /// If None, tracking is skipped.
+    fn get_node_kind(&self, node_id: NodeId) -> Option<&NodeKind<L>>;
 
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
@@ -132,128 +133,135 @@ where
                 .join("\n")
         };
 
-        match &self.get_node_kind(node_id) {
-            Assignment(name, word) => format!("{tab}{}={}", name, self.word_to_string(word, true)),
-            Cmd(words) => format!(
-                "{tab}{}",
-                words
-                    .iter()
-                    .map(|w| self.word_to_string(w, false))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            ),
-            Brace(cmds) => format!("{tab}{{\n{}\n{tab}}}", body_to_string(cmds, indent + 2)),
-            Subshell(cmds) => format!("{tab}(\n{}\n{tab})", body_to_string(cmds, indent + 2)),
-            While(pair) => format!(
-                "{tab}while {}; do\n{}\n{tab}done",
-                self.condition_to_string(&pair.condition),
-                body_to_string(&pair.body, indent + 2)
-            ),
-            Until(pair) => format!(
-                "{tab}until {}; do\n{}\n{tab}done",
-                self.condition_to_string(&pair.condition),
-                body_to_string(&pair.body, indent + 2)
-            ),
-            If {
-                conditionals,
-                else_branch,
-            } => {
-                let first_if = {
-                    let pair = conditionals.first().unwrap();
-                    format!(
-                        "{tab}if {}; then\n{}\n",
-                        self.condition_to_string(&pair.condition),
-                        body_to_string(&pair.body, indent + 2)
-                    )
-                };
-                let else_if = conditionals
-                    .iter()
-                    .skip(1)
-                    .map(|pair| {
+        if let Some(kind) = self.get_node_kind(node_id) {
+            match kind {
+                Assignment(name, word) => {
+                    format!("{tab}{}={}", name, self.word_to_string(word, true))
+                }
+                Cmd(words) => format!(
+                    "{tab}{}",
+                    words
+                        .iter()
+                        .map(|w| self.word_to_string(w, false))
+                        .collect::<Vec<String>>()
+                        .join(" ")
+                ),
+                Brace(cmds) => format!("{tab}{{\n{}\n{tab}}}", body_to_string(cmds, indent + 2)),
+                Subshell(cmds) => format!("{tab}(\n{}\n{tab})", body_to_string(cmds, indent + 2)),
+                While(pair) => format!(
+                    "{tab}while {}; do\n{}\n{tab}done",
+                    self.condition_to_string(&pair.condition),
+                    body_to_string(&pair.body, indent + 2)
+                ),
+                Until(pair) => format!(
+                    "{tab}until {}; do\n{}\n{tab}done",
+                    self.condition_to_string(&pair.condition),
+                    body_to_string(&pair.body, indent + 2)
+                ),
+                If {
+                    conditionals,
+                    else_branch,
+                } => {
+                    let first_if = {
+                        let pair = conditionals.first().unwrap();
                         format!(
-                            "{tab}else if {}; then\n{}\n",
+                            "{tab}if {}; then\n{}\n",
                             self.condition_to_string(&pair.condition),
                             body_to_string(&pair.body, indent + 2)
                         )
-                    })
-                    .collect::<Vec<String>>()
-                    .join("");
-                let rest = if else_branch.is_empty() {
-                    format!("{tab}fi")
-                } else {
-                    format!(
-                        "{tab}else\n{}\n{tab}fi",
-                        body_to_string(else_branch, indent + 2)
-                    )
-                };
-                format!("{}{}{}", first_if, else_if, rest)
+                    };
+                    let else_if = conditionals
+                        .iter()
+                        .skip(1)
+                        .map(|pair| {
+                            format!(
+                                "{tab}else if {}; then\n{}\n",
+                                self.condition_to_string(&pair.condition),
+                                body_to_string(&pair.body, indent + 2)
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("");
+                    let rest = if else_branch.is_empty() {
+                        format!("{tab}fi")
+                    } else {
+                        format!(
+                            "{tab}else\n{}\n{tab}fi",
+                            body_to_string(else_branch, indent + 2)
+                        )
+                    };
+                    format!("{}{}{}", first_if, else_if, rest)
+                }
+                For { var, words, body } => format!(
+                    "{tab}for {var} in {}; do\n{}\n{tab}done",
+                    words
+                        .iter()
+                        .map(|w| self.word_to_string(w, true))
+                        .collect::<Vec<String>>()
+                        .join(" "),
+                    body_to_string(body, indent + 2)
+                ),
+                Case { word, arms } => format!(
+                    "{tab}case {} in\n{}\n{tab}esac",
+                    self.word_to_string(word, false),
+                    arms.iter()
+                        .map(|arm| format!(
+                            "{tab}  {})\n{}\n{tab}    ;;",
+                            arm.patterns
+                                .iter()
+                                .map(|w| self.word_to_string(w, false))
+                                .collect::<Vec<String>>()
+                                .join("|"),
+                            body_to_string(&arm.body, indent + 4)
+                        ))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                ),
+                And(cond, cmd) => format!(
+                    "{} && {}",
+                    self.condition_to_string(cond),
+                    self.node_to_string(*cmd, indent)
+                ),
+                Or(cond, cmd) => format!(
+                    "{} || {}",
+                    self.condition_to_string(cond),
+                    self.node_to_string(*cmd, indent)
+                ),
+                Pipe(bang, cmds) => format!(
+                    "{}{}",
+                    if *bang { "!" } else { "" },
+                    cmds.iter()
+                        .map(|c| self.node_to_string(*c, 0))
+                        .collect::<Vec<String>>()
+                        .join(" | ")
+                ),
+                Redirect(cmd, redirects) => format!(
+                    "{} {}",
+                    self.node_to_string(*cmd, indent),
+                    redirects
+                        .iter()
+                        .map(|r| self.redirect_to_string(r))
+                        .collect::<Vec<String>>()
+                        .join(" ")
+                ),
+                Background(cmd) => format!("{} &", self.node_to_string(*cmd, indent)),
+                FunctionDef { name, body } => {
+                    format!("function {name} () {}", self.node_to_string(*body, 0))
+                }
+                Macro(m4_macro) => format!(
+                    "{tab}{}({})",
+                    m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
+                    m4_macro
+                        .args
+                        .iter()
+                        .map(|arg| self.m4_argument_to_string(arg, indent + 2))
+                        .collect::<Vec<String>>()
+                        .join(&format!(",\n{tab}  "))
+                ),
             }
-            For { var, words, body } => format!(
-                "{tab}for {var} in {}; do\n{}\n{tab}done",
-                words
-                    .iter()
-                    .map(|w| self.word_to_string(w, true))
-                    .collect::<Vec<String>>()
-                    .join(" "),
-                body_to_string(body, indent + 2)
-            ),
-            Case { word, arms } => format!(
-                "{tab}case {} in\n{}\n{tab}esac",
-                self.word_to_string(word, false),
-                arms.iter()
-                    .map(|arm| format!(
-                        "{tab}  {})\n{}\n{tab}    ;;",
-                        arm.patterns
-                            .iter()
-                            .map(|w| self.word_to_string(w, false))
-                            .collect::<Vec<String>>()
-                            .join("|"),
-                        body_to_string(&arm.body, indent + 4)
-                    ))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            ),
-            And(cond, cmd) => format!(
-                "{} && {}",
-                self.condition_to_string(cond),
-                self.node_to_string(*cmd, indent)
-            ),
-            Or(cond, cmd) => format!(
-                "{} || {}",
-                self.condition_to_string(cond),
-                self.node_to_string(*cmd, indent)
-            ),
-            Pipe(bang, cmds) => format!(
-                "{}{}",
-                if *bang { "!" } else { "" },
-                cmds.iter()
-                    .map(|c| self.node_to_string(*c, 0))
-                    .collect::<Vec<String>>()
-                    .join(" | ")
-            ),
-            Redirect(cmd, redirects) => format!(
-                "{} {}",
-                self.node_to_string(*cmd, indent),
-                redirects
-                    .iter()
-                    .map(|r| self.redirect_to_string(r))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            ),
-            Background(cmd) => format!("{} &", self.node_to_string(*cmd, indent)),
-            FunctionDef { name, body } => {
-                format!("function {name} () {}", self.node_to_string(*body, 0))
-            }
-            Macro(m4_macro) => format!(
-                "{tab}{}({})",
-                m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
-                m4_macro
-                    .args
-                    .iter()
-                    .map(|arg| self.m4_argument_to_string(arg, indent + 2))
-                    .collect::<Vec<String>>()
-                    .join(&format!(",\n{tab}  "))
-            ),
+        } else {
+            // if node was not found, empty string is returned.
+            String::new()
         }
     }
 
@@ -566,8 +574,8 @@ mod tests {
     }
 
     impl NodePool<String> for DummyPool {
-        fn get_node_kind(&self, node_id: NodeId) -> &NodeKind<String> {
-            &self.nodes[node_id].kind
+        fn get_node_kind(&self, node_id: NodeId) -> Option<&NodeKind<String>> {
+            Some(&self.nodes[node_id].kind)
         }
     }
 
