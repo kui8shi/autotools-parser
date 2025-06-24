@@ -118,7 +118,7 @@ where
 {
     /// Retrieve an optional reference to the AST `Node` identified by `node_id`.
     /// If None, tracking is skipped.
-    fn get_node_kind(&self, node_id: NodeId) -> Option<&NodeKind<L>>;
+    fn get_node_for_display(&self, node_id: NodeId) -> Option<(&NodeKind<L>, Option<&String>)>;
 
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
@@ -135,8 +135,8 @@ where
                 .join("\n")
         };
 
-        if let Some(kind) = self.get_node_kind(node_id) {
-            match kind {
+        if let Some((kind, comment)) = self.get_node_for_display(node_id) {
+            let content = match kind {
                 Assignment(name, word) => {
                     format!("{tab}{}={}", name, self.word_to_string(word, true))
                 }
@@ -149,7 +149,10 @@ where
                         .join(" ")
                 ),
                 Brace(cmds) => {
-                    format!("{tab}{{\n{}\n{tab}}}", body_to_string(cmds, indent_level + 1))
+                    format!(
+                        "{tab}{{\n{}\n{tab}}}",
+                        body_to_string(cmds, indent_level + 1)
+                    )
                 }
                 Subshell(cmds) => {
                     format!("{tab}(\n{}\n{tab})", body_to_string(cmds, indent_level + 1))
@@ -264,6 +267,12 @@ where
                         .collect::<Vec<String>>()
                         .join(&format!(",\n{tab}  "))
                 ),
+            };
+            if let Some(comment) = comment {
+                let newline = format!("\n{tab}");
+                format!("{tab}{}\n{}", comment.replace('\n', &newline), content)
+            } else {
+                content
             }
         } else {
             // if node was not found, empty string is returned.
@@ -388,7 +397,7 @@ where
                     .concat()
             ),
             Escaped(lit) => format!("\\{}", lit),
-            Param(param) => param.to_string(),
+            Param(param) => format!("${{{}}}", param_raw(param)),
             Subst(param_subst) => self.parameter_substitution_to_string(&param_subst),
             Star => "*".to_string(),
             Question => "?".to_string(),
@@ -438,19 +447,7 @@ where
 
     /// Format a parameter substitution AST (`ParameterSubstitution`) into its shell script string representation.
     fn parameter_substitution_to_string(&self, param_subst: &ParameterSubstitution<L>) -> String {
-        use super::Parameter::*;
         use super::ParameterSubstitution::*;
-        let param_raw = |param: &super::Parameter<L>| match param {
-            At => "@".to_string(),
-            Star => "*".to_string(),
-            Pound => "#".to_string(),
-            Question => "?".to_string(),
-            Dash => "-".to_string(),
-            Dollar => "$".to_string(),
-            Bang => "!".to_string(),
-            Positional(p) => p.to_string(),
-            Var(v) => v.to_string(),
-        };
         match param_subst {
             Command(cmds) => format!(
                 "$({})",
@@ -563,6 +560,21 @@ where
     }
 }
 
+fn param_raw<L: fmt::Display>(param: &super::Parameter<L>) -> String {
+    use super::Parameter::*;
+    match param {
+        At => "@".to_string(),
+        Star => "*".to_string(),
+        Pound => "#".to_string(),
+        Question => "?".to_string(),
+        Dash => "-".to_string(),
+        Dollar => "$".to_string(),
+        Bang => "!".to_string(),
+        Positional(p) => p.to_string(),
+        Var(v) => v.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,8 +592,12 @@ mod tests {
     }
 
     impl NodePool<String> for DummyPool {
-        fn get_node_kind(&self, node_id: NodeId) -> Option<&NodeKind<String>> {
-            Some(&self.nodes[node_id].kind)
+        fn get_node_for_display(
+            &self,
+            node_id: NodeId,
+        ) -> Option<(&NodeKind<String>, Option<&String>)> {
+            let n = &self.nodes[node_id];
+            Some((&n.kind, n.comment.as_ref()))
         }
     }
 
@@ -589,7 +605,10 @@ mod tests {
     fn test_get_node_kind() {
         let node = Node::new(None, None, NodeKind::<String>::Cmd(vec![]));
         let pool = DummyPool::new(vec![node.clone()]);
-        assert_eq!(pool.get_node_kind(0), Some(&node.kind));
+        assert_eq!(
+            pool.get_node_for_display(0).map(|(kind, _)| kind),
+            Some(&node.kind)
+        );
     }
 
     #[test]

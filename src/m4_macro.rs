@@ -187,7 +187,10 @@ impl From<M4MacroSignature> for SideEffect {
 impl SideEffect {
     /// A shell variable is defined.
     pub fn add_shell_var(&mut self, val: &str, attrs: &VarAttrs) {
-        let var = Var(val.into(), *attrs);
+        let var = Var {
+            name: val.into(),
+            attrs: *attrs,
+        };
         if let Some(v) = &mut self.shell_vars {
             v.push(var)
         } else {
@@ -268,19 +271,24 @@ impl M4MacroSignature {
 
 /// Represents a static shell variable
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Var(pub String, pub VarAttrs);
+pub struct Var {
+    /// name of shell variable
+    pub name: String,
+    /// attributes linked to the variable
+    pub attrs: VarAttrs,
+}
 
 impl Var {
     /// return if it has input attribute
     pub fn is_input(&self) -> bool {
-        match self.1.kind {
+        match self.attrs.kind {
             VarKind::Input | VarKind::Precious | VarKind::Environment => true,
             _ => false,
         }
     }
     /// return if it has output attribute
     pub fn is_output(&self) -> bool {
-        match self.1.kind {
+        match self.attrs.kind {
             VarKind::Output | VarKind::Precious | VarKind::Environment => true,
             _ => false,
         }
@@ -288,7 +296,7 @@ impl Var {
 
     /// return if it has environmental attribute
     pub fn is_env(&self) -> bool {
-        match self.1.kind {
+        match self.attrs.kind {
             VarKind::Environment => true,
             _ => false,
         }
@@ -296,7 +304,7 @@ impl Var {
 
     /// return if it has conditional attribute
     pub fn is_am_cond(&self) -> bool {
-        match self.1.kind {
+        match self.attrs.kind {
             VarKind::Conditional => true,
             _ => false,
         }
@@ -304,7 +312,7 @@ impl Var {
 
     /// return if it is referenced
     pub fn is_used(&self) -> bool {
-        match self.1.usage {
+        match self.attrs.usage {
             VarUsage::Referenced | VarUsage::Added => true,
             _ => false,
         }
@@ -312,7 +320,7 @@ impl Var {
 
     /// return if it is defined
     pub fn is_defined(&self) -> bool {
-        match self.1.usage {
+        match self.attrs.usage {
             VarUsage::Defined | VarUsage::Added => true,
             _ => false,
         }
@@ -322,7 +330,10 @@ impl Var {
 impl Var {
     /// Create a new shell variable with specified attributes
     pub fn new(name: &str, kind: VarKind, usage: VarUsage) -> Self {
-        Self(name.into(), VarAttrs::new(kind, usage))
+        Self {
+            name: name.into(),
+            attrs: VarAttrs::new(kind, usage),
+        }
     }
 
     /// Create a new shell variable reference

@@ -81,7 +81,13 @@ where
     ) -> Result<Self::Command, Self::Error> {
         let raw_cmd = self.node_mut(list);
         let comments = (!pre_cmd_comments.is_empty())
-            .then_some(pre_cmd_comments.into_iter().filter_map(|n| n.0).collect())
+            .then_some(
+                pre_cmd_comments
+                    .into_iter()
+                    .filter_map(|n| n.0)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
             .filter(|c: &String| !c.is_empty());
         let complete_cmd = {
             raw_cmd.comment = comments;
