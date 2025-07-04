@@ -14,7 +14,7 @@ use std::fmt::Display;
 use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
-use crate::m4_macro::SideEffect;
+use crate::m4_macro::{M4Macro, SideEffect};
 
 mod default_builder;
 mod empty_builder;
@@ -81,7 +81,7 @@ pub struct IfFragments<C> {
 
 /// Parsed fragments relating to a shell `for` command.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ForFragments<W, C> {
+pub struct ForFragments<C, W> {
     /// The name of the variable to which each of the words will be bound.
     pub var: String,
     /// A comment that begins on the same line as the variable declaration.
@@ -98,7 +98,7 @@ pub struct ForFragments<W, C> {
 
 /// Parsed fragments relating to a shell `case` command.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CaseFragments<W, C> {
+pub struct CaseFragments<C, W> {
     /// The word to be matched against.
     pub word: W,
     /// The comments appearing after the word to match but before the `in` reserved word.
@@ -107,7 +107,7 @@ pub struct CaseFragments<W, C> {
     /// yet still on the same line.
     pub in_comment: Option<Newline>,
     /// All the possible branches of the `case` command.
-    pub arms: Vec<CaseArm<W, C>>,
+    pub arms: Vec<CaseArm<C, W>>,
     /// The comments appearing after the last arm but before the `esac` reserved word.
     pub post_arms_comments: Vec<Newline>,
 }
@@ -117,7 +117,7 @@ pub struct CaseFragments<W, C> {
 /// Each arm has a number of pattern alternatives, and a body
 /// of commands to run if any pattern matches.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CaseArm<W, C> {
+pub struct CaseArm<C, W> {
     /// The patterns which correspond to this case arm.
     pub patterns: CasePatternFragments<W>,
     /// The body of commands to run if any pattern matches.
@@ -140,20 +140,20 @@ pub struct CasePatternFragments<W> {
 
 /// An indicator to the builder what kind of complex word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ComplexWordKind<C, M> {
+pub enum ComplexWordKind<C, W> {
     /// Several distinct words concatenated together.
-    Concat(Vec<WordKind<C, M>>),
+    Concat(Vec<QuoteKind<C, W>>),
     /// A regular word.
-    Single(WordKind<C, M>),
+    Single(QuoteKind<C, W>),
 }
 
 /// An indicator to the builder what kind of word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum WordKind<C, M> {
+pub enum QuoteKind<C, W> {
     /// A regular word.
-    Simple(SimpleWordKind<C, M>),
+    Simple(M4WordKind<C, W>),
     /// List of words concatenated within double quotes.
-    DoubleQuoted(Vec<SimpleWordKind<C, M>>),
+    DoubleQuoted(Vec<M4WordKind<C, W>>),
     /// List of words concatenated within single quotes. Virtually
     /// identical as a literal, but makes a distinction between the two.
     // @kui8shi
@@ -163,13 +163,23 @@ pub enum WordKind<C, M> {
 
 /// An indicator to the builder what kind of simple word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleWordKind<C, M> {
+pub enum M4WordKind<C, W> {
+    /// Normal word
+    Word(WordKind<C, W>),
+    /// m4 macro call to be expanded to a literal
+    // FIXME: we exported name field of M to the variant's field. but it's not good.
+    Macro(String, M4Macro<C, W>),
+}
+
+/// An indicator to the builder what kind of simple word was parsed.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum WordKind<C, W> {
     /// A non-special literal word.
     Literal(String),
     /// Access of a value inside a parameter, e.g. `$foo` or `$$`.
     Param(DefaultParameter),
     /// A parameter substitution, e.g. `${param-word}`.
-    Subst(Box<ParameterSubstitutionKind<ComplexWordKind<C, M>, C>>),
+    Subst(Box<ParameterSubstitutionKind<C, ComplexWordKind<C, W>>>),
     /// Represents the standard output of some command, e.g. \`echo foo\`.
     CommandSubst(CommandGroup<C>),
     /// A token which normally has a special meaning is treated as a literal
@@ -187,9 +197,6 @@ pub enum SimpleWordKind<C, M> {
     Tilde,
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
-    /// m4 macro call to be expanded to a literal
-    // FIXME: we exported name field of M to the variant's field. but it's not good.
-    Macro(String, M),
 }
 
 /// Represents redirecting a command's file descriptors.
@@ -215,7 +222,7 @@ pub enum RedirectKind<W> {
 
 /// Represents the type of parameter that was parsed
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ParameterSubstitutionKind<W, C> {
+pub enum ParameterSubstitutionKind<C, W> {
     /// Returns the standard output of running a command, e.g. `$(cmd)`
     Command(CommandGroup<C>),
     /// Returns the length of the value of a parameter, e.g. ${#param}
@@ -261,19 +268,10 @@ pub enum ParameterSubstitutionKind<W, C> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Newline(pub Option<String>);
 
-/// A trait which defines an interface which the parser defined in the `parse` module
-/// uses to delegate Abstract Syntax Tree creation. The methods defined here correspond
-/// to their respectively named methods on the parser, and accept the relevant data for
-/// each shell command type.
-pub trait Builder {
+/// Basis trait of ~Builder
+pub trait BuilderBase {
     /// The type which represents a complete, top-level command.
     type Command;
-    /// The type which represents an and/or list of commands.
-    type CommandList;
-    /// The type which represents a command that can be used in an and/or command list.
-    type ListableCommand;
-    /// The type which represents a command that can be used in a pipeline.
-    type PipeableCommand;
     /// The type which represents compound commands like `if`, `case`, `for`, etc.
     type CompoundCommand;
     /// The type which represents shell words, which can be command names or arguments.
@@ -282,10 +280,19 @@ pub trait Builder {
     type Redirect;
     /// A type for returning custom parse/build errors.
     type Error;
-    /// A type for m4 macro call.
-    type M4Macro;
-    /// A type for m4 macro argument.
-    type M4Argument;
+}
+
+/// A trait which defines an interface which the parser defined in the `parse` module
+/// uses to delegate Abstract Syntax Tree creation. The methods defined here correspond
+/// to their respectively named methods on the parser, and accept the relevant data for
+/// each shell command type.
+pub trait ShellBuilder: BuilderBase {
+    /// The type which represents an and/or list of commands.
+    type CommandList;
+    /// The type which represents a command that can be used in an and/or command list.
+    type ListableCommand;
+    /// The type which represents a command that can be used in a pipeline.
+    type PipeableCommand;
 
     /// Invoked once a complete command is found. That is, a command delimited by a
     /// newline, semicolon, ampersand, or the end of input.
@@ -407,7 +414,7 @@ pub trait Builder {
     /// * redirects: any redirects to be applied over **all** commands within the `for` command
     fn for_command(
         &mut self,
-        fragments: ForFragments<Self::Word, Self::Command>,
+        fragments: ForFragments<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error>;
 
@@ -419,7 +426,7 @@ pub trait Builder {
     /// * redirects: any redirects to be applied over **all** commands part of the `case` block
     fn case_command(
         &mut self,
-        fragments: CaseFragments<Self::Word, Self::Command>,
+        fragments: CaseFragments<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error>;
 
@@ -448,6 +455,39 @@ pub trait Builder {
         body: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error>;
 
+    /// Invoked when only comments are parsed with no commands following.
+    /// This can occur if an entire shell script is commented out or if there
+    /// are comments present at the end of the script.
+    ///
+    /// # Arguments
+    /// * comments: the parsed comments
+    fn comments(&mut self, comments: Vec<Newline>) -> Result<(), Self::Error>;
+
+    /// Invoked when a word is parsed.
+    ///
+    /// # Arguments
+    /// * kind: the type of word that was parsed
+    fn word(
+        &mut self,
+        kind: ComplexWordKind<Self::Command, Self::Word>,
+    ) -> Result<Self::Word, Self::Error>;
+
+    /// Invoked when a redirect is parsed.
+    ///
+    /// # Arguments
+    /// * kind: the type of redirect that was parsed
+    fn redirect(&mut self, kind: RedirectKind<Self::Word>) -> Result<Self::Redirect, Self::Error>;
+}
+
+/// A trait which defines an interface which the parser defined in the `parse` module
+/// uses to delegate Abstract Syntax Tree creation, especially m4 macro parts.
+pub trait M4Builder: BuilderBase {
+    /// A type for m4 macro call.
+    type M4Macro;
+    /// A type for m4 macro argument.
+    type M4Argument;
+
+
     /// @kui8shi
     /// Invoked when a parsed m4 macro call is to be expanded to commands.
     ///
@@ -467,7 +507,7 @@ pub trait Builder {
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error>;
+    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error>;
 
     /// @kui8shi
     /// Invoked when a m4 macro call is parsed.
@@ -477,47 +517,27 @@ pub trait Builder {
     fn macro_call(
         &mut self,
         name: String,
-        args: Vec<M4Argument<Self::Word, Self::Command>>,
+        args: Vec<M4Argument<Self::Command, Self::Word>>,
         effects: Option<SideEffect>,
         original_name: Option<String>,
     ) -> Result<Self::M4Macro, Self::Error>;
-
-    /// Invoked when only comments are parsed with no commands following.
-    /// This can occur if an entire shell script is commented out or if there
-    /// are comments present at the end of the script.
-    ///
-    /// # Arguments
-    /// * comments: the parsed comments
-    fn comments(&mut self, comments: Vec<Newline>) -> Result<(), Self::Error>;
-
-    /// Invoked when a word is parsed.
-    ///
-    /// # Arguments
-    /// * kind: the type of word that was parsed
-    fn word(
-        &mut self,
-        kind: ComplexWordKind<Self::Command, Self::M4Macro>,
-    ) -> Result<Self::Word, Self::Error>;
-
-    /// Invoked when a redirect is parsed.
-    ///
-    /// # Arguments
-    /// * kind: the type of redirect that was parsed
-    fn redirect(&mut self, kind: RedirectKind<Self::Word>) -> Result<Self::Redirect, Self::Error>;
 }
 
 macro_rules! impl_builder_body {
     ($T:ident) => {
         type Command = $T::Command;
-        type CommandList = $T::CommandList;
-        type ListableCommand = $T::ListableCommand;
-        type PipeableCommand = $T::PipeableCommand;
         type CompoundCommand = $T::CompoundCommand;
         type Word = $T::Word;
         type Redirect = $T::Redirect;
         type Error = $T::Error;
-        type M4Macro = $T::M4Macro;
-        type M4Argument = $T::M4Argument;
+    }
+}
+
+macro_rules! impl_shell_builder_body {
+    ($T:ident) => {
+        type CommandList = $T::CommandList;
+        type ListableCommand = $T::ListableCommand;
+        type PipeableCommand = $T::PipeableCommand;
 
         fn complete_command(
             &mut self,
@@ -589,7 +609,7 @@ macro_rules! impl_builder_body {
 
         fn for_command(
             &mut self,
-            fragments: ForFragments<Self::Word, Self::Command>,
+            fragments: ForFragments<Self::Command, Self::Word>,
             redirects: Vec<Self::Redirect>,
         ) -> Result<Self::CompoundCommand, Self::Error> {
             (**self).for_command(fragments, redirects)
@@ -597,7 +617,7 @@ macro_rules! impl_builder_body {
 
         fn case_command(
             &mut self,
-            fragments: CaseFragments<Self::Word, Self::Command>,
+            fragments: CaseFragments<Self::Command, Self::Word>,
             redirects: Vec<Self::Redirect>,
         ) -> Result<Self::CompoundCommand, Self::Error> {
             (**self).case_command(fragments, redirects)
@@ -608,31 +628,6 @@ macro_rules! impl_builder_body {
             cmd: Self::CompoundCommand,
         ) -> Result<Self::PipeableCommand, Self::Error> {
             (**self).compound_command_into_pipeable(cmd)
-        }
-
-        fn macro_into_compound_command(
-            &mut self,
-            macro_call: Self::M4Macro,
-            redirects: Vec<Self::Redirect>,
-        ) -> Result<Self::CompoundCommand, Self::Error> {
-            (**self).macro_into_compound_command(macro_call, redirects)
-        }
-
-        fn macro_into_word(
-            &mut self,
-            macro_call: Self::M4Macro,
-        ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
-            (**self).macro_into_word(macro_call)
-        }
-
-        fn macro_call(
-            &mut self,
-            name: String,
-            args: Vec<M4Argument<Self::Word, Self::Command>>,
-            effects: Option<SideEffect>,
-            original_name: Option<String>,
-        ) -> Result<Self::M4Macro, Self::Error> {
-            (**self).macro_call(name, args, effects, original_name)
         }
 
         fn function_declaration(
@@ -650,7 +645,7 @@ macro_rules! impl_builder_body {
 
         fn word(
             &mut self,
-            kind: ComplexWordKind<Self::Command, Self::M4Macro>,
+            kind: ComplexWordKind<Self::Command, Self::Word>,
         ) -> Result<Self::Word, Self::Error> {
             (**self).word(kind)
         }
@@ -664,12 +659,58 @@ macro_rules! impl_builder_body {
     };
 }
 
-impl<T: Builder + ?Sized> Builder for &mut T {
-    impl_builder_body!(T);
+macro_rules! impl_m4_builder_body {
+    ($T:ident) => {
+        type M4Macro = $T::M4Macro;
+        type M4Argument = $T::M4Argument;
+
+        fn macro_into_compound_command(
+            &mut self,
+            macro_call: Self::M4Macro,
+            redirects: Vec<Self::Redirect>,
+        ) -> Result<Self::CompoundCommand, Self::Error> {
+            (**self).macro_into_compound_command(macro_call, redirects)
+        }
+
+        fn macro_into_word(
+            &mut self,
+            macro_call: Self::M4Macro,
+        ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+            (**self).macro_into_word(macro_call)
+        }
+
+        fn macro_call(
+            &mut self,
+            name: String,
+            args: Vec<M4Argument<Self::Command, Self::Word>>,
+            effects: Option<SideEffect>,
+            original_name: Option<String>,
+        ) -> Result<Self::M4Macro, Self::Error> {
+            (**self).macro_call(name, args, effects, original_name)
+        }
+    }
 }
 
-impl<T: Builder + ?Sized> Builder for Box<T> {
+impl<T: BuilderBase + ?Sized> BuilderBase for &mut T {
     impl_builder_body!(T);
+}
+impl<T: BuilderBase + ?Sized> BuilderBase for Box<T> {
+    impl_builder_body!(T);
+}
+impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for &mut T {
+    impl_shell_builder_body!(T);
+}
+
+impl<T: BuilderBase + ShellBuilder+ M4Builder + ?Sized> ShellBuilder for Box<T> {
+    impl_shell_builder_body!(T);
+}
+
+impl<T: BuilderBase + M4Builder + M4Builder + ?Sized> M4Builder for &mut T {
+    impl_m4_builder_body!(T);
+}
+
+impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> M4Builder for Box<T> {
+    impl_m4_builder_body!(T);
 }
 
 /// error produced by ast builder

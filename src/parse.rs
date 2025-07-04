@@ -14,8 +14,8 @@ use std::str::FromStr;
 
 use self::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
 use crate::ast::builder::ComplexWordKind::{self, Concat, Single};
-use crate::ast::builder::WordKind::{self, DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, Builder, SimpleWordKind};
+use crate::ast::builder::QuoteKind::{self, DoubleQuoted, Simple, SingleQuoted};
+use crate::ast::builder::{self, M4Builder, M4WordKind, ShellBuilder, WordKind};
 use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
@@ -41,13 +41,13 @@ const WHILE: &str = "while";
 
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
-pub type DefaultParser<I> = Parser<I, builder::StringBuilder>;
+pub type DefaultParser<I> = AutoconfParser<I, builder::StringBuilder>;
 
 /// A parser which will use a minimal set of AST builder implementation.
-pub type MinimalParser<I> = Parser<I, builder::MinimalBuilder<String>>;
+pub type MinimalParser<I> = AutoconfParser<I, builder::MinimalBuilder<String>>;
 
 /// A parser which will use a node-based AST builder implementation.
-pub type NodeParser<I> = Parser<I, builder::NodeBuilder<String>>;
+pub type NodeParser<I> = AutoconfParser<I, builder::NodeBuilder<String>>;
 
 /// A specialized `Result` type for parsing shell commands.
 pub type ParseResult<T, E> = Result<T, ParseError<E>>;
@@ -291,12 +291,12 @@ pub struct CommandGroupDelimiters<'a, 'b, 'c> {
 pub struct ParserIterator<I, B> {
     /// The underlying parser to poll for complete commands.
     /// A `None` value indicates the stream has been exhausted.
-    parser: Option<Parser<I, B>>,
+    parser: Option<AutoconfParser<I, B>>,
 }
 
 impl<I, B> ParserIterator<I, B> {
     /// Construct a new adapter with a given parser.
-    fn new(parser: Parser<I, B>) -> Self {
+    fn new(parser: AutoconfParser<I, B>) -> Self {
         ParserIterator {
             parser: Some(parser),
         }
@@ -306,19 +306,19 @@ impl<I, B> ParserIterator<I, B> {
 impl<I, B> std::iter::FusedIterator for ParserIterator<I, B>
 where
     I: Iterator<Item = Token>,
-    B: Builder,
+    B: ShellBuilder + M4Builder,
 {
 }
 
 impl<I, B> Iterator for ParserIterator<I, B>
 where
     I: Iterator<Item = Token>,
-    B: Builder,
+    B: ShellBuilder + M4Builder,
 {
     type Item = ParseResult<B::Command, B::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.parser.as_mut().map(Parser::complete_command) {
+        match self.parser.as_mut().map(AutoconfParser::complete_command) {
             None => None,
             Some(ret) => match ret {
                 Ok(Some(c)) => Some(Ok(c)),
@@ -335,10 +335,10 @@ where
     }
 }
 
-impl<I, B> IntoIterator for Parser<I, B>
+impl<I, B> IntoIterator for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: Builder,
+    B: ShellBuilder + M4Builder,
 {
     type IntoIter = ParserIterator<I, B>;
     type Item = <Self::IntoIter as Iterator>::Item;
@@ -412,7 +412,7 @@ where
 /// it were `[Literal(<<)]`. The lexer's behavior need not be consistent between different
 /// multi-char tokens, as long as it is aware of the implications.
 #[derive(Debug)]
-pub struct Parser<I, B> {
+pub struct AutoconfParser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
     quotes: (Token, Token),
@@ -434,25 +434,25 @@ struct QuoteContext {
     quote_level: usize,
 }
 
-impl<I: Iterator<Item = Token>, B: Builder + Default> Parser<I, B> {
+impl<I: Iterator<Item = Token>, B: ShellBuilder + M4Builder + Default> AutoconfParser<I, B> {
     /// Creates a new Parser from a Token iterator or collection.
-    pub fn new<T>(iter: T) -> Parser<I, B>
+    pub fn new<T>(iter: T) -> AutoconfParser<I, B>
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
-        Parser::with_builder(iter.into_iter(), Default::default(), false)
+        AutoconfParser::with_builder(iter.into_iter(), Default::default(), false)
     }
 
     /// Creates a new Parser with options
-    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> Parser<I, B>
+    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> AutoconfParser<I, B>
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
-        Parser::with_builder(iter.into_iter(), Default::default(), detect_macro)
+        AutoconfParser::with_builder(iter.into_iter(), Default::default(), detect_macro)
     }
 }
 
-impl<I, L> Parser<I, builder::NodeBuilder<L>>
+impl<I, L> AutoconfParser<I, builder::NodeBuilder<L>>
 where
     I: Iterator<Item = Token>,
     L: Into<String> + From<String> + Clone + fmt::Debug,
@@ -543,7 +543,11 @@ macro_rules! arith_parse {
     }
 }
 
-impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
+impl<I, B> AutoconfParser<I, B>
+where
+    I: Iterator<Item = Token>,
+    B: ShellBuilder + M4Builder,
+{
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
     /// token in the iterator will be used (or `UnexpectedEOF` if none left).
     #[inline]
@@ -558,7 +562,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
     /// Creates a new Parser from a Token iterator and provided AST builder.
     pub fn with_builder(iter: I, builder: B, detect_user_macro: bool) -> Self {
-        Parser {
+        AutoconfParser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
             quotes: (SquareOpen, SquareClose),
@@ -854,47 +858,48 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
-        fn could_be_numeric<C, M>(word: &WordKind<C, M>) -> bool {
-            let simple_could_be_numeric = |word: &SimpleWordKind<C, M>| match *word {
-                SimpleWordKind::Star
-                | SimpleWordKind::Question
-                | SimpleWordKind::SquareOpen
-                | SimpleWordKind::SquareClose
-                | SimpleWordKind::Tilde
-                | SimpleWordKind::Colon => false,
+        fn could_be_numeric<C, W>(word: &QuoteKind<C, W>) -> bool {
+            let could_be_numeric = |word: &M4WordKind<C, W>| match word {
+                M4WordKind::Word(w) => match w {
+                    WordKind::Star
+                    | WordKind::Question
+                    | WordKind::SquareOpen
+                    | WordKind::SquareClose
+                    | WordKind::Tilde
+                    | WordKind::Colon => false,
 
-                // Literals and can be statically checked if they have non-numeric characters
-                SimpleWordKind::Escaped(ref s) | SimpleWordKind::Literal(ref s) => {
-                    s.chars().all(|c| c.is_ascii_digit())
-                }
+                    // Literals and can be statically checked if they have non-numeric characters
+                    WordKind::Escaped(ref s) | WordKind::Literal(ref s) => {
+                        s.chars().all(|c| c.is_ascii_digit())
+                    }
 
-                // These could end up evaluating to a numeric,
-                // but we'll have to see at runtime.
-                SimpleWordKind::Param(_)
-                | SimpleWordKind::Subst(_)
-                | SimpleWordKind::CommandSubst(_) => true,
-
+                    // These could end up evaluating to a numeric,
+                    // but we'll have to see at runtime.
+                    WordKind::Param(_) | WordKind::Subst(_) | WordKind::CommandSubst(_) => true,
+                },
                 // @kui8shi
                 // The only macro that I know to be a file descriptor, is AC_FD_CC.
                 // It's too specific but good for remembering it in the code.
-                SimpleWordKind::Macro(ref name, _) => name != "AC_FD_CC",
+                M4WordKind::Macro(ref name, _) => name != "AC_FD_CC",
             };
 
             match *word {
-                Simple(ref s) => simple_could_be_numeric(s),
+                Simple(ref s) => could_be_numeric(s),
                 SingleQuoted(ref s) => s.chars().all(|c| c.is_ascii_digit()),
-                DoubleQuoted(ref fragments) => fragments.iter().all(simple_could_be_numeric),
+                DoubleQuoted(ref fragments) => fragments.iter().all(could_be_numeric),
             }
         }
 
         fn as_num<C, M>(word: &ComplexWordKind<C, M>) -> Option<u16> {
             match *word {
-                Single(Simple(SimpleWordKind::Literal(ref s))) => u16::from_str_radix(s, 10).ok(),
+                Single(Simple(M4WordKind::Word(WordKind::Literal(ref s)))) => {
+                    u16::from_str_radix(s, 10).ok()
+                }
                 Single(_) => None,
                 Concat(ref fragments) => {
                     let mut buf = String::new();
                     for w in fragments {
-                        if let Simple(SimpleWordKind::Literal(ref s)) = *w {
+                        if let Simple(M4WordKind::Word(WordKind::Literal(ref s))) = *w {
                             buf.push_str(s);
                         } else {
                             return None;
@@ -953,7 +958,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             ($parser:expr) => {{
                 let path = if $parser.peek_reserved_token(&[Dash]).is_some() {
                     let dash = $parser.reserved_token(&[Dash])?;
-                    Single(Simple(SimpleWordKind::Literal(dash.to_string())))
+                    Single(Simple(M4WordKind::Word(WordKind::Literal(
+                        dash.to_string(),
+                    ))))
                 } else {
                     let path_start_pos = $parser.iter.pos();
                     let path = if let Some(p) = $parser
@@ -1417,7 +1424,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
 
         let body = if quoted {
             let body = heredoc.into_iter().flat_map(|(t, _)| t).collect::<Vec<_>>();
-            Single(Simple(SimpleWordKind::Literal(concat_tokens(&body))))
+            Single(Simple(M4WordKind::Word(WordKind::Literal(concat_tokens(
+                &body,
+            )))))
         } else {
             let mut tok_iter = TokenIter::with_position(empty_iter(), heredoc_start_pos);
             while let Some((line, pos)) = heredoc.pop() {
@@ -1434,7 +1443,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             } else {
                 let body = body
                     .pop()
-                    .unwrap_or_else(|| SimpleWordKind::Literal(String::new()));
+                    .unwrap_or_else(|| M4WordKind::Word(WordKind::Literal(String::new())));
                 Single(Simple(body))
             }
         };
@@ -1476,7 +1485,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// not pass the result to the AST builder.
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
         self.word_preserve_trailing_whitespace_raw_with_delim(None, false)
     }
 
@@ -1486,7 +1495,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         delims: Option<&[Token]>,
         refresh_quote_context: bool,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
         self.skip_whitespace();
         let (quote_open, quote_close) = self.get_quotes();
 
@@ -1527,7 +1536,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
-                words.push(Simple(self.parameter_raw()?));
+                words.push(Simple(M4WordKind::Word(self.parameter_raw()?)));
                 continue;
             }
 
@@ -1548,12 +1557,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | Some(&Name(_)) | Some(&Literal(_)) => {}
 
                 Some(&Backtick) => {
-                    words.push(Simple(self.backticked_raw()?));
+                    words.push(Simple(M4WordKind::Word(self.backticked_raw()?)));
                     continue;
                 }
 
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    words.push(Simple(self.parameter_raw()?));
+                    words.push(Simple(M4WordKind::Word(self.parameter_raw()?)));
                     continue;
                 }
 
@@ -1602,21 +1611,21 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 | tok @ Comma
                 | tok @ Dot
                 | tok @ CurlyOpen
-                | tok @ CurlyClose => Simple(SimpleWordKind::Literal(tok.to_string())),
+                | tok @ CurlyClose => Simple(M4WordKind::Word(WordKind::Literal(tok.to_string()))),
 
-                Name(s) | Literal(s) => Simple(SimpleWordKind::Literal(s)),
-                Star => Simple(SimpleWordKind::Star),
-                Question => Simple(SimpleWordKind::Question),
-                Tilde => Simple(SimpleWordKind::Tilde),
-                SquareOpen => Simple(SimpleWordKind::SquareOpen),
-                SquareClose => Simple(SimpleWordKind::SquareClose),
-                Colon => Simple(SimpleWordKind::Colon),
+                Name(s) | Literal(s) => Simple(M4WordKind::Word(WordKind::Literal(s))),
+                Star => Simple(M4WordKind::Word(WordKind::Star)),
+                Question => Simple(M4WordKind::Word(WordKind::Question)),
+                Tilde => Simple(M4WordKind::Word(WordKind::Tilde)),
+                SquareOpen => Simple(M4WordKind::Word(WordKind::SquareOpen)),
+                SquareClose => Simple(M4WordKind::Word(WordKind::SquareClose)),
+                Colon => Simple(M4WordKind::Word(WordKind::Colon)),
 
                 Backslash => match self.iter.next() {
                     // Escaped newlines become whitespace and a delimiter.
                     // Alternatively, can't escape EOF, just ignore the slash
                     Some(Newline) | None => break,
-                    Some(t) => Simple(SimpleWordKind::Escaped(t.to_string())),
+                    Some(t) => Simple(M4WordKind::Word(WordKind::Escaped(t.to_string()))),
                 },
 
                 SingleQuote => {
@@ -1684,7 +1693,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         delims: Option<&[Token]>,
         start_pos: SourcePos,
-    ) -> ParseResult<Vec<SimpleWordKind<B::Command, B::M4Macro>>, B::Error> {
+    ) -> ParseResult<Vec<M4WordKind<B::Command, B::Word>>, B::Error> {
         let mut words = Vec::new();
         let mut buf = String::new();
         let (quote_open, quote_close) = self.get_quotes();
@@ -1708,7 +1717,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             macro_rules! store {
                 ($word:expr) => {{
                     if !buf.is_empty() {
-                        words.push(SimpleWordKind::Literal(buf));
+                        words.push(M4WordKind::Word(WordKind::Literal(buf)));
                         buf = String::new();
                     }
                     words.push($word);
@@ -1734,7 +1743,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
-                store!(self.parameter_raw()?);
+                store!(M4WordKind::Word(self.parameter_raw()?));
                 continue;
             }
 
@@ -1746,12 +1755,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             // we find since the `parameter` method expects to consume them.
             match self.iter.peek() {
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    store!(self.parameter_raw()?);
+                    store!(M4WordKind::Word(self.parameter_raw()?));
                     continue;
                 }
 
                 Some(&Backtick) => {
-                    store!(self.backticked_raw()?);
+                    store!(M4WordKind::Word(self.backticked_raw()?));
                     continue;
                 }
 
@@ -1768,9 +1777,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     };
 
                     if special || is_delim(self.iter.peek().cloned()) {
-                        store!(SimpleWordKind::Escaped(
+                        store!(M4WordKind::Word(WordKind::Escaped(
                             self.iter.next().unwrap().to_string()
-                        ))
+                        )))
                     } else {
                         buf.push_str(Backslash.as_str());
                     }
@@ -1797,7 +1806,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         }
 
         if !buf.is_empty() {
-            words.push(SimpleWordKind::Literal(buf));
+            words.push(M4WordKind::Word(WordKind::Literal(buf)));
         }
 
         Ok(words)
@@ -1810,12 +1819,12 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// as a command.
     pub fn backticked_command_substitution(&mut self) -> ParseResult<B::Word, B::Error> {
         let word = self.backticked_raw()?;
-        Ok(self.builder.word(Single(Simple(word)))?)
+        Ok(self.builder.word(Single(Simple(M4WordKind::Word(word))))?)
     }
 
     /// Identical to `Parser::backticked_command_substitution`, except but does not pass the
     /// result to the AST builder.
-    fn backticked_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
+    fn backticked_raw(&mut self) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
         let backtick_pos = self.iter.pos();
         eat!(self, { Backtick => {} });
 
@@ -1835,7 +1844,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let cmd_subst = self.command_group_internal(CommandGroupDelimiters::default());
         let _ = mem::replace(&mut self.iter, tok_backup);
 
-        Ok(SimpleWordKind::CommandSubst(cmd_subst?))
+        Ok(WordKind::CommandSubst(cmd_subst?))
     }
 
     /// Parses a parameters such as `$$`, `$1`, `$foo`, etc, or
@@ -1847,18 +1856,18 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// parameter is parsed.
     pub fn parameter(&mut self) -> ParseResult<B::Word, B::Error> {
         let param = self.parameter_raw()?;
-        Ok(self.builder.word(Single(Simple(param)))?)
+        Ok(self.builder.word(Single(Simple(M4WordKind::Word(param))))?)
     }
 
     /// Identical to `Parser::parameter()` but does not pass the result to the AST builder.
-    fn parameter_raw(&mut self) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
+    fn parameter_raw(&mut self) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
         self.stash_quote_context(QuoteContextKind::Other("parameter".into()));
         self.may_open_quote(None, false);
         let ret = match self.iter.next() {
-            Some(ParamPositional(p)) => Ok(SimpleWordKind::Param(Parameter::Positional(p as u32))),
+            Some(ParamPositional(p)) => Ok(WordKind::Param(Parameter::Positional(p as u32))),
 
             Some(Dollar) => {
                 // dollar might be quoted (e.g. [$]var)
@@ -1870,7 +1879,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 let p = match self.iter.peek() {
                     Some(&Star) | Some(&Pound) | Some(&Question) | Some(&Dollar) | Some(&Bang)
                     | Some(&Dash) | Some(&At) | Some(&Name(_)) => {
-                        Ok(SimpleWordKind::Param(self.parameter_inner()?))
+                        Ok(WordKind::Param(self.parameter_inner()?))
                     }
 
                     Some(&ParenOpen) | Some(&CurlyOpen) => self.parameter_substitution_raw(),
@@ -1879,10 +1888,10 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                         // quoted positional parameter (e.g. $[1])
                         let num = s.parse::<u32>().unwrap();
                         self.iter.next();
-                        Ok(SimpleWordKind::Param(Parameter::Positional(num)))
+                        Ok(WordKind::Param(Parameter::Positional(num)))
                     }
 
-                    _ => Ok(SimpleWordKind::Literal(Dollar.to_string())),
+                    _ => Ok(WordKind::Literal(Dollar.to_string())),
                 };
                 if in_quote {
                     self.may_close_quote(None, false);
@@ -1905,7 +1914,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     fn parameter_substitution_word_raw(
         &mut self,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::M4Macro>>, B::Error> {
+    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
         let mut words = Vec::new();
         'capture_words: loop {
             'capture_literals: loop {
@@ -1937,7 +1946,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     | Some(t @ &EmptyQuotes)
                     | Some(t @ &Whitespace(_))
                     | Some(t @ &Newline) => {
-                        words.push(Simple(SimpleWordKind::Literal(t.as_str().to_owned())));
+                        words.push(Simple(M4WordKind::Word(WordKind::Literal(
+                            t.as_str().to_owned(),
+                        ))));
                         false
                     }
 
@@ -1975,7 +1986,9 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     let mut peek = self.iter.multipeek();
                     peek.peek_next(); // Skip past the Backslash
                     if let Some(t @ &Newline) = peek.peek_next() {
-                        words.push(Simple(SimpleWordKind::Escaped(t.as_str().to_owned())));
+                        words.push(Simple(M4WordKind::Word(WordKind::Escaped(
+                            t.as_str().to_owned(),
+                        ))));
                         true
                     } else {
                         // Backslash is escaping something other than newline,
@@ -2025,7 +2038,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         param: DefaultParameter,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
+    ) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -2038,7 +2051,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         let op = match self.iter.next() {
             Some(tok @ Dash) | Some(tok @ Equals) | Some(tok @ Question) | Some(tok @ Plus) => tok,
 
-            Some(CurlyClose) => return Ok(SimpleWordKind::Param(param)),
+            Some(CurlyClose) => return Ok(WordKind::Param(param)),
 
             Some(t) => return Err(ParseError::new(BadSubst(t, op_pos))),
             None => return Err(ParseError::new(Unmatched(CurlyOpen, curly_open_pos))),
@@ -2062,14 +2075,14 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                 _ => unreachable!(),
             }
         };
-        Ok(SimpleWordKind::Subst(Box::new(ret)))
+        Ok(WordKind::Subst(Box::new(ret)))
     }
 
     /// Parses a parameter substitution in the form of `${...}`, `$(...)`, or `$((...))`.
     /// Nothing is passed to the builder.
     fn parameter_substitution_raw(
         &mut self,
-    ) -> ParseResult<SimpleWordKind<B::Command, B::M4Macro>, B::Error> {
+    ) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -2107,7 +2120,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     Command(self.subshell_internal(true)?)
                 };
 
-                Ok(SimpleWordKind::Subst(Box::new(subst)))
+                Ok(WordKind::Subst(Box::new(subst)))
             }
 
             Some(&CurlyOpen) => {
@@ -2164,7 +2177,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
                     _ => return self.parameter_substitution_body_raw(param, curly_open_pos),
                 };
 
-                Ok(SimpleWordKind::Subst(Box::new(subst)))
+                Ok(WordKind::Subst(Box::new(subst)))
             }
 
             _ => Err(self.make_unexpected_err()),
@@ -2474,7 +2487,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// AST node, it so that the caller can do so with redirections.
     pub fn for_command(
         &mut self,
-    ) -> ParseResult<builder::ForFragments<B::Word, B::Command>, B::Error> {
+    ) -> ParseResult<builder::ForFragments<B::Command, B::Word>, B::Error> {
         let start_pos = self.iter.pos();
         self.reserved_word(&[FOR])
             .map_err(|_| self.make_unexpected_err())?;
@@ -2570,7 +2583,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
     /// AST node, it so that the caller can do so with redirections.
     pub fn case_command(
         &mut self,
-    ) -> ParseResult<builder::CaseFragments<B::Word, B::Command>, B::Error> {
+    ) -> ParseResult<builder::CaseFragments<B::Command, B::Word>, B::Error> {
         let start_pos = self.iter.pos();
 
         macro_rules! missing_in {
@@ -3073,7 +3086,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         end: &Token,
         effects: &mut Option<SideEffect>,
         func: Option<M4ExportFunc>,
-    ) -> ParseResult<M4Argument<B::Word, B::Command>, B::Error> {
+    ) -> ParseResult<M4Argument<B::Command, B::Word>, B::Error> {
         let (_, quote_close) = self.get_quotes();
         let mut arr = Vec::new();
         // Parse array argument
@@ -3104,7 +3117,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
             };
             if let Some(word) = word {
                 if let Some(f) = func {
-                    if let Single(Simple(SimpleWordKind::Literal(elm))) = &word {
+                    if let Single(Simple(M4WordKind::Word(WordKind::Literal(elm)))) = &word {
                         for (export_type, val) in f(elm) {
                             effects
                                 .get_or_insert_default()
@@ -3538,7 +3551,7 @@ impl<I: Iterator<Item = Token>, B: Builder> Parser<I, B> {
         &mut self,
         cfg: CommandGroupDelimiters<'_, '_, '_>,
     ) -> ParseResult<builder::CommandGroup<B::Command>, B::Error> {
-        let found_delim = |slf: &mut Parser<_, _>| {
+        let found_delim = |slf: &mut AutoconfParser<_, _>| {
             let found_exact = !cfg.exact_tokens.is_empty()
                 && slf
                     .iter
@@ -4079,12 +4092,12 @@ mod tests {
 
     #[test]
     fn test_parameter_substitution_command_can_contain_comments() {
-        let param_subst = SimpleWordKind::Subst(Box::new(
-            builder::ParameterSubstitutionKind::Command(builder::CommandGroup {
+        let param_subst = WordKind::Subst(Box::new(builder::ParameterSubstitutionKind::Command(
+            builder::CommandGroup {
                 commands: vec![cmd("foo")],
                 trailing_comments: vec![Newline(Some("#comment".into()))],
-            }),
-        ));
+            },
+        )));
         assert_eq!(
             Ok(param_subst),
             make_parser("$(foo\n#comment\n)").parameter_raw()
@@ -4093,7 +4106,7 @@ mod tests {
 
     #[test]
     fn test_backticked_command_can_contain_comments() {
-        let cmd_subst = SimpleWordKind::CommandSubst(builder::CommandGroup {
+        let cmd_subst = WordKind::CommandSubst(builder::CommandGroup {
             commands: vec![cmd("foo")],
             trailing_comments: vec![Newline(Some("#comment".into()))],
         });

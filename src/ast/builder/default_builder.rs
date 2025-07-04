@@ -28,7 +28,7 @@ macro_rules! default_builder {
      $PipeableCmd:ident,
     ) => {
         $(#[$attr])*
-        pub struct $Builder<T>($CoreBuilder<T, $Word<T>, $Cmd<T>>);
+        pub struct $Builder<T>($CoreBuilder<T, $Cmd<T>, $Word<T>>);
 
         impl<T> $Builder<T> {
             /// Constructs a builder.
@@ -58,17 +58,46 @@ macro_rules! default_builder {
 
         impl<T> Copy for $Builder<T> {}
 
-        impl<T: From<String>> Builder for $Builder<T> {
+        impl<T: From<String>> BuilderBase for $Builder<T> {
             type Command         = $Cmd<T>;
-            type CommandList     = AndOrList<Self::ListableCommand>;
-            type ListableCommand = ListableCommand<Self::PipeableCommand>;
-            type PipeableCommand = $PipeableCmd<T, Self::Word, Self::Command>;
-            type CompoundCommand = ShellCompoundCommand<T, Self::Word, Self::Command>;
+            type CompoundCommand = ShellCompoundCommand<T, Self::Command, Self::Word>;
             type Word            = $Word<T>;
             type Redirect        = Redirect<Self::Word>;
             type Error           = Void;
-            type M4Macro         = M4Macro<Self::Word, Self::Command>;
-            type M4Argument      = M4Argument<Self::Word, Self::Command>;
+        }
+
+        impl<T: From<String>> M4Builder for $Builder<T> {
+            type M4Macro         = M4Macro<Self::Command, Self::Word>;
+            type M4Argument      = M4Argument<Self::Command, Self::Word>;
+            fn macro_into_compound_command(
+                &mut self,
+                macro_call: M4Macro<Self::Command, Self::Word>,
+                redirects: Vec<Self::Redirect>,
+            ) -> Result<Self::CompoundCommand, Self::Error> {
+                self.0.macro_into_compound_command(macro_call, redirects)
+            }
+
+            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+                self.0.macro_into_word(macro_call)
+            }
+
+            fn macro_call(
+                &mut self,
+                name: String,
+                args: Vec<M4Argument<Self::Command, Self::Word>>,
+                effects: Option<SideEffect>,
+                original_name: Option<String>,
+            ) -> Result<Self::M4Macro, Self::Error> {
+                self.0.macro_call(name, args, effects, original_name)
+            }
+
+
+        }
+
+        impl<T: From<String>> ShellBuilder for $Builder<T> {
+            type CommandList     = AndOrList<Self::ListableCommand>;
+            type ListableCommand = ListableCommand<Self::PipeableCommand>;
+            type PipeableCommand = $PipeableCmd<T, Self::Command, Self::Word>;
 
             fn complete_command(&mut self,
                                 pre_cmd_comments: Vec<Newline>,
@@ -141,7 +170,7 @@ macro_rules! default_builder {
             }
 
             fn for_command(&mut self,
-                           fragments: ForFragments<Self::Word, Self::Command>,
+                           fragments: ForFragments<Self::Command, Self::Word>,
                            redirects: Vec<Self::Redirect>)
                 -> Result<Self::CompoundCommand, Self::Error>
             {
@@ -149,7 +178,7 @@ macro_rules! default_builder {
             }
 
             fn case_command(&mut self,
-                            fragments: CaseFragments<Self::Word, Self::Command>,
+                            fragments: CaseFragments<Self::Command, Self::Word>,
                             redirects: Vec<Self::Redirect>)
                 -> Result<Self::CompoundCommand, Self::Error>
             {
@@ -172,28 +201,6 @@ macro_rules! default_builder {
                 self.0.function_declaration(name, post_name_comments, body)
             }
 
-            fn macro_into_compound_command(
-                &mut self,
-                macro_call: M4Macro<Self::Word, Self::Command>,
-                redirects: Vec<Self::Redirect>,
-            ) -> Result<Self::CompoundCommand, Self::Error> {
-                self.0.macro_into_compound_command(macro_call, redirects)
-            }
-
-            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
-                self.0.macro_into_word(macro_call)
-            }
-
-            fn macro_call(
-                &mut self,
-                name: String,
-                args: Vec<M4Argument<Self::Word, Self::Command>>,
-                effects: Option<SideEffect>,
-                original_name: Option<String>,
-            ) -> Result<Self::M4Macro, Self::Error> {
-                self.0.macro_call(name, args, effects, original_name)
-            }
-
             fn comments(&mut self,
                         comments: Vec<Newline>)
                 -> Result<(), Self::Error>
@@ -202,7 +209,7 @@ macro_rules! default_builder {
             }
 
             fn word(&mut self,
-                    kind: ComplexWordKind<Self::Command, Self::M4Macro>)
+                    kind: ComplexWordKind<Self::Command, Self::Word>)
                 -> Result<Self::Word, Self::Error>
             {
                 self.0.word(kind)
@@ -218,8 +225,8 @@ macro_rules! default_builder {
     };
 }
 
-type RcCoreBuilder<T, W, C> = CoreBuilder<T, W, C, Rc<ShellCompoundCommand<T, W, C>>>;
-type ArcCoreBuilder<T, W, C> = CoreBuilder<T, W, C, Arc<ShellCompoundCommand<T, W, C>>>;
+type RcCoreBuilder<T, C, W> = AutoconfFullBuilderBase<T, C, W, Rc<ShellCompoundCommand<T, C, W>>>;
+type ArcCoreBuilder<T, C, W> = AutoconfFullBuilderBase<T, C, W, Arc<ShellCompoundCommand<T, C, W>>>;
 
 default_builder! {
     /// A `Builder` implementation which builds shell commands
@@ -255,63 +262,107 @@ pub type ArcBuilder = AtomicDefaultBuilder<Arc<String>>;
 
 /// The actual provided `Builder` implementation.
 /// The various type parameters are used to swap out atomic/non-atomic AST versions.
-pub struct CoreBuilder<T, W, C, F> {
-    phantom_data: PhantomData<(T, W, C, F)>,
+pub struct AutoconfFullBuilderBase<T, C, W, F> {
+    phantom_data: PhantomData<(T, C, W, F)>,
 }
 
-impl<T, W, C, F> fmt::Debug for CoreBuilder<T, W, C, F> {
+impl<T, C, W, F> fmt::Debug for AutoconfFullBuilderBase<T, C, W, F> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("CoreBuilder").finish()
     }
 }
 
-impl<T, W, C, F> Clone for CoreBuilder<T, W, C, F> {
+impl<T, C, W, F> Clone for AutoconfFullBuilderBase<T, C, W, F> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T, W, C, F> Copy for CoreBuilder<T, W, C, F> {}
+impl<T, C, W, F> Copy for AutoconfFullBuilderBase<T, C, W, F> {}
 
-impl<T, W, C, F> Default for CoreBuilder<T, W, C, F> {
+impl<T, C, W, F> Default for AutoconfFullBuilderBase<T, C, W, F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T, W, C, F> CoreBuilder<T, W, C, F> {
+impl<T, C, W, F> AutoconfFullBuilderBase<T, C, W, F> {
     /// Constructs a builder.
     pub fn new() -> Self {
-        CoreBuilder {
+        AutoconfFullBuilderBase {
             phantom_data: PhantomData,
         }
     }
 }
 
-type BuilderPipeableCommand<T, W, C, F> = PipeableCommand<
+type BuilderPipeableCommand<T, C, W, F> = PipeableCommand<
     T,
     Box<SimpleCommand<T, W, Redirect<W>>>,
-    Box<ShellCompoundCommand<T, W, C>>,
+    Box<ShellCompoundCommand<T, C, W>>,
     F,
 >;
 
-impl<T, W, C, F> Builder for CoreBuilder<T, W, C, F>
-where
-    T: From<String>,
-    W: From<ShellWord<T, W, C>>,
-    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<T, W, C, F>>>>>,
-    F: From<ShellCompoundCommand<T, W, C>>,
-{
+impl<T, C, W, F> BuilderBase for AutoconfFullBuilderBase<T, C, W, F> {
     type Command = C;
-    type CommandList = AndOrList<Self::ListableCommand>;
-    type ListableCommand = ListableCommand<Self::PipeableCommand>;
-    type PipeableCommand = BuilderPipeableCommand<T, W, C, F>;
-    type CompoundCommand = ShellCompoundCommand<T, Self::Word, Self::Command>;
+    type CompoundCommand = ShellCompoundCommand<T, Self::Command, Self::Word>;
     type Word = W;
     type Redirect = Redirect<Self::Word>;
     type Error = Void;
-    type M4Macro = M4Macro<Self::Word, Self::Command>;
-    type M4Argument = M4Argument<Self::Word, Self::Command>;
+}
+
+impl<T, C, W, F> M4Builder for AutoconfFullBuilderBase<T, C, W, F>
+where
+    T: From<String>,
+    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<T, C, W, F>>>>>,
+    W: From<ShellWord<T, C, W>>,
+    F: From<ShellCompoundCommand<T, C, W>>,
+{
+    type M4Macro = M4Macro<Self::Command, Self::Word>;
+    type M4Argument = M4Argument<Self::Command, Self::Word>;
+    fn macro_into_compound_command(
+        &mut self,
+        macro_call: M4Macro<Self::Command, Self::Word>,
+        redirects: Vec<Self::Redirect>,
+    ) -> Result<Self::CompoundCommand, Self::Error> {
+        Ok(CompoundCommand {
+            kind: CompoundCommandKind::Macro(macro_call),
+            io: redirects,
+        })
+    }
+
+    fn macro_into_word(
+        &mut self,
+        macro_call: Self::M4Macro,
+    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+        Ok(M4WordKind::Macro(macro_call.name.to_string(), macro_call))
+    }
+
+    fn macro_call(
+        &mut self,
+        name: String,
+        args: Vec<M4Argument<Self::Command, Self::Word>>,
+        effects: Option<SideEffect>,
+        original_name: Option<String>,
+    ) -> Result<Self::M4Macro, Self::Error> {
+        Ok(M4Macro::new_with_side_effect(
+            name,
+            args,
+            effects,
+            original_name,
+        ))
+    }
+}
+
+impl<T, C, W, F> ShellBuilder for AutoconfFullBuilderBase<T, C, W, F>
+where
+    T: From<String>,
+    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<T, C, W, F>>>>>,
+    W: From<ShellWord<T, C, W>>,
+    F: From<ShellCompoundCommand<T, C, W>>,
+{
+    type CommandList = AndOrList<Self::ListableCommand>;
+    type ListableCommand = ListableCommand<Self::PipeableCommand>;
+    type PipeableCommand = BuilderPipeableCommand<T, C, W, F>;
 
     /// Constructs a `Command::Job` node with the provided inputs if the command
     /// was delimited by an ampersand or the command itself otherwise.
@@ -492,7 +543,7 @@ where
     /// Constructs a `CompoundCommand::For` node with the provided inputs.
     fn for_command(
         &mut self,
-        fragments: ForFragments<Self::Word, Self::Command>,
+        fragments: ForFragments<Self::Command, Self::Word>,
         mut redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
         let words = fragments.words.map(|(_, mut words, _)| {
@@ -517,7 +568,7 @@ where
     /// Constructs a `CompoundCommand::Case` node with the provided inputs.
     fn case_command(
         &mut self,
-        fragments: CaseFragments<Self::Word, Self::Command>,
+        fragments: CaseFragments<Self::Command, Self::Word>,
         mut redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
         let arms = fragments
@@ -562,42 +613,6 @@ where
         Ok(PipeableCommand::FunctionDef(name.into(), body.into()))
     }
 
-    fn macro_into_compound_command(
-        &mut self,
-        macro_call: M4Macro<Self::Word, Self::Command>,
-        redirects: Vec<Self::Redirect>,
-    ) -> Result<Self::CompoundCommand, Self::Error> {
-        Ok(CompoundCommand {
-            kind: CompoundCommandKind::Macro(macro_call),
-            io: redirects,
-        })
-    }
-
-    fn macro_into_word(
-        &mut self,
-        macro_call: Self::M4Macro,
-    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(SimpleWordKind::Macro(
-            macro_call.name.to_string(),
-            macro_call,
-        ))
-    }
-
-    fn macro_call(
-        &mut self,
-        name: String,
-        args: Vec<M4Argument<Self::Word, Self::Command>>,
-        effects: Option<SideEffect>,
-        original_name: Option<String>,
-    ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(M4Macro::new_with_side_effect(
-            name,
-            args,
-            effects,
-            original_name,
-        ))
-    }
-
     /// Ignored by the builder.
     fn comments(&mut self, _comments: Vec<Newline>) -> Result<(), Self::Error> {
         Ok(())
@@ -606,7 +621,7 @@ where
     /// Constructs a `ast::Word` from the provided input.
     fn word(
         &mut self,
-        kind: ComplexWordKind<Self::Command, Self::M4Macro>,
+        kind: ComplexWordKind<Self::Command, Self::Word>,
     ) -> Result<Self::Word, Self::Error> {
         macro_rules! map {
             ($pat:expr) => {
@@ -678,22 +693,21 @@ where
             use crate::ast::builder::ParameterSubstitutionKind::*;
 
             let simple = match kind {
-                SimpleWordKind::Literal(s) => SimpleWord::Literal(s.into()),
-                SimpleWordKind::Escaped(s) => SimpleWord::Escaped(s.into()),
-                SimpleWordKind::Param(p) => SimpleWord::Param(map_param(p)),
-                SimpleWordKind::Star => SimpleWord::Star,
-                SimpleWordKind::Question => SimpleWord::Question,
-                SimpleWordKind::SquareOpen => SimpleWord::SquareOpen,
-                SimpleWordKind::SquareClose => SimpleWord::SquareClose,
-                SimpleWordKind::Tilde => SimpleWord::Tilde,
-                SimpleWordKind::Colon => SimpleWord::Colon,
-                SimpleWordKind::Macro(_, m) => SimpleWord::Macro(m),
+                WordKind::Literal(s) => SimpleWord::Literal(s.into()),
+                WordKind::Escaped(s) => SimpleWord::Escaped(s.into()),
+                WordKind::Param(p) => SimpleWord::Param(map_param(p)),
+                WordKind::Star => SimpleWord::Star,
+                WordKind::Question => SimpleWord::Question,
+                WordKind::SquareOpen => SimpleWord::SquareOpen,
+                WordKind::SquareClose => SimpleWord::SquareClose,
+                WordKind::Tilde => SimpleWord::Tilde,
+                WordKind::Colon => SimpleWord::Colon,
 
-                SimpleWordKind::CommandSubst(c) => {
+                WordKind::CommandSubst(c) => {
                     SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
                 }
 
-                SimpleWordKind::Subst(s) => {
+                WordKind::Subst(s) => {
                     // Force a move out of the boxed substitution. For some reason doing
                     // the deref in the match statment gives a strange borrow failure
                     let s = *s;
@@ -728,13 +742,21 @@ where
             Ok(simple)
         };
 
+        let mut map_m4_word = |kind| {
+            let simple = match kind {
+                M4WordKind::Word(w) => map_simple(w)?,
+                M4WordKind::Macro(_, m) => SimpleWord::Macro(m),
+            };
+            Ok(simple)
+        };
+
         let mut map_word = |kind| {
             let word = match kind {
-                WordKind::Simple(s) => Word::Simple(map_simple(s)?),
-                WordKind::SingleQuoted(s) => Word::SingleQuoted(s.into()),
-                WordKind::DoubleQuoted(v) => Word::DoubleQuoted(
+                QuoteKind::Simple(s) => Word::Simple(map_m4_word(s)?),
+                QuoteKind::SingleQuoted(s) => Word::SingleQuoted(s.into()),
+                QuoteKind::DoubleQuoted(v) => Word::DoubleQuoted(
                     v.into_iter()
-                        .map(&mut map_simple)
+                        .map(&mut map_m4_word)
                         .collect::<Result<Vec<_>, _>>()?,
                 ),
             };
@@ -827,15 +849,16 @@ where
     }
 }
 
-pub(crate) fn compress<C, M>(word: ComplexWordKind<C, M>) -> ComplexWordKind<C, M> {
+pub(crate) fn compress<C, W>(word: ComplexWordKind<C, W>) -> ComplexWordKind<C, W> {
     use crate::ast::builder::ComplexWordKind::*;
-    use crate::ast::builder::SimpleWordKind::*;
+    use crate::ast::builder::M4WordKind::*;
+    use crate::ast::builder::QuoteKind::*;
     use crate::ast::builder::WordKind::*;
 
-    fn coalesce_simple<C, M>(
-        a: SimpleWordKind<C, M>,
-        b: SimpleWordKind<C, M>,
-    ) -> CoalesceResult<SimpleWordKind<C, M>> {
+    fn coalesce_simple<C, W>(
+        a: WordKind<C, W>,
+        b: WordKind<C, W>,
+    ) -> CoalesceResult<WordKind<C, W>> {
         match (a, b) {
             (Literal(mut a), Literal(b)) => {
                 a.push_str(&b);
@@ -845,17 +868,32 @@ pub(crate) fn compress<C, M>(word: ComplexWordKind<C, M>) -> ComplexWordKind<C, 
         }
     }
 
-    fn coalesce_word<C, M>(a: WordKind<C, M>, b: WordKind<C, M>) -> CoalesceResult<WordKind<C, M>> {
+    fn coalesce_m4_word<C, W>(
+        a: M4WordKind<C, W>,
+        b: M4WordKind<C, W>,
+    ) -> CoalesceResult<M4WordKind<C, W>> {
         match (a, b) {
-            (Simple(a), Simple(b)) => coalesce_simple(a, b)
-                .map(Simple)
+            (Word(a), Word(b)) => coalesce_simple(a, b)
+                .map(Word)
+                .map_err(|(a, b)| (Word(a), Word(b))),
+            (a, b) => Err((a, b)),
+        }
+    }
+
+    fn coalesce_word<C, W>(
+        a: QuoteKind<C, W>,
+        b: QuoteKind<C, W>,
+    ) -> CoalesceResult<QuoteKind<C, W>> {
+        match (a, b) {
+            (Simple(a), Simple(b)) => coalesce_m4_word(a, b)
+                .map(|s| Simple(s))
                 .map_err(|(a, b)| (Simple(a), Simple(b))),
             (SingleQuoted(mut a), SingleQuoted(b)) => {
                 a.push_str(&b);
                 Ok(SingleQuoted(a))
             }
             (DoubleQuoted(a), DoubleQuoted(b)) => {
-                let quoted = Coalesce::new(a.into_iter().chain(b), coalesce_simple).collect();
+                let quoted = Coalesce::new(a.into_iter().chain(b), coalesce_m4_word).collect();
                 Ok(DoubleQuoted(quoted))
             }
             (a, b) => Err((a, b)),
@@ -865,7 +903,7 @@ pub(crate) fn compress<C, M>(word: ComplexWordKind<C, M>) -> ComplexWordKind<C, 
     match word {
         Single(s) => Single(match s {
             s @ Simple(_) | s @ SingleQuoted(_) => s,
-            DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_simple).collect()),
+            DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_m4_word).collect()),
         }),
         Concat(v) => {
             let mut body: Vec<_> = Coalesce::new(v, coalesce_word).collect();

@@ -7,24 +7,24 @@ pub type NodeId = usize;
 /// Wraps minimal Word with fixing generics
 pub type Word<L> = super::minimal::Word<L, NodeId>;
 /// Wraps minimal word fragment with fixing generics
-pub type WordFragment<L> = super::minimal::WordFragment<L, Word<L>, NodeId>;
+pub type WordFragment<L> = super::minimal::WordFragment<L, NodeId, Word<L>>;
 /// Wraps minimal condition with fixing generics
-pub type Condition<L> = super::minimal::Condition<Word<L>, NodeId>;
+pub type Condition<L> = super::minimal::Condition<NodeId, Word<L>>;
 /// Wraps minimal operator with fixing generics
 pub type Operator<L> = super::minimal::Operator<Word<L>>;
 /// Wraps minimal guard body pair with fixing generics
-pub type GuardBodyPair<L> = super::minimal::GuardBodyPair<Word<L>, NodeId>;
+pub type GuardBodyPair<L> = super::minimal::GuardBodyPair<NodeId, Word<L>>;
 /// Wraps pattern body pair with fixing generics
-pub type PatternBodyPair<L> = super::PatternBodyPair<Word<L>, NodeId>;
+pub type PatternBodyPair<L> = super::PatternBodyPair<NodeId, Word<L>>;
 /// Wraps redirect with fixing generics
 pub type Redirect<L> = super::Redirect<Word<L>>;
 /// Wraps parameter substitution with fixing generics
 pub type ParameterSubstitution<L> =
-    super::ParameterSubstitution<super::Parameter<L>, Word<L>, NodeId, super::Arithmetic<L>>;
+    super::ParameterSubstitution<super::Parameter<L>, NodeId, Word<L>, super::Arithmetic<L>>;
 /// Wraps m4 macro with fixing generics
-pub type M4Macro<L> = m4_macro::M4Macro<Word<L>, NodeId>;
+pub type M4Macro<L> = m4_macro::M4Macro<NodeId, Word<L>>;
 /// Wraps m4 argument with fixing generics
-pub type M4Argument<L> = m4_macro::M4Argument<Word<L>, NodeId>;
+pub type M4Argument<L> = m4_macro::M4Argument<NodeId, Word<L>>;
 
 /// Complete the parsed command with additional information such as comment, line numbers, etc.
 #[derive(Debug, Clone)]

@@ -35,7 +35,7 @@ fn test_macro_with_command() {
 
 #[test]
 fn test_macro_complex() {
-   let input = r#"
+    let input = r#"
 AC_COMPILE_IFELSE([
     AC_LANG_SOURCE([example_feature int v;]) ], [
     AC_DEFINE([FEATURE_TYPE], [example_feature], [Feature specifier]) ], [

@@ -104,7 +104,7 @@ impl std::fmt::Debug for M4Type {
 
 /// Represents an argument of m4 macro call.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum M4Argument<W, C> {
+pub enum M4Argument<C, W> {
     /// raw literal
     Literal(String),
     /// a shell word, likes a parsed version of the literal
@@ -127,27 +127,27 @@ pub enum M4Argument<W, C> {
 /// 1. CompoundCommand
 /// 2. SimpleWord
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct M4Macro<W, C> {
+pub struct M4Macro<C, W> {
     /// m4 macro name
     pub name: String,
     /// m4 macro arguments
-    pub args: Vec<M4Argument<W, C>>,
+    pub args: Vec<M4Argument<C, W>>,
     /// side effects from the call
     pub effects: Option<SideEffect>,
     /// original m4 macro name if an alternative macro was adopted
     pub original_name: Option<String>,
 }
 
-impl<W, C> M4Macro<W, C> {
+impl<C, W> M4Macro<C, W> {
     /// Create a new M4 macro call node.
-    pub fn new(name: String, args: Vec<M4Argument<W, C>>) -> Self {
+    pub fn new(name: String, args: Vec<M4Argument<C, W>>) -> Self {
         Self::new_with_side_effect(name, args, None, None)
     }
 
     /// Create a new M4 macro call node with information about side effects.
     pub fn new_with_side_effect(
         name: String,
-        args: Vec<M4Argument<W, C>>,
+        args: Vec<M4Argument<C, W>>,
         effects: Option<SideEffect>,
         original_name: Option<String>,
     ) -> Self {

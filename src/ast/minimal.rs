@@ -1,13 +1,13 @@
 //! Defines minimal representations of the shell source.
 use super::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
-use crate::m4_macro::M4Macro;
+use crate::{ast::{map_arith, map_param}, m4_macro::M4Macro};
 use std::fmt;
 
 /// Represents the smallest fragment of any text.
 ///
 /// Generic over the representation of a literals, parameters, and substitutions.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum WordFragment<L, W, C> {
+pub enum WordFragment<L, C, W> {
     /// A non-special literal word.
     Literal(L),
     /// A list of simple words concatenated by double quotes.
@@ -19,7 +19,7 @@ pub enum WordFragment<L, W, C> {
     /// Access of a value inside a parameter, e.g. `$foo` or `$$`.
     Param(Parameter<L>),
     /// A parameter substitution, e.g. `${param-word}`.
-    Subst(Box<ParameterSubstitution<Parameter<L>, W, C, Arithmetic<L>>>),
+    Subst(Box<ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>>),
     /// Represents `*`, useful for handling pattern expansions.
     Star,
     /// Represents `?`, useful for handling pattern expansions.
@@ -33,31 +33,20 @@ pub enum WordFragment<L, W, C> {
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
     /// m4 macro call to be expanded to a literal
-    Macro(M4Macro<W, C>),
+    Macro(M4Macro<C, W>),
 }
+
+type DefaultParameterSubstitution<L, C, W> = ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>;
 
 /// A collection of simple words, wrapping a vector of `WordFragment`
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Word<T, C> {
+pub enum Word<L, C> {
     /// A word composed of multiple fragments concatenated together
-    Concat(Vec<WordFragment<T, Self, C>>),
+    Concat(Vec<WordFragment<L, C, Self>>),
     /// A word containing exactly one fragment
-    Single(WordFragment<T, Self, C>),
+    Single(WordFragment<L, C, Self>),
     /// A word which is equivalent to an empty strng, such as '', "".
     Empty,
-}
-
-impl<T, C> Word<T, C>
-where
-    T: PartialEq<str>,
-{
-    /// return true if the word is literal and equal to the given literal.
-    pub fn is_literal(&self, literal: &str) -> bool {
-        match self {
-            Word::Single(WordFragment::Literal(s)) if s == literal => true,
-            _ => false,
-        }
-    }
 }
 
 /// Operators used to compare words or check file properties.
@@ -90,7 +79,7 @@ pub enum Operator<W> {
 /// Represents a condition for control flow, which can be a single operator-based
 /// condition, a logical combination of conditions, or an evaluated word.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Condition<W, C> {
+pub enum Condition<C, W> {
     /// A single condition based on an operator.
     Cond(Operator<W>),
     /// Logical AND of two conditions.
@@ -105,9 +94,9 @@ pub enum Condition<W, C> {
 
 /// A pairing of a condition (guard) with a block of commands (body).
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct GuardBodyPair<W, C> {
+pub struct GuardBodyPair<C, W> {
     /// The condition to evaluate.
-    pub condition: Condition<W, C>,
+    pub condition: Condition<C, W>,
     /// The commands to execute if the condition evaluates to true.
     pub body: Vec<C>,
 }
@@ -115,19 +104,19 @@ pub struct GuardBodyPair<W, C> {
 /// Represents a compound command which includes control flow constructs such as loops,
 /// conditionals, case statements, and background execution.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum CompoundCommand<W, C> {
+pub enum CompoundCommand<C, W> {
     /// A group of commands that should be executed in the current environment.
     Brace(Vec<C>),
     /// A group of commands that should be executed in a subshell environment.
     Subshell(Vec<C>),
     /// A while loop, represented as a guard-body pair.
-    While(GuardBodyPair<W, C>),
+    While(GuardBodyPair<C, W>),
     /// A until loop, represented as a guard-body pair.
-    Until(GuardBodyPair<W, C>),
+    Until(GuardBodyPair<C, W>),
     /// An if statement with one or more conditionals and an optional else branch.
     If {
         /// List of guard-body pairs for the if/else-if branches.
-        conditionals: Vec<GuardBodyPair<W, C>>,
+        conditionals: Vec<GuardBodyPair<C, W>>,
         /// Commands to execute if none of the conditions are met (else branch).
         else_branch: Vec<C>,
     },
@@ -145,12 +134,12 @@ pub enum CompoundCommand<W, C> {
         /// The word to match against the provided patterns.
         word: W,
         /// A list of pattern-body pairs.
-        arms: Vec<PatternBodyPair<W, C>>,
+        arms: Vec<PatternBodyPair<C, W>>,
     },
     /// Executes a command if a condition holds (logical AND).
-    And(Condition<W, C>, Box<C>),
+    And(Condition<C, W>, Box<C>),
     /// Executes a command if a condition holds (logical OR).
-    Or(Condition<W, C>, Box<C>),
+    Or(Condition<C, W>, Box<C>),
     /// Executes commands connecting stdout/in via a pipe.
     Pipe(bool, Vec<C>),
     /// A command with associated redirections.
@@ -165,7 +154,7 @@ pub enum CompoundCommand<W, C> {
         body: Box<C>,
     },
     /// A macro call utilizing M4 macros.
-    Macro(M4Macro<W, C>),
+    Macro(M4Macro<C, W>),
 }
 
 /// Complete the parsed command with additional information such as comment, line numbers, etc.
@@ -210,7 +199,7 @@ pub enum Command<V> {
     /// An assignment command that associates a value with a variable.
     Assignment(V, Word<V, CommandWrapper<V>>),
     /// A compound command such as loops, conditionals, or case statements.
-    Compound(CompoundCommand<Word<V, CommandWrapper<V>>, CommandWrapper<V>>),
+    Compound(CompoundCommand<CommandWrapper<V>, Word<V, CommandWrapper<V>>>),
     /// A simple command represented by a sequence of words.
     Cmd(Vec<Word<V, CommandWrapper<V>>>),
 }
@@ -237,7 +226,7 @@ where
     }
 }
 
-impl<W, C> fmt::Display for Condition<W, C>
+impl<C, W> fmt::Display for Condition<C, W>
 where
     W: fmt::Display,
     C: fmt::Display,

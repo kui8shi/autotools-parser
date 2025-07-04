@@ -36,11 +36,26 @@ pub enum Parameter<T> {
     Var(T),
 }
 
+pub(crate) fn map_param<T: From<String>>(kind: DefaultParameter) -> Parameter<T> {
+    use crate::ast::Parameter::*;
+    match kind {
+        At => At,
+        Star => Star,
+        Pound => Pound,
+        Question => Question,
+        Dash => Dash,
+        Dollar => Dollar,
+        Bang => Bang,
+        Positional(p) => Positional(p),
+        Var(v) => Var(v.into()),
+    }
+}
+
 /// Type alias for the default `ParameterSubstitution` representation.
 pub type DefaultParameterSubstitution = ParameterSubstitution<
     DefaultParameter,
-    TopLevelWord<String>,
     TopLevelCommand<String>,
+    TopLevelWord<String>,
     DefaultArithmetic,
 >;
 
@@ -49,7 +64,7 @@ pub type DefaultParameterSubstitution = ParameterSubstitution<
 /// Generic over the representations of parameters, shell words and
 /// commands, and arithmetic expansions.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ParameterSubstitution<P, W, C, A> {
+pub enum ParameterSubstitution<P, C, W, A> {
     /// Returns the standard output of running a command, e.g. `$(cmd)`
     Command(Vec<C>),
     /// Returns the length of the value of a parameter, e.g. `${#param}`
@@ -87,7 +102,7 @@ pub enum ParameterSubstitution<P, W, C, A> {
 }
 
 /*
-impl<P, W, C, A> Display for ParameterSubstitution<P, W, C, A>
+impl<P, C, W, A> Display for ParameterSubstitution<P, C, W, A>
 where
     P: Display,
     W: Display,
@@ -98,14 +113,14 @@ where
 */
 
 /// A type alias for the default hiearchy for representing shell words.
-pub type ShellWord<T, W, C> = ComplexWord<
+pub type ShellWord<T, C, W> = ComplexWord<
     Word<
         T,
         SimpleWord<
             T,
             Parameter<T>,
-            Box<ParameterSubstitution<Parameter<T>, W, C, Arithmetic<T>>>,
-            M4Macro<W, C>,
+            Box<ParameterSubstitution<Parameter<T>, C, W, Arithmetic<T>>>,
+            M4Macro<C, W>,
         >,
     >,
 >;
@@ -176,7 +191,7 @@ pub enum SimpleWord<L, P, S, M> {
 }
 
 /// Type alias for the default `M4Macro` representation.
-pub type DefaultM4Macro = M4Macro<TopLevelWord<String>, TopLevelCommand<String>>;
+pub type DefaultM4Macro = M4Macro<TopLevelCommand<String>, TopLevelWord<String>>;
 
 /// Type alias for the default `Redirect` representation.
 pub type DefaultRedirect = Redirect<TopLevelWord<String>>;
@@ -216,7 +231,7 @@ pub struct GuardBodyPair<C> {
 
 /// A grouping of patterns and body commands.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct PatternBodyPair<W, C> {
+pub struct PatternBodyPair<C, W> {
     /// Pattern alternatives to match against.
     pub patterns: Vec<W>,
     /// The body commands to execute if the pattern matches.
@@ -243,31 +258,31 @@ pub enum Command<T> {
 ///
 /// Generic over the representation of literals, shell words, commands, and redirects.
 /// Uses `Rc` wrappers around function declarations.
-pub type CommandList<T, W, C> = AndOrList<ListableCommand<ShellPipeableCommand<T, W, C>>>;
+pub type CommandList<T, C, W> = AndOrList<ListableCommand<ShellPipeableCommand<T, C, W>>>;
 
 /// A type alias over an and/or list of conventional shell commands.
 ///
 /// Generic over the representation of literals, shell words, commands, and redirects.
 /// Uses `Arc` wrappers around function declarations.
-pub type AtomicCommandList<T, W, C> =
-    AndOrList<ListableCommand<AtomicShellPipeableCommand<T, W, C>>>;
+pub type AtomicCommandList<T, C, W> =
+    AndOrList<ListableCommand<AtomicShellPipeableCommand<T, C, W>>>;
 
 /// A type alias for the default hiearchy to represent pipeable commands,
 /// using `Rc` wrappers around function declarations.
-pub type ShellPipeableCommand<T, W, C> = PipeableCommand<
+pub type ShellPipeableCommand<T, C, W> = PipeableCommand<
     T,
     Box<SimpleCommand<T, W, Redirect<W>>>,
-    Box<ShellCompoundCommand<T, W, C>>,
-    Rc<ShellCompoundCommand<T, W, C>>,
+    Box<ShellCompoundCommand<T, C, W>>,
+    Rc<ShellCompoundCommand<T, C, W>>,
 >;
 
 /// A type alias for the default hiearchy to represent pipeable commands,
 /// using `Arc` wrappers around function declarations.
-pub type AtomicShellPipeableCommand<T, W, C> = PipeableCommand<
+pub type AtomicShellPipeableCommand<T, C, W> = PipeableCommand<
     T,
     Box<SimpleCommand<T, W, Redirect<W>>>,
-    Box<ShellCompoundCommand<T, W, C>>,
-    Arc<ShellCompoundCommand<T, W, C>>,
+    Box<ShellCompoundCommand<T, C, W>>,
+    Arc<ShellCompoundCommand<T, C, W>>,
 >;
 
 /// A command which conditionally runs based on the exit status of the previous command.
@@ -310,7 +325,7 @@ pub enum ListableCommand<T> {
 
 /// Type alias for the default `PipeableCommand` representation.
 pub type DefaultPipeableCommand =
-    ShellPipeableCommand<String, TopLevelWord<String>, TopLevelCommand<String>>;
+    ShellPipeableCommand<String, TopLevelCommand<String>, TopLevelWord<String>>;
 
 /// Commands that can be used within a pipeline.
 ///
@@ -329,11 +344,11 @@ pub enum PipeableCommand<N, S, C, F> {
 }
 
 /// A type alias for the default hiearchy for representing compound shell commands.
-pub type ShellCompoundCommand<T, W, C> = CompoundCommand<CompoundCommandKind<T, W, C>, Redirect<W>>;
+pub type ShellCompoundCommand<T, C, W> = CompoundCommand<CompoundCommandKind<T, C, W>, Redirect<W>>;
 
 /// Type alias for the default `CompoundCommandKind` representation.
 pub type DefaultCompoundCommand =
-    ShellCompoundCommand<String, TopLevelWord<String>, TopLevelCommand<String>>;
+    ShellCompoundCommand<String, TopLevelCommand<String>, TopLevelWord<String>>;
 
 /// A class of commands where redirection is applied to a command group.
 ///
@@ -349,13 +364,13 @@ pub struct CompoundCommand<T, R> {
 
 /// Type alias for the default `CompoundCommandKind` representation.
 pub type DefaultCompoundCommandKind =
-    CompoundCommandKind<String, TopLevelWord<String>, TopLevelCommand<String>>;
+    CompoundCommandKind<String, TopLevelCommand<String>, TopLevelWord<String>>;
 
 /// A specific kind of a `CompoundCommand`.
 ///
 /// Generic over the representation of shell words and commands.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum CompoundCommandKind<V, W, C> {
+pub enum CompoundCommandKind<V, C, W> {
     /// A group of commands that should be executed in the current environment.
     Brace(Vec<C>),
     /// A group of commands that should be executed in a subshell environment.
@@ -389,14 +404,14 @@ pub enum CompoundCommandKind<V, W, C> {
         /// The word on which to check for pattern matches.
         word: W,
         /// The arms to match against.
-        arms: Vec<PatternBodyPair<W, C>>,
+        arms: Vec<PatternBodyPair<C, W>>,
     },
     /// @kui8shi
     /// Actually the commands expanded by m4 macro call is not pipeable nor listable in most cases.
     /// But if we were going to place this variant on the higher layers, we have to bypass
     /// the complex type relationships, especially the part that abstracts away words
     /// and commands generics from `Command` struct. I think here is the best position.
-    Macro(M4Macro<W, C>),
+    Macro(M4Macro<C, W>),
 }
 
 /// Represents a parsed redirect or a defined environment variable at the start
@@ -522,14 +537,56 @@ pub enum Arithmetic<T> {
     Sequence(Vec<Arithmetic<T>>),
 }
 
+pub(crate) fn map_arith<T: From<String>>(kind: DefaultArithmetic) -> Arithmetic<T> {
+    use crate::ast::Arithmetic::*;
+    match kind {
+        Var(v) => Var(v.into()),
+        Literal(l) => Literal(l),
+        Pow(a, b) => Pow(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        PostIncr(p) => PostIncr(p.into()),
+        PostDecr(p) => PostDecr(p.into()),
+        PreIncr(p) => PreIncr(p.into()),
+        PreDecr(p) => PreDecr(p.into()),
+        UnaryPlus(a) => UnaryPlus(Box::new(map_arith(*a))),
+        UnaryMinus(a) => UnaryMinus(Box::new(map_arith(*a))),
+        LogicalNot(a) => LogicalNot(Box::new(map_arith(*a))),
+        BitwiseNot(a) => BitwiseNot(Box::new(map_arith(*a))),
+        Mult(a, b) => Mult(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Div(a, b) => Div(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Modulo(a, b) => Modulo(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Add(a, b) => Add(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Sub(a, b) => Sub(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        ShiftLeft(a, b) => ShiftLeft(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        ShiftRight(a, b) => ShiftRight(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Less(a, b) => Less(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        LessEq(a, b) => LessEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Great(a, b) => Great(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        GreatEq(a, b) => GreatEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Eq(a, b) => Eq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        NotEq(a, b) => NotEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        BitwiseAnd(a, b) => BitwiseAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        BitwiseXor(a, b) => BitwiseXor(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        BitwiseOr(a, b) => BitwiseOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        LogicalAnd(a, b) => LogicalAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        LogicalOr(a, b) => LogicalOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
+        Ternary(a, b, c) => Ternary(
+            Box::new(map_arith(*a)),
+            Box::new(map_arith(*b)),
+            Box::new(map_arith(*c)),
+        ),
+        Assign(v, a) => Assign(v.into(), Box::new(map_arith(*a))),
+        Sequence(ariths) => Sequence(ariths.into_iter().map(map_arith).collect()),
+    }
+}
+
 macro_rules! impl_top_level_cmd {
     ($(#[$attr:meta])* pub struct $Cmd:ident, $CmdList:ident, $Word:ident) => {
         $(#[$attr])*
         #[derive(Debug, PartialEq, Eq, Clone)]
-        pub struct $Cmd<T>(pub Command<$CmdList<T, $Word<T>, $Cmd<T>>>);
+        pub struct $Cmd<T>(pub Command<$CmdList<T, $Cmd<T>, $Word<T>>>);
 
         impl<T> ops::Deref for $Cmd<T> {
-            type Target = Command<$CmdList<T, $Word<T>, $Cmd<T>>>;
+            type Target = Command<$CmdList<T, $Cmd<T>, $Word<T>>>;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
@@ -542,15 +599,15 @@ macro_rules! impl_top_level_cmd {
             }
         }
 
-        impl<T> PartialEq<Command<$CmdList<T, $Word<T>, $Cmd<T>>>> for $Cmd<T> where T: PartialEq<T>
+        impl<T> PartialEq<Command<$CmdList<T, $Cmd<T>, $Word<T>>>> for $Cmd<T> where T: PartialEq<T>
         {
-            fn eq(&self, other: &Command<$CmdList<T, $Word<T>, $Cmd<T>>>) -> bool {
+            fn eq(&self, other: &Command<$CmdList<T, $Cmd<T>, $Word<T>>>) -> bool {
                 &self.0 == other
             }
         }
 
-        impl<T> From<Command<$CmdList<T, $Word<T>, $Cmd<T>>>> for $Cmd<T> {
-            fn from(inner: Command<$CmdList<T, $Word<T>, $Cmd<T>>>) -> Self {
+        impl<T> From<Command<$CmdList<T, $Cmd<T>, $Word<T>>>> for $Cmd<T> {
+            fn from(inner: Command<$CmdList<T, $Cmd<T>, $Word<T>>>) -> Self {
                 $Cmd(inner)
             }
         }
@@ -580,13 +637,13 @@ impl_top_level_cmd! {
 }
 
 macro_rules! impl_top_level_word {
-    ($(#[$attr:meta])* pub struct $Word:ident, $Cmd:ident) => {
+    ($(#[$attr:meta])* $Cmd:ident, pub struct $Word:ident) => {
         $(#[$attr])*
         #[derive(Debug, PartialEq, Eq, Clone)]
-        pub struct $Word<T>(pub ShellWord<T, $Word<T>, $Cmd<T>>);
+        pub struct $Word<T>(pub ShellWord<T, $Cmd<T>, $Word<T>>);
 
         impl<T> ops::Deref for $Word<T> {
-            type Target = ShellWord<T, $Word<T>, $Cmd<T>>;
+            type Target = ShellWord<T, $Cmd<T>, $Word<T>>;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
@@ -599,14 +656,14 @@ macro_rules! impl_top_level_word {
             }
         }
 
-        impl<T> PartialEq<ShellWord<T, $Word<T>, $Cmd<T>>> for $Word<T> where T: PartialEq<T> {
-            fn eq(&self, other: &ShellWord<T, $Word<T>, $Cmd<T>>) -> bool {
+        impl<T> PartialEq<ShellWord<T, $Cmd<T>, $Word<T>>> for $Word<T> where T: PartialEq<T> {
+            fn eq(&self, other: &ShellWord<T, $Cmd<T>, $Word<T>>) -> bool {
                 &self.0 == other
             }
         }
 
-        impl<T> From<ShellWord<T, $Word<T>, $Cmd<T>>> for $Word<T> {
-            fn from(inner: ShellWord<T, $Word<T>, $Cmd<T>>) -> Self {
+        impl<T> From<ShellWord<T, $Cmd<T>, $Word<T>>> for $Word<T> {
+            fn from(inner: ShellWord<T, $Cmd<T>, $Word<T>>) -> Self {
                 $Word(inner)
             }
         }
@@ -619,8 +676,8 @@ impl_top_level_word! {
     /// This wrapper unifies the provided top-level word representation,
     /// `ComplexWord`, and the top-level command representation, `Command`,
     /// while allowing them to be generic on their own.
-    pub struct TopLevelWord,
-    TopLevelCommand
+    TopLevelCommand,
+    pub struct TopLevelWord
 }
 
 impl_top_level_word! {
@@ -629,8 +686,8 @@ impl_top_level_word! {
     /// This wrapper unifies the provided top-level word representation,
     /// `ComplexWord`, and the top-level command representation, `Command`,
     /// while allowing them to be generic on their own.
-    pub struct AtomicTopLevelWord,
-    AtomicTopLevelCommand
+    AtomicTopLevelCommand,
+    pub struct AtomicTopLevelWord
 }
 
 impl<W: fmt::Display> fmt::Display for Redirect<W> {
@@ -762,7 +819,7 @@ impl<T: fmt::Display> fmt::Display for Parameter<T> {
     }
 }
 
-impl<T, W, C, A> fmt::Display for ParameterSubstitution<Parameter<T>, W, C, A>
+impl<T, C, W, A> fmt::Display for ParameterSubstitution<Parameter<T>, C, W, A>
 where
     T: fmt::Display,
     W: fmt::Display,

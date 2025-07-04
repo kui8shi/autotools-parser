@@ -1,12 +1,13 @@
 //! AST builder for node representations
 use std::fmt::Debug;
 
-use crate::ast::builder::{compress, WordKind};
+use crate::ast::builder::{compress, QuoteKind};
 use crate::ast::minimal::WordFragment;
 use crate::ast::node::Word;
 use crate::ast::node::{Node, NodeId, NodeKind};
 use crate::ast::{
-    Arithmetic, DefaultArithmetic, DefaultParameter, Parameter, ParameterSubstitution,
+    map_arith, map_param,
+    ParameterSubstitution,
 };
 use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
@@ -19,9 +20,9 @@ use crate::{
 
 use super::minimal_builder::parse_condition;
 use super::{
-    Builder, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments,
-    GuardBodyPairGroup, IfFragments, LoopKind, Newline, RedirectKind, SeparatorKind,
-    SimpleWordKind,
+    BuilderBase, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments,
+    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, M4WordKind, Newline, RedirectKind,
+    SeparatorKind, ShellBuilder, WordKind,
 };
 use slab::Slab;
 
@@ -54,20 +55,63 @@ impl<L> NodeBuilder<L> {
     }
 }
 
-impl<T> Builder for NodeBuilder<T>
-where
-    T: Into<String> + From<String> + Clone + Debug,
-{
+impl<T> BuilderBase for NodeBuilder<T> {
     type Command = NodeId;
-    type CommandList = Self::Command;
-    type ListableCommand = Self::Command;
-    type PipeableCommand = Self::Command;
     type CompoundCommand = NodeId;
     type Word = Word<T>;
     type Redirect = Redirect<Self::Word>;
     type Error = BuilderError;
-    type M4Macro = M4Macro<Self::Word, Self::Command>;
-    type M4Argument = M4Argument<Self::Word, Self::Command>;
+}
+
+impl<T> M4Builder for NodeBuilder<T>
+where
+    T: Into<String> + From<String> + Clone + Debug,
+{
+    type M4Macro = M4Macro<Self::Command, Self::Word>;
+    type M4Argument = M4Argument<Self::Command, Self::Word>;
+
+    fn macro_into_compound_command(
+        &mut self,
+        macro_call: M4Macro<Self::Command, Self::Word>,
+        redirects: Vec<Self::Redirect>,
+    ) -> Result<Self::CompoundCommand, Self::Error> {
+        let mut cmd = self.new_node(NodeKind::Macro(macro_call));
+        if !redirects.is_empty() {
+            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
+        }
+        Ok(cmd)
+    }
+
+    fn macro_into_word(
+        &mut self,
+        macro_call: Self::M4Macro,
+    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+        Ok(M4WordKind::Macro(macro_call.name.to_string(), macro_call))
+    }
+
+    fn macro_call(
+        &mut self,
+        name: String,
+        args: Vec<M4Argument<Self::Command, Self::Word>>,
+        effects: Option<SideEffect>,
+        original_name: Option<String>,
+    ) -> Result<Self::M4Macro, Self::Error> {
+        Ok(M4Macro::new_with_side_effect(
+            name,
+            args,
+            effects,
+            original_name,
+        ))
+    }
+}
+
+impl<T> ShellBuilder for NodeBuilder<T>
+where
+    T: Into<String> + From<String> + Clone + Debug,
+{
+    type CommandList = Self::Command;
+    type ListableCommand = Self::Command;
+    type PipeableCommand = Self::Command;
 
     /// Constructs a `Command::Job` node with the provided inputs if the command
     /// was delimited by an ampersand or the command itself otherwise.
@@ -310,7 +354,7 @@ where
     /// Constructs a `CompoundCommand::For` node with the provided inputs.
     fn for_command(
         &mut self,
-        fragments: ForFragments<Self::Word, Self::Command>,
+        fragments: ForFragments<Self::Command, Self::Word>,
         mut redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
         let words = fragments
@@ -339,7 +383,7 @@ where
     /// Constructs a `CompoundCommand::Case` node with the provided inputs.
     fn case_command(
         &mut self,
-        fragments: CaseFragments<Self::Word, Self::Command>,
+        fragments: CaseFragments<Self::Command, Self::Word>,
         mut redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
         let arms = fragments
@@ -386,43 +430,6 @@ where
         Ok(self.new_node(NodeKind::FunctionDef { name, body }))
     }
 
-    fn macro_into_compound_command(
-        &mut self,
-        macro_call: M4Macro<Self::Word, Self::Command>,
-        redirects: Vec<Self::Redirect>,
-    ) -> Result<Self::CompoundCommand, Self::Error> {
-        let mut cmd = self.new_node(NodeKind::Macro(macro_call));
-        if !redirects.is_empty() {
-            cmd = self.new_node(NodeKind::Redirect(cmd, redirects))
-        }
-        Ok(cmd)
-    }
-
-    fn macro_into_word(
-        &mut self,
-        macro_call: Self::M4Macro,
-    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(SimpleWordKind::Macro(
-            macro_call.name.to_string(),
-            macro_call,
-        ))
-    }
-
-    fn macro_call(
-        &mut self,
-        name: String,
-        args: Vec<M4Argument<Self::Word, Self::Command>>,
-        effects: Option<SideEffect>,
-        original_name: Option<String>,
-    ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(M4Macro::new_with_side_effect(
-            name,
-            args,
-            effects,
-            original_name,
-        ))
-    }
-
     /// Ignored by the builder.
     fn comments(&mut self, _comments: Vec<Newline>) -> Result<(), Self::Error> {
         Ok(())
@@ -431,7 +438,7 @@ where
     /// Constructs a `ast::Word` from the provided input.
     fn word(
         &mut self,
-        kind: ComplexWordKind<Self::Command, Self::M4Macro>,
+        kind: ComplexWordKind<Self::Command, Self::Word>,
     ) -> Result<Self::Word, Self::Error> {
         macro_rules! map {
             ($pat:expr) => {
@@ -442,83 +449,25 @@ where
             };
         }
 
-        fn map_arith<T: From<String>>(kind: DefaultArithmetic) -> Arithmetic<T> {
-            use crate::ast::Arithmetic::*;
-            match kind {
-                Var(v) => Var(v.into()),
-                Literal(l) => Literal(l),
-                Pow(a, b) => Pow(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                PostIncr(p) => PostIncr(p.into()),
-                PostDecr(p) => PostDecr(p.into()),
-                PreIncr(p) => PreIncr(p.into()),
-                PreDecr(p) => PreDecr(p.into()),
-                UnaryPlus(a) => UnaryPlus(Box::new(map_arith(*a))),
-                UnaryMinus(a) => UnaryMinus(Box::new(map_arith(*a))),
-                LogicalNot(a) => LogicalNot(Box::new(map_arith(*a))),
-                BitwiseNot(a) => BitwiseNot(Box::new(map_arith(*a))),
-                Mult(a, b) => Mult(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Div(a, b) => Div(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Modulo(a, b) => Modulo(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Add(a, b) => Add(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Sub(a, b) => Sub(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                ShiftLeft(a, b) => ShiftLeft(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                ShiftRight(a, b) => ShiftRight(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Less(a, b) => Less(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LessEq(a, b) => LessEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Great(a, b) => Great(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                GreatEq(a, b) => GreatEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Eq(a, b) => Eq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                NotEq(a, b) => NotEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseAnd(a, b) => BitwiseAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseXor(a, b) => BitwiseXor(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseOr(a, b) => BitwiseOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LogicalAnd(a, b) => LogicalAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LogicalOr(a, b) => LogicalOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Ternary(a, b, c) => Ternary(
-                    Box::new(map_arith(*a)),
-                    Box::new(map_arith(*b)),
-                    Box::new(map_arith(*c)),
-                ),
-                Assign(v, a) => Assign(v.into(), Box::new(map_arith(*a))),
-                Sequence(ariths) => Sequence(ariths.into_iter().map(map_arith).collect()),
-            }
-        }
-
-        let map_param = |kind: DefaultParameter| -> Parameter<T> {
-            use crate::ast::Parameter::*;
-            match kind {
-                At => At,
-                Star => Star,
-                Pound => Pound,
-                Question => Question,
-                Dash => Dash,
-                Dollar => Dollar,
-                Bang => Bang,
-                Positional(p) => Positional(p),
-                Var(v) => Var(v.into()),
-            }
-        };
-
         let mut map_simple = |kind| {
             use crate::ast::builder::ParameterSubstitutionKind::*;
 
             let simple = match kind {
-                SimpleWordKind::Literal(s) => WordFragment::Literal(s.into()),
-                SimpleWordKind::Escaped(s) => WordFragment::Escaped(s.into()),
-                SimpleWordKind::Param(p) => WordFragment::Param(map_param(p)),
-                SimpleWordKind::Star => WordFragment::Star,
-                SimpleWordKind::Question => WordFragment::Question,
-                SimpleWordKind::SquareOpen => WordFragment::SquareOpen,
-                SimpleWordKind::SquareClose => WordFragment::SquareClose,
-                SimpleWordKind::Tilde => WordFragment::Tilde,
-                SimpleWordKind::Colon => WordFragment::Colon,
-                SimpleWordKind::Macro(_, m) => WordFragment::Macro(m),
+                WordKind::Literal(s) => WordFragment::Literal(s.into()),
+                WordKind::Escaped(s) => WordFragment::Escaped(s.into()),
+                WordKind::Param(p) => WordFragment::Param(map_param(p)),
+                WordKind::Star => WordFragment::Star,
+                WordKind::Question => WordFragment::Question,
+                WordKind::SquareOpen => WordFragment::SquareOpen,
+                WordKind::SquareClose => WordFragment::SquareClose,
+                WordKind::Tilde => WordFragment::Tilde,
+                WordKind::Colon => WordFragment::Colon,
 
-                SimpleWordKind::CommandSubst(c) => {
+                WordKind::CommandSubst(c) => {
                     WordFragment::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
                 }
 
-                SimpleWordKind::Subst(s) => {
+                WordKind::Subst(s) => {
                     // Force a move out of the boxed substitution. For some reason doing
                     // the deref in the match statment gives a strange borrow failure
                     let s = *s;
@@ -553,21 +502,27 @@ where
             Ok(simple)
         };
 
+        let mut map_m4_word = |kind| match kind {
+            M4WordKind::Word(w) => map_simple(w),
+            M4WordKind::Macro(_, m) => Ok(WordFragment::Macro(m)),
+        };
+
         let mut map_word = |kind| {
             let word = match kind {
-                WordKind::Simple(SimpleWordKind::Literal(s)) | WordKind::SingleQuoted(s)
+                QuoteKind::Simple(M4WordKind::Word(WordKind::Literal(s)))
+                | QuoteKind::SingleQuoted(s)
                     if s.is_empty() =>
                 {
                     None // empty string
                 }
-                WordKind::Simple(s) => Some(map_simple(s)?),
-                WordKind::SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
-                WordKind::DoubleQuoted(mut v) => match v.len() {
-                    0 => None,                                // empty string
-                    1 => Some(map_simple(v.pop().unwrap())?), // like "foo", "${foo}"
+                QuoteKind::Simple(s) => Some(map_m4_word(s)?),
+                QuoteKind::SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
+                QuoteKind::DoubleQuoted(mut v) => match v.len() {
+                    0 => None,                                 // empty string
+                    1 => Some(map_m4_word(v.pop().unwrap())?), // like "foo", "${foo}"
                     _ => Some(WordFragment::DoubleQuoted(
                         v.into_iter()
-                            .map(&mut map_simple)
+                            .map(&mut map_m4_word)
                             .collect::<Result<Vec<_>, _>>()?,
                     )),
                 },
@@ -612,7 +567,11 @@ impl<L> NodeBuilder<L>
 where
     L: Into<String> + Clone + Debug,
 {
-    fn make_condition(&mut self, cmd: NodeId) -> Result<Condition<Word<L>, NodeId>, BuilderError> {
+    fn make_condition(
+        &mut self,
+        cmd: NodeId,
+    ) -> Result<Condition<<Self as BuilderBase>::Command, <Self as BuilderBase>::Word>, BuilderError>
+    {
         let node = self.node_pop(cmd);
         match &node.kind {
             NodeKind::Cmd(words) => {

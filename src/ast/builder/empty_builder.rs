@@ -22,17 +22,47 @@ impl EmptyBuilder {
     }
 }
 
-impl Builder for EmptyBuilder {
+impl BuilderBase for EmptyBuilder {
     type Command = ();
-    type CommandList = ();
-    type ListableCommand = ();
-    type PipeableCommand = ();
     type CompoundCommand = ();
     type Word = ();
     type Redirect = ();
     type Error = Void;
+}
+
+impl M4Builder for EmptyBuilder {
     type M4Macro = ();
     type M4Argument = ();
+    fn macro_into_compound_command(
+        &mut self,
+        _macro_call: Self::M4Macro,
+        _redirects: Vec<Self::Redirect>,
+    ) -> Result<Self::CompoundCommand, Self::Error> {
+        Ok(())
+    }
+
+    fn macro_into_word(
+        &mut self,
+        _macro_call: Self::M4Macro,
+    ) -> Result<M4WordKind<Self::Command, Self::M4Macro>, Self::Error> {
+        Ok(M4WordKind::Word(WordKind::Colon))
+    }
+
+    fn macro_call(
+        &mut self,
+        _name: String,
+        _args: Vec<M4Argument<Self::Word, Self::Command>>,
+        _effects: Option<SideEffect>,
+        _original_name: Option<String>,
+    ) -> Result<Self::M4Macro, Self::Error> {
+        Ok(())
+    }
+}
+
+impl ShellBuilder for EmptyBuilder {
+    type CommandList = ();
+    type ListableCommand = ();
+    type PipeableCommand = ();
 
     fn complete_command(
         &mut self,
@@ -127,38 +157,13 @@ impl Builder for EmptyBuilder {
         Ok(())
     }
 
-    fn macro_into_compound_command(
-        &mut self,
-        _macro_call: Self::M4Macro,
-        _redirects: Vec<Self::Redirect>,
-    ) -> Result<Self::CompoundCommand, Self::Error> {
-        Ok(())
-    }
-
-    fn macro_into_word(
-        &mut self,
-        _macro_call: Self::M4Macro,
-    ) -> Result<SimpleWordKind<Self::Command, Self::M4Macro>, Self::Error> {
-        Ok(SimpleWordKind::Macro("".to_owned(), ()))
-    }
-
-    fn macro_call(
-        &mut self,
-        _name: String,
-        _args: Vec<M4Argument<Self::Word, Self::Command>>,
-        _effects: Option<SideEffect>,
-        _original_name: Option<String>,
-    ) -> Result<Self::M4Macro, Self::Error> {
-        Ok(())
-    }
-
     fn comments(&mut self, _comments: Vec<Newline>) -> Result<(), Self::Error> {
         Ok(())
     }
 
     fn word(
         &mut self,
-        _kind: ComplexWordKind<Self::Word, Self::Command>,
+        _kind: ComplexWordKind<Self::Command, Self::Word>,
     ) -> Result<Self::Word, Self::Error> {
         Ok(())
     }
