@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::lexer::Lexer;
 use crate::m4_macro::{get_macro, M4Type};
-use crate::parse::iter::{PeekableIterator, TokenIter, TokenIterWrapper};
+use crate::autoconf::iter::{PeekableIterator, TokenIter, TokenIterWrapper};
 use crate::token::Token;
 
 /// Configuration for quote rewriting

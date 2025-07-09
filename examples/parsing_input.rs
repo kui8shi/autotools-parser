@@ -1,5 +1,5 @@
 use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::MinimalParser;
+use autoconf_parser::autoconf::MinimalParser;
 use std::error::Error;
 
 use std::io::{stdin, Read};

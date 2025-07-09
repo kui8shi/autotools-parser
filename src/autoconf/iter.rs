@@ -1,6 +1,6 @@
 //! An module for easily iterating over a `Token` stream.
 
-use crate::parse::SourcePos;
+use crate::autoconf::SourcePos;
 use crate::token::Token;
 use crate::token::Token::*;
 use std::iter as std_iter;
@@ -729,7 +729,7 @@ impl<I: PeekablePositionIterator<Item = Token>> Iterator for BacktickBackslashRe
 #[cfg(test)]
 mod tests {
     use super::{PositionIterator, TokenIter, TokenOrPos};
-    use crate::parse::SourcePos;
+    use crate::autoconf::SourcePos;
     use crate::token::Token;
 
     #[test]

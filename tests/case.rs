@@ -2,7 +2,7 @@
 use autoconf_parser::ast::builder::*;
 use autoconf_parser::ast::Parameter;
 use autoconf_parser::ast::TopLevelCommand;
-use autoconf_parser::parse::ParseErrorKind::*;
+use autoconf_parser::autoconf::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;

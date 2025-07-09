@@ -2,7 +2,7 @@
 #![recursion_limit = "128"]
 
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::*;
+use autoconf_parser::autoconf::*;
 
 mod parse_support;
 use crate::parse_support::*;
