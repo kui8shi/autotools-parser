@@ -5,6 +5,7 @@
 
 use autoconf_parser::ast::Command::*;
 use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::PipeableCommand::*;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
@@ -13,15 +14,15 @@ use autoconf_parser::parse::*;
 use autoconf_parser::token::Token;
 
 pub fn lit(s: &str) -> DefaultWord {
-    Word::Simple(Literal(String::from(s)))
+    Word::Simple(Shell(Literal(String::from(s))))
 }
 
 pub fn escaped(s: &str) -> DefaultWord {
-    Word::Simple(Escaped(String::from(s)))
+    Word::Simple(Shell(Escaped(String::from(s))))
 }
 
 pub fn subst(s: DefaultParameterSubstitution) -> DefaultWord {
-    Word::Simple(Subst(Box::new(s)))
+    Word::Simple(Shell(Subst(Box::new(s))))
 }
 
 pub fn single_quoted(s: &str) -> TopLevelWord<String> {
@@ -30,12 +31,12 @@ pub fn single_quoted(s: &str) -> TopLevelWord<String> {
 
 pub fn double_quoted(s: &[&str]) -> TopLevelWord<String> {
     TopLevelWord(Single(Word::DoubleQuoted(
-        s.iter().map(|e| from_str(e)).collect(),
+        s.iter().map(|e| Shell(from_str(e))).collect(),
     )))
 }
 
 pub fn word(s: &str) -> TopLevelWord<String> {
-    TopLevelWord(Single(Word::Simple(from_str(s))))
+    TopLevelWord(Single(Word::Simple(Shell(from_str(s)))))
 }
 
 pub fn word_escaped(s: &str) -> TopLevelWord<String> {
@@ -47,7 +48,7 @@ pub fn word_subst(s: DefaultParameterSubstitution) -> TopLevelWord<String> {
 }
 
 pub fn word_param(p: DefaultParameter) -> TopLevelWord<String> {
-    TopLevelWord(Single(Word::Simple(Param(p))))
+    TopLevelWord(Single(Word::Simple(Shell(Param(p)))))
 }
 
 pub fn from_str(s: &str) -> DefaultSimpleWord {
@@ -79,7 +80,7 @@ pub fn from_str(s: &str) -> DefaultSimpleWord {
 
 pub fn concat_words(s: &[&str]) -> TopLevelWord<String> {
     TopLevelWord(Concat(
-        s.iter().map(|s| Word::Simple(from_str(s))).collect(),
+        s.iter().map(|s| Word::Simple(Shell(from_str(s)))).collect(),
     ))
 }
 
@@ -105,10 +106,9 @@ pub fn cmd_args_words(cmd: &str, args: &[TopLevelWord<String>]) -> Box<DefaultSi
 pub fn cmd_args_simple(cmd: &str, args: &[&str]) -> Box<DefaultSimpleCommand> {
     let mut cmd_args = Vec::with_capacity(args.len() + 1);
     cmd_args.push(RedirectOrCmdWord::CmdWord(word(cmd)));
-    cmd_args.extend(
-        args.iter()
-            .map(|&a| RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::Simple(from_str(a)))))),
-    );
+    cmd_args.extend(args.iter().map(|&a| {
+        RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::Simple(Shell(from_str(a))))))
+    }));
 
     Box::new(SimpleCommand {
         redirects_or_env_vars: vec![],

@@ -1,14 +1,11 @@
 //! AST builder for node representations
 use std::fmt::Debug;
 
-use crate::ast::builder::{compress, QuoteKind};
+use crate::ast::builder::QuoteWordKind;
 use crate::ast::minimal::WordFragment;
 use crate::ast::node::Word;
 use crate::ast::node::{Node, NodeId, NodeKind};
-use crate::ast::{
-    map_arith, map_param,
-    ParameterSubstitution,
-};
+use crate::ast::{map_arith, map_param, ParameterSubstitution};
 use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
     ast::{
@@ -20,8 +17,8 @@ use crate::{
 
 use super::minimal_builder::parse_condition;
 use super::{
-    BuilderBase, BuilderError, CaseFragments, CommandGroup, ComplexWordKind, ForFragments,
-    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, M4WordKind, Newline, RedirectKind,
+    BuilderBase, BuilderError, CaseFragments, CommandGroup, ConcatWordKind, ForFragments,
+    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, Newline, RedirectKind,
     SeparatorKind, ShellBuilder, WordKind,
 };
 use slab::Slab;
@@ -55,17 +52,18 @@ impl<L> NodeBuilder<L> {
     }
 }
 
-impl<T> BuilderBase for NodeBuilder<T> {
+impl<L> BuilderBase for NodeBuilder<L> {
     type Command = NodeId;
     type CompoundCommand = NodeId;
-    type Word = Word<T>;
+    type Word = Word<L>;
+    type WordFragment = WordFragment<L, Self::Command, Self::Word>;
     type Redirect = Redirect<Self::Word>;
     type Error = BuilderError;
 }
 
-impl<T> M4Builder for NodeBuilder<T>
+impl<L> M4Builder for NodeBuilder<L>
 where
-    T: Into<String> + From<String> + Clone + Debug,
+    L: Into<String> + From<String> + Clone + Debug,
 {
     type M4Macro = M4Macro<Self::Command, Self::Word>;
     type M4Argument = M4Argument<Self::Command, Self::Word>;
@@ -85,8 +83,8 @@ where
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
-        Ok(M4WordKind::Macro(macro_call.name.to_string(), macro_call))
+    ) -> Result<Self::WordFragment, Self::Error> {
+        Ok(WordFragment::Macro(macro_call))
     }
 
     fn macro_call(
@@ -105,9 +103,9 @@ where
     }
 }
 
-impl<T> ShellBuilder for NodeBuilder<T>
+impl<L> ShellBuilder for NodeBuilder<L>
 where
-    T: Into<String> + From<String> + Clone + Debug,
+    L: Into<String> + From<String> + Clone + Debug,
 {
     type CommandList = Self::Command;
     type ListableCommand = Self::Command;
@@ -435,11 +433,7 @@ where
         Ok(())
     }
 
-    /// Constructs a `ast::Word` from the provided input.
-    fn word(
-        &mut self,
-        kind: ComplexWordKind<Self::Command, Self::Word>,
-    ) -> Result<Self::Word, Self::Error> {
+    fn word_fragment(&mut self, kind: WordKind<Self::Command, Self::WordFragment>) -> Result<Self::WordFragment, Self::Error> {
         macro_rules! map {
             ($pat:expr) => {
                 match $pat {
@@ -448,94 +442,90 @@ where
                 }
             };
         }
+        use super::ParameterSubstitutionKind::*;
+        use super::WordKind::*;
 
-        let mut map_simple = |kind| {
-            use crate::ast::builder::ParameterSubstitutionKind::*;
+        let simple = match kind {
+            Literal(s) => WordFragment::Literal(s.into()),
+            Escaped(s) => WordFragment::Escaped(s.into()),
+            Param(p) => WordFragment::Param(map_param(p)),
+            Star => WordFragment::Star,
+            Question => WordFragment::Question,
+            SquareOpen => WordFragment::SquareOpen,
+            SquareClose => WordFragment::SquareClose,
+            Tilde => WordFragment::Tilde,
+            Colon => WordFragment::Colon,
 
-            let simple = match kind {
-                WordKind::Literal(s) => WordFragment::Literal(s.into()),
-                WordKind::Escaped(s) => WordFragment::Escaped(s.into()),
-                WordKind::Param(p) => WordFragment::Param(map_param(p)),
-                WordKind::Star => WordFragment::Star,
-                WordKind::Question => WordFragment::Question,
-                WordKind::SquareOpen => WordFragment::SquareOpen,
-                WordKind::SquareClose => WordFragment::SquareClose,
-                WordKind::Tilde => WordFragment::Tilde,
-                WordKind::Colon => WordFragment::Colon,
+            CommandSubst(c) => {
+                WordFragment::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
+            }
 
-                WordKind::CommandSubst(c) => {
-                    WordFragment::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
-                }
-
-                WordKind::Subst(s) => {
-                    // Force a move out of the boxed substitution. For some reason doing
-                    // the deref in the match statment gives a strange borrow failure
-                    let s = *s;
-                    let subst = match s {
-                        Len(p) => ParameterSubstitution::Len(map_param(p)),
-                        Command(c) => ParameterSubstitution::Command(c.commands),
-                        Arith(a) => ParameterSubstitution::Arith(a.map(map_arith)),
-                        Default(c, p, w) => {
-                            ParameterSubstitution::Default(c, map_param(p), map!(w))
-                        }
-                        Assign(c, p, w) => ParameterSubstitution::Assign(c, map_param(p), map!(w)),
-                        Error(c, p, w) => ParameterSubstitution::Error(c, map_param(p), map!(w)),
-                        Alternative(c, p, w) => {
-                            ParameterSubstitution::Alternative(c, map_param(p), map!(w))
-                        }
-                        RemoveSmallestSuffix(p, w) => {
-                            ParameterSubstitution::RemoveSmallestSuffix(map_param(p), map!(w))
-                        }
-                        RemoveLargestSuffix(p, w) => {
-                            ParameterSubstitution::RemoveLargestSuffix(map_param(p), map!(w))
-                        }
-                        RemoveSmallestPrefix(p, w) => {
-                            ParameterSubstitution::RemoveSmallestPrefix(map_param(p), map!(w))
-                        }
-                        RemoveLargestPrefix(p, w) => {
-                            ParameterSubstitution::RemoveLargestPrefix(map_param(p), map!(w))
-                        }
-                    };
-                    WordFragment::Subst(Box::new(subst))
-                }
-            };
-            Ok(simple)
+            Subst(s) => {
+                // Force a move out of the boxed substitution. For some reason doing
+                // the deref in the match statment gives a strange borrow failure
+                let s = *s;
+                let subst = match s {
+                    Len(p) => ParameterSubstitution::Len(map_param(p)),
+                    Command(c) => ParameterSubstitution::Command(c.commands),
+                    Arith(a) => ParameterSubstitution::Arith(a.map(map_arith)),
+                    Default(c, p, w) => ParameterSubstitution::Default(c, map_param(p), map!(w)),
+                    Assign(c, p, w) => ParameterSubstitution::Assign(c, map_param(p), map!(w)),
+                    Error(c, p, w) => ParameterSubstitution::Error(c, map_param(p), map!(w)),
+                    Alternative(c, p, w) => {
+                        ParameterSubstitution::Alternative(c, map_param(p), map!(w))
+                    }
+                    RemoveSmallestSuffix(p, w) => {
+                        ParameterSubstitution::RemoveSmallestSuffix(map_param(p), map!(w))
+                    }
+                    RemoveLargestSuffix(p, w) => {
+                        ParameterSubstitution::RemoveLargestSuffix(map_param(p), map!(w))
+                    }
+                    RemoveSmallestPrefix(p, w) => {
+                        ParameterSubstitution::RemoveSmallestPrefix(map_param(p), map!(w))
+                    }
+                    RemoveLargestPrefix(p, w) => {
+                        ParameterSubstitution::RemoveLargestPrefix(map_param(p), map!(w))
+                    }
+                };
+                WordFragment::Subst(Box::new(subst))
+            }
         };
+        Ok(simple)
+    }
 
-        let mut map_m4_word = |kind| match kind {
-            M4WordKind::Word(w) => map_simple(w),
-            M4WordKind::Macro(_, m) => Ok(WordFragment::Macro(m)),
-        };
-
-        let mut map_word = |kind| {
+    /// Constructs a `ast::Word` from the provided input.
+    fn word(
+        &mut self,
+        kind: ConcatWordKind<Self::WordFragment>,
+    ) -> Result<Self::Word, Self::Error> {
+        let map_quote_word = |kind: QuoteWordKind<WordFragment<L, _, _>>| {
+            use super::QuoteWordKind::*;
             let word = match kind {
-                QuoteKind::Simple(M4WordKind::Word(WordKind::Literal(s)))
-                | QuoteKind::SingleQuoted(s)
-                    if s.is_empty() =>
-                {
+                Simple(WordFragment::Literal(s)) if s.clone().into().is_empty() => {
                     None // empty string
                 }
-                QuoteKind::Simple(s) => Some(map_m4_word(s)?),
-                QuoteKind::SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
-                QuoteKind::DoubleQuoted(mut v) => match v.len() {
-                    0 => None,                                 // empty string
-                    1 => Some(map_m4_word(v.pop().unwrap())?), // like "foo", "${foo}"
-                    _ => Some(WordFragment::DoubleQuoted(
-                        v.into_iter()
-                            .map(&mut map_m4_word)
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
+                SingleQuoted(s) if s.is_empty() => {
+                    None // empty string
+                }
+                Simple(s) => Some(s),
+                SingleQuoted(s) => Some(WordFragment::Literal(s.into())),
+                DoubleQuoted(mut v) => match v.len() {
+                    0 => None,                   // empty string
+                    1 => Some(v.pop().unwrap()), // like "foo", "${foo}"
+                    _ => Some(WordFragment::DoubleQuoted(v)),
                 },
             };
             Ok(word)
         };
 
-        let word = match compress(kind) {
-            ComplexWordKind::Single(s) => map_word(s)?.map_or(Word::Empty, |w| Word::Single(w)),
-            ComplexWordKind::Concat(words) => Word::Concat(
+        let word = match kind {
+            ConcatWordKind::Single(s) => {
+                map_quote_word(s)?.map_or(Word::Empty, |w| Word::Single(w))
+            }
+            ConcatWordKind::Concat(words) => Word::Concat(
                 words
                     .into_iter()
-                    .map(map_word)
+                    .map(map_quote_word)
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()

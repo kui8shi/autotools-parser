@@ -71,7 +71,7 @@ fn test_redirect_valid_return_word_if_src_fd_is_definitely_non_numeric() {
     let mut p = make_parser("123$$'foo'>out");
     let correct = TopLevelWord(Concat(vec![
         lit("123"),
-        Word::Simple(Param(Parameter::Dollar)),
+        Word::Simple(MayM4::Shell(Param(Parameter::Dollar))),
         Word::SingleQuoted(String::from("foo")),
     ]));
     assert_eq!(Some(Err(correct)), p.redirect().unwrap());
@@ -106,7 +106,7 @@ fn test_redirect_valid_dup_return_redirect_if_dst_fd_is_possibly_numeric() {
         None,
         TopLevelWord(Concat(vec![
             lit("123"),
-            Word::Simple(Param(Parameter::Dollar)),
+            Word::Simple(MayM4::Shell(Param(Parameter::Dollar))),
             subst(ParameterSubstitution::Command(vec![cmd_args(
                 "echo",
                 &["2"],

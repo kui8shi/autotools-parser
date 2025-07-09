@@ -112,19 +112,6 @@ where
 }
 */
 
-/// A type alias for the default hiearchy for representing shell words.
-pub type ShellWord<T, C, W> = ComplexWord<
-    Word<
-        T,
-        SimpleWord<
-            T,
-            Parameter<T>,
-            Box<ParameterSubstitution<Parameter<T>, C, W, Arithmetic<T>>>,
-            M4Macro<C, W>,
-        >,
-    >,
->;
-
 /// Type alias for the default `ComplexWord` representation.
 pub type DefaultComplexWord = ComplexWord<DefaultWord>;
 
@@ -140,7 +127,7 @@ pub enum ComplexWord<W> {
 }
 
 /// Type alias for the default `Word` representation.
-pub type DefaultWord = Word<String, DefaultSimpleWord>;
+pub type DefaultWord = Word<String, M4Word<String, TopLevelCommand<String>, TopLevelWord<String>>>;
 
 /// Represents whitespace delimited single, double, or non quoted text.
 ///
@@ -158,13 +145,13 @@ pub enum Word<L, W> {
 
 /// Type alias for the default `SimpleWord` representation.
 pub type DefaultSimpleWord =
-    SimpleWord<String, DefaultParameter, Box<DefaultParameterSubstitution>, DefaultM4Macro>;
+    SimpleWord<String, DefaultParameter, Box<DefaultParameterSubstitution>>;
 
 /// Represents the smallest fragment of any text.
 ///
 /// Generic over the representation of a literals, parameters, and substitutions.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SimpleWord<L, P, S, M> {
+pub enum SimpleWord<L, P, S> {
     /// A non-special literal word.
     Literal(L),
     /// A token which normally has a special meaning is treated as a literal
@@ -186,8 +173,6 @@ pub enum SimpleWord<L, P, S, M> {
     Tilde,
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
-    /// m4 macro call to be expanded to a literal
-    Macro(M),
 }
 
 /// Type alias for the default `M4Macro` representation.
@@ -579,6 +564,15 @@ pub(crate) fn map_arith<T: From<String>>(kind: DefaultArithmetic) -> Arithmetic<
     }
 }
 
+/// Represents the nature of m4 macro which can be replaced to arbitrary shell components
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum MayM4<S, M> {
+    /// Normal syntax node
+    Shell(S),
+    /// M4 macro node
+    Macro(String, M),
+}
+
 macro_rules! impl_top_level_cmd {
     ($(#[$attr:meta])* pub struct $Cmd:ident, $CmdList:ident, $Word:ident) => {
         $(#[$attr])*
@@ -635,6 +629,31 @@ impl_top_level_cmd! {
     AtomicCommandList,
     AtomicTopLevelWord
 }
+
+/// A type alias for the default hiearchy for representing word fragments.
+pub type DefaultWordFragment = M4Word<String, TopLevelCommand<String>, TopLevelWord<String>>;
+
+type M4Word<L, C, W> = MayM4<
+    SimpleWord<L, Parameter<L>, Box<ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>>>,
+    M4Macro<C, W>,
+>;
+
+impl<L, C, W> Into<Option<String>> for M4Word<L, C, W>
+where
+    L: Into<String>,
+{
+    fn into(self) -> Option<String> {
+        use MayM4::*;
+        use SimpleWord::*;
+        match self {
+            Shell(Literal(s)) => Some(s.into()),
+            _ => None,
+        }
+    }
+}
+
+/// A type alias for the default hiearchy for representing shell words.
+pub type ShellWord<L, C, W> = ComplexWord<Word<L, M4Word<L, C, W>>>;
 
 macro_rules! impl_top_level_word {
     ($(#[$attr:meta])* $Cmd:ident, pub struct $Word:ident) => {
@@ -911,6 +930,7 @@ mod tests {
     #[test]
     fn test_display_parameter() {
         use super::ComplexWord::Single;
+        use super::MayM4::*;
         use super::Parameter::*;
         use super::SimpleWord::Param;
         use super::TopLevelWord;
@@ -934,7 +954,7 @@ mod tests {
 
         for p in params {
             let src = p.to_string();
-            let correct = TopLevelWord(Single(Simple(Param(p))));
+            let correct = TopLevelWord(Single(Simple(Shell(Param(p)))));
 
             let parsed = match DefaultParser::new(Lexer::new(src.chars())).word() {
                 Ok(Some(w)) => w,

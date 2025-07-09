@@ -24,6 +24,7 @@ macro_rules! default_builder {
      pub struct $Builder:ident,
      $CoreBuilder:ident,
      $Word:ident,
+     $WordFragment:ident,
      $Cmd:ident,
      $PipeableCmd:ident,
     ) => {
@@ -62,6 +63,7 @@ macro_rules! default_builder {
             type Command         = $Cmd<T>;
             type CompoundCommand = ShellCompoundCommand<T, Self::Command, Self::Word>;
             type Word            = $Word<T>;
+            type WordFragment    = $WordFragment<T, Self::Command, Self::Word>;
             type Redirect        = Redirect<Self::Word>;
             type Error           = Void;
         }
@@ -77,7 +79,9 @@ macro_rules! default_builder {
                 self.0.macro_into_compound_command(macro_call, redirects)
             }
 
-            fn macro_into_word(&mut self, macro_call: Self::M4Macro) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+            fn macro_into_word(&mut self,
+                               macro_call: Self::M4Macro
+            ) -> Result<Self::WordFragment, Self::Error> {
                 self.0.macro_into_word(macro_call)
             }
 
@@ -208,8 +212,15 @@ macro_rules! default_builder {
                 self.0.comments(comments)
             }
 
+            fn word_fragment(
+                &mut self,
+                kind: WordKind<Self::Command, Self::WordFragment>,
+            ) -> Result<Self::WordFragment, Self::Error> {
+                self.0.word_fragment(kind)
+            }
+
             fn word(&mut self,
-                    kind: ComplexWordKind<Self::Command, Self::Word>)
+                    kind: ConcatWordKind<Self::WordFragment>)
                 -> Result<Self::Word, Self::Error>
             {
                 self.0.word(kind)
@@ -234,6 +245,7 @@ default_builder! {
     pub struct DefaultBuilder,
     RcCoreBuilder,
     TopLevelWord,
+    M4Word,
     TopLevelCommand,
     ShellPipeableCommand,
 }
@@ -244,6 +256,7 @@ default_builder! {
     pub struct AtomicDefaultBuilder,
     ArcCoreBuilder,
     AtomicTopLevelWord,
+    M4Word,
     AtomicTopLevelCommand,
     AtomicShellPipeableCommand,
 }
@@ -302,10 +315,11 @@ type BuilderPipeableCommand<T, C, W, F> = PipeableCommand<
     F,
 >;
 
-impl<T, C, W, F> BuilderBase for AutoconfFullBuilderBase<T, C, W, F> {
+impl<L, C, W, F> BuilderBase for AutoconfFullBuilderBase<L, C, W, F> {
     type Command = C;
-    type CompoundCommand = ShellCompoundCommand<T, Self::Command, Self::Word>;
+    type CompoundCommand = ShellCompoundCommand<L, Self::Command, Self::Word>;
     type Word = W;
+    type WordFragment = M4Word<L, Self::Command, Self::Word>;
     type Redirect = Redirect<Self::Word>;
     type Error = Void;
 }
@@ -333,8 +347,8 @@ where
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
-        Ok(M4WordKind::Macro(macro_call.name.to_string(), macro_call))
+    ) -> Result<Self::WordFragment, Self::Error> {
+        Ok(MayM4::Macro(macro_call.name.to_string(), macro_call))
     }
 
     fn macro_call(
@@ -618,11 +632,11 @@ where
         Ok(())
     }
 
-    /// Constructs a `ast::Word` from the provided input.
-    fn word(
+    fn word_fragment(
         &mut self,
-        kind: ComplexWordKind<Self::Command, Self::Word>,
-    ) -> Result<Self::Word, Self::Error> {
+        kind: WordKind<Self::Command, Self::WordFragment>,
+    ) -> Result<Self::WordFragment, Self::Error> {
+        use crate::ast::builder::ParameterSubstitutionKind::*;
         macro_rules! map {
             ($pat:expr) => {
                 match $pat {
@@ -631,144 +645,79 @@ where
                 }
             };
         }
+        let simple = match kind {
+            WordKind::Literal(s) => SimpleWord::Literal(s.into()),
+            WordKind::Escaped(s) => SimpleWord::Escaped(s.into()),
+            WordKind::Param(p) => SimpleWord::Param(map_param(p)),
+            WordKind::Star => SimpleWord::Star,
+            WordKind::Question => SimpleWord::Question,
+            WordKind::SquareOpen => SimpleWord::SquareOpen,
+            WordKind::SquareClose => SimpleWord::SquareClose,
+            WordKind::Tilde => SimpleWord::Tilde,
+            WordKind::Colon => SimpleWord::Colon,
 
-        fn map_arith<T: From<String>>(kind: DefaultArithmetic) -> Arithmetic<T> {
-            use crate::ast::Arithmetic::*;
-            match kind {
-                Var(v) => Var(v.into()),
-                Literal(l) => Literal(l),
-                Pow(a, b) => Pow(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                PostIncr(p) => PostIncr(p.into()),
-                PostDecr(p) => PostDecr(p.into()),
-                PreIncr(p) => PreIncr(p.into()),
-                PreDecr(p) => PreDecr(p.into()),
-                UnaryPlus(a) => UnaryPlus(Box::new(map_arith(*a))),
-                UnaryMinus(a) => UnaryMinus(Box::new(map_arith(*a))),
-                LogicalNot(a) => LogicalNot(Box::new(map_arith(*a))),
-                BitwiseNot(a) => BitwiseNot(Box::new(map_arith(*a))),
-                Mult(a, b) => Mult(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Div(a, b) => Div(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Modulo(a, b) => Modulo(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Add(a, b) => Add(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Sub(a, b) => Sub(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                ShiftLeft(a, b) => ShiftLeft(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                ShiftRight(a, b) => ShiftRight(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Less(a, b) => Less(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LessEq(a, b) => LessEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Great(a, b) => Great(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                GreatEq(a, b) => GreatEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Eq(a, b) => Eq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                NotEq(a, b) => NotEq(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseAnd(a, b) => BitwiseAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseXor(a, b) => BitwiseXor(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                BitwiseOr(a, b) => BitwiseOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LogicalAnd(a, b) => LogicalAnd(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                LogicalOr(a, b) => LogicalOr(Box::new(map_arith(*a)), Box::new(map_arith(*b))),
-                Ternary(a, b, c) => Ternary(
-                    Box::new(map_arith(*a)),
-                    Box::new(map_arith(*b)),
-                    Box::new(map_arith(*c)),
-                ),
-                Assign(v, a) => Assign(v.into(), Box::new(map_arith(*a))),
-                Sequence(ariths) => Sequence(ariths.into_iter().map(map_arith).collect()),
+            WordKind::CommandSubst(c) => {
+                SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
             }
-        }
 
-        let map_param = |kind: DefaultParameter| -> Parameter<T> {
-            use crate::ast::Parameter::*;
-            match kind {
-                At => At,
-                Star => Star,
-                Pound => Pound,
-                Question => Question,
-                Dash => Dash,
-                Dollar => Dollar,
-                Bang => Bang,
-                Positional(p) => Positional(p),
-                Var(v) => Var(v.into()),
+            WordKind::Subst(s) => {
+                // Force a move out of the boxed substitution. For some reason doing
+                // the deref in the match statment gives a strange borrow failure
+                let s = *s;
+                let subst = match s {
+                    Len(p) => ParameterSubstitution::Len(map_param(p)),
+                    Command(c) => ParameterSubstitution::Command(c.commands),
+                    Arith(a) => ParameterSubstitution::Arith(a.map(map_arith)),
+                    Default(c, p, w) => ParameterSubstitution::Default(c, map_param(p), map!(w)),
+                    Assign(c, p, w) => ParameterSubstitution::Assign(c, map_param(p), map!(w)),
+                    Error(c, p, w) => ParameterSubstitution::Error(c, map_param(p), map!(w)),
+                    Alternative(c, p, w) => {
+                        ParameterSubstitution::Alternative(c, map_param(p), map!(w))
+                    }
+                    RemoveSmallestSuffix(p, w) => {
+                        ParameterSubstitution::RemoveSmallestSuffix(map_param(p), map!(w))
+                    }
+                    RemoveLargestSuffix(p, w) => {
+                        ParameterSubstitution::RemoveLargestSuffix(map_param(p), map!(w))
+                    }
+                    RemoveSmallestPrefix(p, w) => {
+                        ParameterSubstitution::RemoveSmallestPrefix(map_param(p), map!(w))
+                    }
+                    RemoveLargestPrefix(p, w) => {
+                        ParameterSubstitution::RemoveLargestPrefix(map_param(p), map!(w))
+                    }
+                };
+                SimpleWord::Subst(Box::new(subst))
             }
         };
 
-        let mut map_simple = |kind| {
-            use crate::ast::builder::ParameterSubstitutionKind::*;
+        Ok(MayM4::Shell(simple))
+    }
 
-            let simple = match kind {
-                WordKind::Literal(s) => SimpleWord::Literal(s.into()),
-                WordKind::Escaped(s) => SimpleWord::Escaped(s.into()),
-                WordKind::Param(p) => SimpleWord::Param(map_param(p)),
-                WordKind::Star => SimpleWord::Star,
-                WordKind::Question => SimpleWord::Question,
-                WordKind::SquareOpen => SimpleWord::SquareOpen,
-                WordKind::SquareClose => SimpleWord::SquareClose,
-                WordKind::Tilde => SimpleWord::Tilde,
-                WordKind::Colon => SimpleWord::Colon,
-
-                WordKind::CommandSubst(c) => {
-                    SimpleWord::Subst(Box::new(ParameterSubstitution::Command(c.commands)))
-                }
-
-                WordKind::Subst(s) => {
-                    // Force a move out of the boxed substitution. For some reason doing
-                    // the deref in the match statment gives a strange borrow failure
-                    let s = *s;
-                    let subst = match s {
-                        Len(p) => ParameterSubstitution::Len(map_param(p)),
-                        Command(c) => ParameterSubstitution::Command(c.commands),
-                        Arith(a) => ParameterSubstitution::Arith(a.map(map_arith)),
-                        Default(c, p, w) => {
-                            ParameterSubstitution::Default(c, map_param(p), map!(w))
-                        }
-                        Assign(c, p, w) => ParameterSubstitution::Assign(c, map_param(p), map!(w)),
-                        Error(c, p, w) => ParameterSubstitution::Error(c, map_param(p), map!(w)),
-                        Alternative(c, p, w) => {
-                            ParameterSubstitution::Alternative(c, map_param(p), map!(w))
-                        }
-                        RemoveSmallestSuffix(p, w) => {
-                            ParameterSubstitution::RemoveSmallestSuffix(map_param(p), map!(w))
-                        }
-                        RemoveLargestSuffix(p, w) => {
-                            ParameterSubstitution::RemoveLargestSuffix(map_param(p), map!(w))
-                        }
-                        RemoveSmallestPrefix(p, w) => {
-                            ParameterSubstitution::RemoveSmallestPrefix(map_param(p), map!(w))
-                        }
-                        RemoveLargestPrefix(p, w) => {
-                            ParameterSubstitution::RemoveLargestPrefix(map_param(p), map!(w))
-                        }
-                    };
-                    SimpleWord::Subst(Box::new(subst))
-                }
-            };
-            Ok(simple)
-        };
-
-        let mut map_m4_word = |kind| {
-            let simple = match kind {
-                M4WordKind::Word(w) => map_simple(w)?,
-                M4WordKind::Macro(_, m) => SimpleWord::Macro(m),
-            };
-            Ok(simple)
-        };
-
-        let mut map_word = |kind| {
+    /// Constructs a `ast::Word` from the provided input.
+    /// TODO: Break this methods into 4 or some smaller methods
+    /// 1. fn arithmetic -> Arithmetic (can be implemented at the trait level)
+    /// 2. fn param -> B::Param
+    /// 3. fn m4_word -> B::WordFragment
+    fn word(
+        &mut self,
+        kind: ConcatWordKind<Self::WordFragment>,
+    ) -> Result<Self::Word, Self::Error> {
+        let map_quote_word = |kind| {
             let word = match kind {
-                QuoteKind::Simple(s) => Word::Simple(map_m4_word(s)?),
-                QuoteKind::SingleQuoted(s) => Word::SingleQuoted(s.into()),
-                QuoteKind::DoubleQuoted(v) => Word::DoubleQuoted(
-                    v.into_iter()
-                        .map(&mut map_m4_word)
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
+                QuoteWordKind::Simple(s) => Word::Simple(s),
+                QuoteWordKind::SingleQuoted(s) => Word::SingleQuoted(s.into()),
+                QuoteWordKind::DoubleQuoted(v) => Word::DoubleQuoted(v),
             };
             Ok(word)
         };
 
-        let word = match compress(kind) {
-            ComplexWordKind::Single(s) => ComplexWord::Single(map_word(s)?),
-            ComplexWordKind::Concat(words) => ComplexWord::Concat(
+        let word = match kind {
+            ConcatWordKind::Single(s) => ComplexWord::Single(map_quote_word(s)?),
+            ConcatWordKind::Concat(words) => ComplexWord::Concat(
                 words
                     .into_iter()
-                    .map(map_word)
+                    .map(map_quote_word)
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         };
@@ -848,17 +797,13 @@ where
         }
     }
 }
-
-pub(crate) fn compress<C, W>(word: ComplexWordKind<C, W>) -> ComplexWordKind<C, W> {
-    use crate::ast::builder::ComplexWordKind::*;
-    use crate::ast::builder::M4WordKind::*;
-    use crate::ast::builder::QuoteKind::*;
+/*
+pub(crate) fn compress(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<W> {
+    use crate::ast::builder::ConcatWordKind::*;
+    use crate::ast::builder::QuoteWordKind::*;
     use crate::ast::builder::WordKind::*;
 
-    fn coalesce_simple<C, W>(
-        a: WordKind<C, W>,
-        b: WordKind<C, W>,
-    ) -> CoalesceResult<WordKind<C, W>> {
+    fn coalesce_simple<W>(a: WordKind<W>, b: WordKind<W>) -> CoalesceResult<WordKind<W>> {
         match (a, b) {
             (Literal(mut a), Literal(b)) => {
                 a.push_str(&b);
@@ -868,24 +813,24 @@ pub(crate) fn compress<C, W>(word: ComplexWordKind<C, W>) -> ComplexWordKind<C, 
         }
     }
 
-    fn coalesce_m4_word<C, W>(
-        a: M4WordKind<C, W>,
-        b: M4WordKind<C, W>,
-    ) -> CoalesceResult<M4WordKind<C, W>> {
-        match (a, b) {
-            (Word(a), Word(b)) => coalesce_simple(a, b)
-                .map(Word)
-                .map_err(|(a, b)| (Word(a), Word(b))),
-            (a, b) => Err((a, b)),
-        }
-    }
+    // fn coalesce_m4_word<C, W>(
+    //     a: M4WordKind<C, W>,
+    //     b: M4WordKind<C, W>,
+    // ) -> CoalesceResult<M4WordKind<C, W>> {
+    //     match (a, b) {
+    //         (Word(a), Word(b)) => coalesce_simple(a, b)
+    //             .map(Word)
+    //             .map_err(|(a, b)| (Word(a), Word(b))),
+    //         (a, b) => Err((a, b)),
+    //     }
+    // }
 
-    fn coalesce_word<C, W>(
-        a: QuoteKind<C, W>,
-        b: QuoteKind<C, W>,
-    ) -> CoalesceResult<QuoteKind<C, W>> {
+    fn coalesce_word<W>(
+        a: QuoteWordKind<W>,
+        b: QuoteWordKind<W>,
+    ) -> CoalesceResult<QuoteWordKind<W>> {
         match (a, b) {
-            (Simple(a), Simple(b)) => coalesce_m4_word(a, b)
+            (Simple(a), Simple(b)) => coalesce_simple(a, b)
                 .map(|s| Simple(s))
                 .map_err(|(a, b)| (Simple(a), Simple(b))),
             (SingleQuoted(mut a), SingleQuoted(b)) => {
@@ -915,3 +860,4 @@ pub(crate) fn compress<C, W>(word: ComplexWordKind<C, W>) -> ComplexWordKind<C, 
         }
     }
 }
+*/

@@ -1,5 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::Parameter::*;
 use autoconf_parser::ast::ParameterSubstitution::*;
 use autoconf_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
@@ -547,7 +548,7 @@ fn test_parameter_substitution_words_can_start_with_pound() {
 fn test_parameter_substitution_words_can_be_parameters_or_substitutions_as_well() {
     let var = Var(String::from("foo_bar123"));
     let word = TopLevelWord(Concat(vec![
-        Word::Simple(SimpleWord::Param(At)),
+        Word::Simple(Shell(SimpleWord::Param(At))),
         subst(RemoveLargestPrefix(
             Var(String::from("foo")),
             Some(word("bar")),
@@ -588,7 +589,7 @@ fn test_parameter_substitution_command_close_paren_need_not_be_followed_by_word_
         redirects_or_cmd_words: vec![
             RedirectOrCmdWord::CmdWord(word("foo")),
             RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::DoubleQuoted(vec![
-                SimpleWord::Subst(Box::new(Command(vec![cmd("bar")]))),
+                Shell(SimpleWord::Subst(Box::new(Command(vec![cmd("bar")])))),
             ])))),
         ],
     }));

@@ -623,7 +623,7 @@ mod tests {
         let cmd_node = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), word.clone()]));
         let pool = DummyPool::new(vec![assign_node, cmd_node]);
         assert_eq!(pool.node_to_string(0, 0), "var=\"value\"");
-        assert_eq!(pool.node_to_string(1, 2), "  echo value");
+        assert_eq!(pool.node_to_string(1, 1), "  echo value");
     }
 
     #[test]

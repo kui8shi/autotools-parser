@@ -1,6 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::SimpleWord::*;
+use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::*;
 use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
@@ -27,7 +28,7 @@ fn test_backticked_valid_backslashes_removed_if_before_dollar_backslash_and_back
             redirects_or_cmd_words: vec![
                 RedirectOrCmdWord::CmdWord(word("foo")),
                 RedirectOrCmdWord::CmdWord(TopLevelWord(Concat(vec![
-                    Word::Simple(Param(Parameter::Dollar)),
+                    Word::Simple(Shell(Param(Parameter::Dollar))),
                     escaped("`"),
                     escaped("o"),
                 ]))),

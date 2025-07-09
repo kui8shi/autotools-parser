@@ -14,15 +14,13 @@ use std::fmt::Display;
 use crate::ast::{
     AndOr, DefaultArithmetic, DefaultParameter, M4Argument, RedirectOrCmdWord, RedirectOrEnvVar,
 };
-use crate::m4_macro::{M4Macro, SideEffect};
+use crate::m4_macro::SideEffect;
 
 mod default_builder;
-mod empty_builder;
 mod minimal_builder;
 mod node_builder;
 
 pub use self::default_builder::*;
-pub use self::empty_builder::EmptyBuilder;
 pub use self::minimal_builder::MinimalBuilder;
 pub use self::node_builder::NodeBuilder;
 
@@ -140,35 +138,25 @@ pub struct CasePatternFragments<W> {
 
 /// An indicator to the builder what kind of complex word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ComplexWordKind<C, W> {
+pub enum ConcatWordKind<X> {
     /// Several distinct words concatenated together.
-    Concat(Vec<QuoteKind<C, W>>),
+    Concat(Vec<QuoteWordKind<X>>),
     /// A regular word.
-    Single(QuoteKind<C, W>),
+    Single(QuoteWordKind<X>),
 }
 
 /// An indicator to the builder what kind of word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum QuoteKind<C, W> {
+pub enum QuoteWordKind<X> {
     /// A regular word.
-    Simple(M4WordKind<C, W>),
+    Simple(X),
     /// List of words concatenated within double quotes.
-    DoubleQuoted(Vec<M4WordKind<C, W>>),
+    DoubleQuoted(Vec<X>),
     /// List of words concatenated within single quotes. Virtually
     /// identical as a literal, but makes a distinction between the two.
     // @kui8shi
     /// We do not parse m4 macro calls inside the single quoted string.
     SingleQuoted(String),
-}
-
-/// An indicator to the builder what kind of simple word was parsed.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum M4WordKind<C, W> {
-    /// Normal word
-    Word(WordKind<C, W>),
-    /// m4 macro call to be expanded to a literal
-    // FIXME: we exported name field of M to the variant's field. but it's not good.
-    Macro(String, M4Macro<C, W>),
 }
 
 /// An indicator to the builder what kind of simple word was parsed.
@@ -179,7 +167,7 @@ pub enum WordKind<C, W> {
     /// Access of a value inside a parameter, e.g. `$foo` or `$$`.
     Param(DefaultParameter),
     /// A parameter substitution, e.g. `${param-word}`.
-    Subst(Box<ParameterSubstitutionKind<C, ComplexWordKind<C, W>>>),
+    Subst(Box<ParameterSubstitutionKind<C, ConcatWordKind<W>>>),
     /// Represents the standard output of some command, e.g. \`echo foo\`.
     CommandSubst(CommandGroup<C>),
     /// A token which normally has a special meaning is treated as a literal
@@ -276,6 +264,8 @@ pub trait BuilderBase {
     type CompoundCommand;
     /// The type which represents shell words, which can be command names or arguments.
     type Word;
+    /// The type which represents simplest shell words.
+    type WordFragment;
     /// The type which represents a file descriptor redirection.
     type Redirect;
     /// A type for returning custom parse/build errors.
@@ -463,14 +453,21 @@ pub trait ShellBuilder: BuilderBase {
     /// * comments: the parsed comments
     fn comments(&mut self, comments: Vec<Newline>) -> Result<(), Self::Error>;
 
+    /// Invoked when a simple word is parsed.
+    fn word_fragment(
+        &mut self,
+        kind: WordKind<Self::Command, Self::WordFragment>,
+    ) -> Result<Self::WordFragment, Self::Error>;
+
+    /// Invoked when a concatenated word is parsed.
+    // fn quote_word(&mut self, kind: ConcatWordKind<Self::WordFragment>) -> Result<Self::Word, Self::Error>;
+
     /// Invoked when a word is parsed.
     ///
     /// # Arguments
     /// * kind: the type of word that was parsed
-    fn word(
-        &mut self,
-        kind: ComplexWordKind<Self::Command, Self::Word>,
-    ) -> Result<Self::Word, Self::Error>;
+    fn word(&mut self, kind: ConcatWordKind<Self::WordFragment>)
+        -> Result<Self::Word, Self::Error>;
 
     /// Invoked when a redirect is parsed.
     ///
@@ -486,7 +483,6 @@ pub trait M4Builder: BuilderBase {
     type M4Macro;
     /// A type for m4 macro argument.
     type M4Argument;
-
 
     /// @kui8shi
     /// Invoked when a parsed m4 macro call is to be expanded to commands.
@@ -507,7 +503,7 @@ pub trait M4Builder: BuilderBase {
     fn macro_into_word(
         &mut self,
         macro_call: Self::M4Macro,
-    ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error>;
+    ) -> Result<Self::WordFragment, Self::Error>;
 
     /// @kui8shi
     /// Invoked when a m4 macro call is parsed.
@@ -528,9 +524,10 @@ macro_rules! impl_builder_body {
         type Command = $T::Command;
         type CompoundCommand = $T::CompoundCommand;
         type Word = $T::Word;
+        type WordFragment = $T::WordFragment;
         type Redirect = $T::Redirect;
         type Error = $T::Error;
-    }
+    };
 }
 
 macro_rules! impl_shell_builder_body {
@@ -643,9 +640,16 @@ macro_rules! impl_shell_builder_body {
             (**self).comments(comments)
         }
 
+        fn word_fragment(
+            &mut self,
+            kind: WordKind<Self::Command, Self::WordFragment>,
+        ) -> Result<Self::WordFragment, Self::Error> {
+            (**self).word_fragment(kind)
+        }
+
         fn word(
             &mut self,
-            kind: ComplexWordKind<Self::Command, Self::Word>,
+            kind: ConcatWordKind<Self::WordFragment>,
         ) -> Result<Self::Word, Self::Error> {
             (**self).word(kind)
         }
@@ -675,7 +679,7 @@ macro_rules! impl_m4_builder_body {
         fn macro_into_word(
             &mut self,
             macro_call: Self::M4Macro,
-        ) -> Result<M4WordKind<Self::Command, Self::Word>, Self::Error> {
+        ) -> Result<Self::WordFragment, Self::Error> {
             (**self).macro_into_word(macro_call)
         }
 
@@ -688,7 +692,7 @@ macro_rules! impl_m4_builder_body {
         ) -> Result<Self::M4Macro, Self::Error> {
             (**self).macro_call(name, args, effects, original_name)
         }
-    }
+    };
 }
 
 impl<T: BuilderBase + ?Sized> BuilderBase for &mut T {
@@ -701,7 +705,7 @@ impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for &mut T
     impl_shell_builder_body!(T);
 }
 
-impl<T: BuilderBase + ShellBuilder+ M4Builder + ?Sized> ShellBuilder for Box<T> {
+impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for Box<T> {
     impl_shell_builder_body!(T);
 }
 

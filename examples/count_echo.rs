@@ -122,9 +122,9 @@ fn count_echo_simple(cmd: &ast::DefaultSimpleCommand) -> usize {
         .count()
 }
 
-fn get_simple_word_as_string(word: &ast::DefaultSimpleWord) -> Option<&String> {
+fn get_simple_word_as_string(word: &ast::DefaultWordFragment) -> Option<&String> {
     match word {
-        ast::SimpleWord::Literal(w) => Some(w),
+        ast::MayM4::Shell(ast::SimpleWord::Literal(w)) => Some(w),
         _ => None, // Ignoring substitutions and others for simplicity here
     }
 }

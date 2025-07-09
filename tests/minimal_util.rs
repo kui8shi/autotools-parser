@@ -13,14 +13,14 @@ use autoconf_parser::m4_macro::M4Macro;
 use autoconf_parser::parse::*;
 
 pub type MinimalWord = Word<String, MinimalCommand>;
-pub type MinimalWordFragment = WordFragment<String, MinimalWord, MinimalCommand>;
+pub type MinimalWordFragment = WordFragment<String, MinimalCommand, MinimalWord>;
 pub type MinimalCommand = CommandWrapper<String>;
 pub type MinimalParameterSubstitution =
-    ParameterSubstitution<Parameter<String>, MinimalWord, MinimalCommand, Arithmetic<String>>;
+    ParameterSubstitution<Parameter<String>, MinimalCommand, MinimalWord, Arithmetic<String>>;
 pub type MinimalOperator = Operator<MinimalWord>;
-pub type MinimalCondition = Condition<MinimalWord, MinimalCommand>;
-pub type MinimalM4Argument = M4Argument<MinimalWord, MinimalCommand>;
-pub type MinimalM4Macro = M4Macro<MinimalWord, MinimalCommand>;
+pub type MinimalCondition = Condition<MinimalCommand, MinimalWord>;
+pub type MinimalM4Argument = M4Argument<MinimalCommand, MinimalWord>;
+pub type MinimalM4Macro = M4Macro<MinimalCommand, MinimalWord>;
 
 pub fn lit(s: &str) -> MinimalWordFragment {
     Literal(String::from(s))

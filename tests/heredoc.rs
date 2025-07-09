@@ -98,7 +98,7 @@ fn test_heredoc_valid_unquoted_delimeter_should_expand_body() {
             RedirectOrCmdWord::Redirect(Heredoc(
                 None,
                 TopLevelWord(Concat(vec![
-                    Word::Simple(Param(Parameter::Dollar)),
+                    Word::Simple(MayM4::Shell(Param(Parameter::Dollar))),
                     lit(" "),
                     subst(ParameterSubstitution::Len(Parameter::Bang)),
                     lit(" "),

@@ -435,7 +435,7 @@ fn test_quoted_patterns() {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
                     pattern_alternatives: vec![
-                        concat_words(&["[", "a-z", "]", "*"]),
+                        concat_words(&["[", "a", "-", "z", "]", "*"]),
                         concat_words(&["?", ":", "[", "b", "]", "*"]),
                     ],
                     pattern_comment: None,

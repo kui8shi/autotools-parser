@@ -1,5 +1,6 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::ComplexWord::*;
+use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
 use autoconf_parser::parse::ParseErrorKind::*;
@@ -39,8 +40,8 @@ fn test_word_single_quote_invalid_missing_close_quote() {
 
 #[test]
 fn test_word_double_quote_valid() {
-    let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![Literal(String::from(
-        "abc&&||\n\n#comment\nabc",
+    let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![Shell(Literal(
+        String::from("abc&&||\n\n#comment\nabc"),
     ))])));
     assert_eq!(
         Some(correct),
@@ -51,9 +52,9 @@ fn test_word_double_quote_valid() {
 #[test]
 fn test_word_double_quote_valid_recognizes_parameters() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test asdf")),
-        Param(Parameter::Var(String::from("foo"))),
-        Literal(String::from(" $")),
+        Shell(Literal(String::from("test asdf"))),
+        Shell(Param(Parameter::Var(String::from("foo")))),
+        Shell(Literal(String::from(" $"))),
     ])));
 
     assert_eq!(
@@ -65,8 +66,10 @@ fn test_word_double_quote_valid_recognizes_parameters() {
 #[test]
 fn test_word_double_quote_valid_recognizes_backticks() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test asdf ")),
-        Subst(Box::new(ParameterSubstitution::Command(vec![cmd("foo")]))),
+        Shell(Literal(String::from("test asdf "))),
+        Shell(Subst(Box::new(ParameterSubstitution::Command(vec![cmd(
+            "foo",
+        )])))),
     ])));
 
     assert_eq!(
@@ -78,10 +81,10 @@ fn test_word_double_quote_valid_recognizes_backticks() {
 #[test]
 fn test_word_double_quote_valid_slash_escapes_dollar() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test")),
-        Escaped(String::from("$")),
-        Literal(String::from("foo ")),
-        Param(Parameter::At),
+        Shell(Literal(String::from("test"))),
+        Shell(Escaped(String::from("$"))),
+        Shell(Literal(String::from("foo "))),
+        Shell(Param(Parameter::At)),
     ])));
 
     assert_eq!(
@@ -93,10 +96,10 @@ fn test_word_double_quote_valid_slash_escapes_dollar() {
 #[test]
 fn test_word_double_quote_valid_slash_escapes_backtick() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test")),
-        Escaped(String::from("`")),
-        Literal(String::from(" ")),
-        Param(Parameter::Star),
+        Shell(Literal(String::from("test"))),
+        Shell(Escaped(String::from("`"))),
+        Shell(Literal(String::from(" "))),
+        Shell(Param(Parameter::Star)),
     ])));
 
     assert_eq!(Some(correct), make_parser("\"test\\` $*\"").word().unwrap());
@@ -105,10 +108,10 @@ fn test_word_double_quote_valid_slash_escapes_backtick() {
 #[test]
 fn test_word_double_quote_valid_slash_escapes_double_quote() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test")),
-        Escaped(String::from("\"")),
-        Literal(String::from(" ")),
-        Param(Parameter::Pound),
+        Shell(Literal(String::from("test"))),
+        Shell(Escaped(String::from("\""))),
+        Shell(Literal(String::from(" "))),
+        Shell(Param(Parameter::Pound)),
     ])));
 
     assert_eq!(
@@ -120,11 +123,11 @@ fn test_word_double_quote_valid_slash_escapes_double_quote() {
 #[test]
 fn test_word_double_quote_valid_slash_escapes_newline() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test")),
-        Escaped(String::from("\n")),
-        Literal(String::from(" ")),
-        Param(Parameter::Question),
-        Literal(String::from("\n")),
+        Shell(Literal(String::from("test"))),
+        Shell(Escaped(String::from("\n"))),
+        Shell(Literal(String::from(" "))),
+        Shell(Param(Parameter::Question)),
+        Shell(Literal(String::from("\n"))),
     ])));
 
     assert_eq!(
@@ -136,10 +139,10 @@ fn test_word_double_quote_valid_slash_escapes_newline() {
 #[test]
 fn test_word_double_quote_valid_slash_escapes_slash() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("test")),
-        Escaped(String::from("\\")),
-        Literal(String::from(" ")),
-        Param(Parameter::Positional(0)),
+        Shell(Literal(String::from("test"))),
+        Shell(Escaped(String::from("\\"))),
+        Shell(Literal(String::from(" "))),
+        Shell(Param(Parameter::Positional(0))),
     ])));
 
     assert_eq!(
@@ -151,8 +154,8 @@ fn test_word_double_quote_valid_slash_escapes_slash() {
 #[test]
 fn test_word_double_quote_valid_slash_remains_literal_in_general_case() {
     let correct = TopLevelWord(Single(Word::DoubleQuoted(vec![
-        Literal(String::from("t\\est ")),
-        Param(Parameter::Dollar),
+        Shell(Literal(String::from("t\\est "))),
+        Shell(Param(Parameter::Dollar)),
     ])));
 
     assert_eq!(Some(correct), make_parser("\"t\\est $$\"").word().unwrap());
@@ -180,7 +183,7 @@ fn test_word_delegate_parameters() {
     for p in &params {
         match make_parser(p).word() {
             Ok(Some(TopLevelWord(Single(Word::Simple(w))))) => {
-                if let Param(_) = w {
+                if let Shell(Param(_)) = w {
                 } else {
                     panic!(
                         "Unexpectedly parsed \"{}\" as a non-parameter word:\n{:#?}",
@@ -244,7 +247,7 @@ fn test_word_tokens_which_become_literal_words() {
 fn test_word_concatenation_works() {
     let correct = TopLevelWord(Concat(vec![
         lit("foo=bar"),
-        Word::DoubleQuoted(vec![Literal(String::from("double"))]),
+        Word::DoubleQuoted(vec![Shell(Literal(String::from("double")))]),
         Word::SingleQuoted(String::from("single")),
     ]));
 
@@ -257,15 +260,15 @@ fn test_word_concatenation_works() {
 #[test]
 fn test_word_special_words_recognized_as_such() {
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(Star))))),
+        Ok(Some(TopLevelWord(Single(Word::Simple(Shell(Star)))))),
         make_parser("*").word()
     );
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(Question))))),
+        Ok(Some(TopLevelWord(Single(Word::Simple(Shell(Question)))))),
         make_parser("?").word()
     );
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(Tilde))))),
+        Ok(Some(TopLevelWord(Single(Word::Simple(Shell(Tilde)))))),
         make_parser("~").word()
     );
 
@@ -276,7 +279,7 @@ fn test_word_special_words_recognized_as_such() {
     // assert_eq!(Ok(Some(TopLevelWord(Single(Word::Simple(SquareClose))))), make_parser("]").word());
 
     assert_eq!(
-        Ok(Some(TopLevelWord(Single(Word::Simple(Colon))))),
+        Ok(Some(TopLevelWord(Single(Word::Simple(Shell(Colon)))))),
         make_parser(":").word()
     );
 }
@@ -289,9 +292,9 @@ fn test_word_quotes() {
     // but inner quoting pairs aren't.
     assert_eq!(
         Ok(Some(TopLevelWord(Concat(vec![
-            Word::Simple(SimpleWord::SquareOpen),
-            Word::Simple(SimpleWord::Literal("word".into())),
-            Word::Simple(SimpleWord::SquareClose)
+            Word::Simple(Shell(SquareOpen)),
+            Word::Simple(Shell(Literal("word".into()))),
+            Word::Simple(Shell(SquareClose))
         ])))),
         make_parser("[[word]]").word()
     );

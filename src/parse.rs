@@ -13,9 +13,9 @@ use std::ops::{AddAssign, Not, SubAssign};
 use std::str::FromStr;
 
 use self::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
-use crate::ast::builder::ComplexWordKind::{self, Concat, Single};
-use crate::ast::builder::QuoteKind::{self, DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, M4Builder, M4WordKind, ShellBuilder, WordKind};
+use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
+use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
+use crate::ast::builder::{self, M4Builder, ShellBuilder, WordKind};
 use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
@@ -307,6 +307,7 @@ impl<I, B> std::iter::FusedIterator for ParserIterator<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
+    B::WordFragment: Into<Option<String>> + Clone,
 {
 }
 
@@ -314,6 +315,7 @@ impl<I, B> Iterator for ParserIterator<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
+    B::WordFragment: Into<Option<String>> + Clone,
 {
     type Item = ParseResult<B::Command, B::Error>;
 
@@ -339,6 +341,7 @@ impl<I, B> IntoIterator for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
+    B::WordFragment: Into<Option<String>> + Clone,
 {
     type IntoIter = ParserIterator<I, B>;
     type Item = <Self::IntoIter as Iterator>::Item;
@@ -434,7 +437,10 @@ struct QuoteContext {
     quote_level: usize,
 }
 
-impl<I: Iterator<Item = Token>, B: ShellBuilder + M4Builder + Default> AutoconfParser<I, B> {
+impl<I: Iterator<Item = Token>, B: ShellBuilder + M4Builder + Default> AutoconfParser<I, B>
+where
+    B::WordFragment: Into<Option<String>> + Clone,
+{
     /// Creates a new Parser from a Token iterator or collection.
     pub fn new<T>(iter: T) -> AutoconfParser<I, B>
     where
@@ -456,6 +462,8 @@ impl<I, L> AutoconfParser<I, builder::NodeBuilder<L>>
 where
     I: Iterator<Item = Token>,
     L: Into<String> + From<String> + Clone + fmt::Debug,
+    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment:
+        Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
@@ -547,6 +555,7 @@ impl<I, B> AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
+    B::WordFragment: Into<Option<String>> + Clone,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
     /// token in the iterator will be used (or `UnexpectedEOF` if none left).
@@ -858,49 +867,58 @@ where
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
-        fn could_be_numeric<C, W>(word: &QuoteKind<C, W>) -> bool {
-            let could_be_numeric = |word: &M4WordKind<C, W>| match word {
-                M4WordKind::Word(w) => match w {
-                    WordKind::Star
-                    | WordKind::Question
-                    | WordKind::SquareOpen
-                    | WordKind::SquareClose
-                    | WordKind::Tilde
-                    | WordKind::Colon => false,
+        // fn could_be_numeric<C, W>(word: &WordKind<C, W>) -> bool {
+        //     let could_be_numeric = |word: &WordKind<C, W>| match word {
+        //         MayM4::Shell(w) => match w {
+        //             WordKind::Star
+        //             | WordKind::Question
+        //             | WordKind::SquareOpen
+        //             | WordKind::SquareClose
+        //             | WordKind::Tilde
+        //             | WordKind::Colon => false,
 
-                    // Literals and can be statically checked if they have non-numeric characters
-                    WordKind::Escaped(ref s) | WordKind::Literal(ref s) => {
-                        s.chars().all(|c| c.is_ascii_digit())
+        //             // Literals and can be statically checked if they have non-numeric characters
+        //             WordKind::Escaped(ref s) | WordKind::Literal(ref s) => {
+        //                 s.chars().all(|c| c.is_ascii_digit())
+        //             }
+
+        //             // These could end up evaluating to a numeric,
+        //             // but we'll have to see at runtime.
+        //             WordKind::Param(_) | WordKind::Subst(_) | WordKind::CommandSubst(_) => true,
+        //         },
+        //         // @kui8shi
+        //         // The only macro that I know to be a file descriptor, is AC_FD_CC.
+        //         // It's too specific but good for remembering it in the code.
+        //         M4WordKind::Macro(ref name, _) => name != "AC_FD_CC",
+        //     };
+
+        //     match *word {
+        //         Simple(ref s) => could_be_numeric(s),
+        //         SingleQuoted(ref s) => s.chars().all(|c| c.is_ascii_digit()),
+        //         DoubleQuoted(ref fragments) => fragments.iter().all(could_be_numeric),
+        //     }
+        // }
+
+        fn as_num<W>(word: &ConcatWordKind<W>) -> Option<u16>
+        where
+            W: Into<Option<String>> + Clone,
+        {
+            match word {
+                Single(Simple(frag)) => {
+                    if let Some(s) = frag.clone().into() {
+                        u16::from_str_radix(&s, 10).ok()
+                    } else {
+                        None
                     }
-
-                    // These could end up evaluating to a numeric,
-                    // but we'll have to see at runtime.
-                    WordKind::Param(_) | WordKind::Subst(_) | WordKind::CommandSubst(_) => true,
-                },
-                // @kui8shi
-                // The only macro that I know to be a file descriptor, is AC_FD_CC.
-                // It's too specific but good for remembering it in the code.
-                M4WordKind::Macro(ref name, _) => name != "AC_FD_CC",
-            };
-
-            match *word {
-                Simple(ref s) => could_be_numeric(s),
-                SingleQuoted(ref s) => s.chars().all(|c| c.is_ascii_digit()),
-                DoubleQuoted(ref fragments) => fragments.iter().all(could_be_numeric),
-            }
-        }
-
-        fn as_num<C, M>(word: &ComplexWordKind<C, M>) -> Option<u16> {
-            match *word {
-                Single(Simple(M4WordKind::Word(WordKind::Literal(ref s)))) => {
-                    u16::from_str_radix(s, 10).ok()
                 }
                 Single(_) => None,
                 Concat(ref fragments) => {
                     let mut buf = String::new();
                     for w in fragments {
-                        if let Simple(M4WordKind::Word(WordKind::Literal(ref s))) = *w {
-                            buf.push_str(s);
+                        if let Simple(frag) = w {
+                            if let Some(s) = frag.clone().into() {
+                                buf.push_str(&s);
+                            }
                         } else {
                             return None;
                         }
@@ -958,11 +976,12 @@ where
             ($parser:expr) => {{
                 let path = if $parser.peek_reserved_token(&[Dash]).is_some() {
                     let dash = $parser.reserved_token(&[Dash])?;
-                    Single(Simple(M4WordKind::Word(WordKind::Literal(
-                        dash.to_string(),
-                    ))))
+                    Single(Simple(
+                        self.builder
+                            .word_fragment(WordKind::Literal(dash.to_string()))?,
+                    ))
                 } else {
-                    let path_start_pos = $parser.iter.pos();
+                    // let path_start_pos = $parser.iter.pos();
                     let path = if let Some(p) = $parser
                         .word_preserve_trailing_whitespace_raw_with_delim(
                             $parser.in_root().not().then_some(&[Comma, ParenClose]),
@@ -972,15 +991,16 @@ where
                     } else {
                         return Err($parser.make_unexpected_err());
                     };
-                    let is_numeric = match path {
-                        Single(ref p) => could_be_numeric(&p),
-                        Concat(ref v) => v.iter().all(could_be_numeric),
-                    };
-                    if is_numeric {
-                        path
-                    } else {
-                        return Err(ParseError::new(BadFd(path_start_pos, self.iter.pos())));
-                    }
+                    path
+                    // let is_numeric = match path {
+                    //     Single(ref p) => could_be_numeric(&p),
+                    //     Concat(ref v) => v.iter().all(could_be_numeric),
+                    // };
+                    // if is_numeric {
+                    //     path
+                    // } else {
+                    //     return Err(ParseError::new(BadFd(path_start_pos, self.iter.pos())));
+                    // }
                 };
                 $parser.builder.word(path)?
             }};
@@ -1424,9 +1444,10 @@ where
 
         let body = if quoted {
             let body = heredoc.into_iter().flat_map(|(t, _)| t).collect::<Vec<_>>();
-            Single(Simple(M4WordKind::Word(WordKind::Literal(concat_tokens(
-                &body,
-            )))))
+            Single(Simple(
+                self.builder
+                    .word_fragment(WordKind::Literal(concat_tokens(&body)))?,
+            ))
         } else {
             let mut tok_iter = TokenIter::with_position(empty_iter(), heredoc_start_pos);
             while let Some((line, pos)) = heredoc.pop() {
@@ -1441,9 +1462,8 @@ where
             if body.len() > 1 {
                 Concat(body.into_iter().map(Simple).collect())
             } else {
-                let body = body
-                    .pop()
-                    .unwrap_or_else(|| M4WordKind::Word(WordKind::Literal(String::new())));
+                let body = body.pop().unwrap();
+                // _or(self.builder.word_fragment(WordKind::Literal(String::new())));
                 Single(Simple(body))
             }
         };
@@ -1485,7 +1505,7 @@ where
     /// not pass the result to the AST builder.
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
+    ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         self.word_preserve_trailing_whitespace_raw_with_delim(None, false)
     }
 
@@ -1495,7 +1515,7 @@ where
         &mut self,
         delims: Option<&[Token]>,
         refresh_quote_context: bool,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
+    ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         self.skip_whitespace();
         let (quote_open, quote_close) = self.get_quotes();
 
@@ -1536,7 +1556,8 @@ where
             if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
-                words.push(Simple(M4WordKind::Word(self.parameter_raw()?)));
+                let param = self.parameter_raw()?;
+                words.push(Simple(self.builder.word_fragment(param)?));
                 continue;
             }
 
@@ -1557,12 +1578,14 @@ where
                 | Some(&Name(_)) | Some(&Literal(_)) => {}
 
                 Some(&Backtick) => {
-                    words.push(Simple(M4WordKind::Word(self.backticked_raw()?)));
+                    let backtick = self.backticked_raw()?;
+                    words.push(Simple(self.builder.word_fragment(backtick)?));
                     continue;
                 }
 
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    words.push(Simple(M4WordKind::Word(self.parameter_raw()?)));
+                    let param = self.parameter_raw()?;
+                    words.push(Simple(self.builder.word_fragment(param)?));
                     continue;
                 }
 
@@ -1611,21 +1634,27 @@ where
                 | tok @ Comma
                 | tok @ Dot
                 | tok @ CurlyOpen
-                | tok @ CurlyClose => Simple(M4WordKind::Word(WordKind::Literal(tok.to_string()))),
+                | tok @ CurlyClose => Simple(
+                    self.builder
+                        .word_fragment(WordKind::Literal(tok.to_string()))?,
+                ),
 
-                Name(s) | Literal(s) => Simple(M4WordKind::Word(WordKind::Literal(s))),
-                Star => Simple(M4WordKind::Word(WordKind::Star)),
-                Question => Simple(M4WordKind::Word(WordKind::Question)),
-                Tilde => Simple(M4WordKind::Word(WordKind::Tilde)),
-                SquareOpen => Simple(M4WordKind::Word(WordKind::SquareOpen)),
-                SquareClose => Simple(M4WordKind::Word(WordKind::SquareClose)),
-                Colon => Simple(M4WordKind::Word(WordKind::Colon)),
+                Name(s) | Literal(s) => Simple(self.builder.word_fragment(WordKind::Literal(s))?),
+                Star => Simple(self.builder.word_fragment(WordKind::Star)?),
+                Question => Simple(self.builder.word_fragment(WordKind::Question)?),
+                Tilde => Simple(self.builder.word_fragment(WordKind::Tilde)?),
+                SquareOpen => Simple(self.builder.word_fragment(WordKind::SquareOpen)?),
+                SquareClose => Simple(self.builder.word_fragment(WordKind::SquareClose)?),
+                Colon => Simple(self.builder.word_fragment(WordKind::Colon)?),
 
                 Backslash => match self.iter.next() {
                     // Escaped newlines become whitespace and a delimiter.
                     // Alternatively, can't escape EOF, just ignore the slash
                     Some(Newline) | None => break,
-                    Some(t) => Simple(M4WordKind::Word(WordKind::Escaped(t.to_string()))),
+                    Some(t) => Simple(
+                        self.builder
+                            .word_fragment(WordKind::Escaped(t.to_string()))?,
+                    ),
                 },
 
                 SingleQuote => {
@@ -1693,7 +1722,7 @@ where
         &mut self,
         delims: Option<&[Token]>,
         start_pos: SourcePos,
-    ) -> ParseResult<Vec<M4WordKind<B::Command, B::Word>>, B::Error> {
+    ) -> ParseResult<Vec<B::WordFragment>, B::Error> {
         let mut words = Vec::new();
         let mut buf = String::new();
         let (quote_open, quote_close) = self.get_quotes();
@@ -1717,7 +1746,7 @@ where
             macro_rules! store {
                 ($word:expr) => {{
                     if !buf.is_empty() {
-                        words.push(M4WordKind::Word(WordKind::Literal(buf)));
+                        words.push(self.builder.word_fragment(WordKind::Literal(buf))?);
                         buf = String::new();
                     }
                     words.push($word);
@@ -1743,7 +1772,8 @@ where
             if res {
                 // it must be a parameter with dollar quoted
                 // such quoting pairs should be consumed within parameter_raw
-                store!(M4WordKind::Word(self.parameter_raw()?));
+                let param = self.parameter_raw()?;
+                store!(self.builder.word_fragment(param)?);
                 continue;
             }
 
@@ -1755,12 +1785,14 @@ where
             // we find since the `parameter` method expects to consume them.
             match self.iter.peek() {
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    store!(M4WordKind::Word(self.parameter_raw()?));
+                    let param = self.parameter_raw()?;
+                    store!(self.builder.word_fragment(param)?);
                     continue;
                 }
 
                 Some(&Backtick) => {
-                    store!(M4WordKind::Word(self.backticked_raw()?));
+                    let backtick = self.backticked_raw()?;
+                    store!(self.builder.word_fragment(backtick)?);
                     continue;
                 }
 
@@ -1777,9 +1809,9 @@ where
                     };
 
                     if special || is_delim(self.iter.peek().cloned()) {
-                        store!(M4WordKind::Word(WordKind::Escaped(
+                        store!(self.builder.word_fragment(WordKind::Escaped(
                             self.iter.next().unwrap().to_string()
-                        )))
+                        ))?)
                     } else {
                         buf.push_str(Backslash.as_str());
                     }
@@ -1806,7 +1838,7 @@ where
         }
 
         if !buf.is_empty() {
-            words.push(M4WordKind::Word(WordKind::Literal(buf)));
+            words.push(self.builder.word_fragment(WordKind::Literal(buf))?);
         }
 
         Ok(words)
@@ -1819,12 +1851,13 @@ where
     /// as a command.
     pub fn backticked_command_substitution(&mut self) -> ParseResult<B::Word, B::Error> {
         let word = self.backticked_raw()?;
-        Ok(self.builder.word(Single(Simple(M4WordKind::Word(word))))?)
+        let word_fragment = self.builder.word_fragment(word)?;
+        Ok(self.builder.word(Single(Simple(word_fragment)))?)
     }
 
     /// Identical to `Parser::backticked_command_substitution`, except but does not pass the
     /// result to the AST builder.
-    fn backticked_raw(&mut self) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
+    fn backticked_raw(&mut self) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
         let backtick_pos = self.iter.pos();
         eat!(self, { Backtick => {} });
 
@@ -1856,11 +1889,12 @@ where
     /// parameter is parsed.
     pub fn parameter(&mut self) -> ParseResult<B::Word, B::Error> {
         let param = self.parameter_raw()?;
-        Ok(self.builder.word(Single(Simple(M4WordKind::Word(param))))?)
+        let word_fragment = self.builder.word_fragment(param)?;
+        Ok(self.builder.word(Single(Simple(word_fragment)))?)
     }
 
     /// Identical to `Parser::parameter()` but does not pass the result to the AST builder.
-    fn parameter_raw(&mut self) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
+    fn parameter_raw(&mut self) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
@@ -1914,7 +1948,7 @@ where
     fn parameter_substitution_word_raw(
         &mut self,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<Option<ComplexWordKind<B::Command, B::Word>>, B::Error> {
+    ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         let mut words = Vec::new();
         'capture_words: loop {
             'capture_literals: loop {
@@ -1946,9 +1980,10 @@ where
                     | Some(t @ &EmptyQuotes)
                     | Some(t @ &Whitespace(_))
                     | Some(t @ &Newline) => {
-                        words.push(Simple(M4WordKind::Word(WordKind::Literal(
-                            t.as_str().to_owned(),
-                        ))));
+                        words.push(Simple(
+                            self.builder
+                                .word_fragment(WordKind::Literal(t.as_str().to_owned()))?,
+                        ));
                         false
                     }
 
@@ -1986,9 +2021,10 @@ where
                     let mut peek = self.iter.multipeek();
                     peek.peek_next(); // Skip past the Backslash
                     if let Some(t @ &Newline) = peek.peek_next() {
-                        words.push(Simple(M4WordKind::Word(WordKind::Escaped(
-                            t.as_str().to_owned(),
-                        ))));
+                        words.push(Simple(
+                            self.builder
+                                .word_fragment(WordKind::Escaped(t.as_str().to_owned()))?,
+                        ));
                         true
                     } else {
                         // Backslash is escaping something other than newline,
@@ -2038,7 +2074,7 @@ where
         &mut self,
         param: DefaultParameter,
         curly_open_pos: SourcePos,
-    ) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
+    ) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -2082,7 +2118,7 @@ where
     /// Nothing is passed to the builder.
     fn parameter_substitution_raw(
         &mut self,
-    ) -> ParseResult<WordKind<B::Command, B::Word>, B::Error> {
+    ) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
         use crate::ast::builder::ParameterSubstitutionKind::*;
         use crate::ast::Parameter;
 
@@ -3104,12 +3140,12 @@ where
                 }
                 ArrayDelim::Comma => {
                     eat_maybe!(self, { Newline => { self.iter.next(); } });
-                    let words =
+                    let mut words =
                         self.word_interpolated_raw(Some(&[Comma, end.clone()]), self.iter.pos())?;
                     if words.len() == 0 {
                         None
                     } else if words.len() == 1 {
-                        Some(Single(Simple(words.into_iter().last().unwrap())))
+                        Some(Single(Simple(words.pop().unwrap())))
                     } else {
                         Some(Concat(words.into_iter().map(Simple).collect()))
                     }
@@ -3117,11 +3153,13 @@ where
             };
             if let Some(word) = word {
                 if let Some(f) = func {
-                    if let Single(Simple(M4WordKind::Word(WordKind::Literal(elm)))) = &word {
-                        for (export_type, val) in f(elm) {
-                            effects
-                                .get_or_insert_default()
-                                .add_side_effect(&export_type, &val);
+                    if let Single(Simple(ref frag)) = word {
+                        if let Some(elm) = frag.clone().into() {
+                            for (export_type, val) in f(&elm) {
+                                effects
+                                    .get_or_insert_default()
+                                    .add_side_effect(&export_type, &val);
+                            }
                         }
                     }
                 }
@@ -3391,7 +3429,7 @@ where
     ///
     /// If a reserved word is found, the token which it matches will be
     /// returned in case the caller cares which specific reserved word was found.
-    pub fn peek_reserved_token<'a>(&mut self, tokens: &'a [Token]) -> Option<&'a Token> {
+    pub fn peek_reserved_token<'t>(&mut self, tokens: &'t [Token]) -> Option<&'t Token> {
         if tokens.is_empty() {
             return None;
         }
@@ -3452,17 +3490,17 @@ where
     ///
     /// If a reserved word is found, the string which it matches will be
     /// returned in case the caller cares which specific reserved word was found.
-    pub fn peek_reserved_word<'a>(&mut self, words: &'a [&str]) -> Option<&'a str> {
+    pub fn peek_reserved_word<'t>(&mut self, words: &'t [&str]) -> Option<&'t str> {
         self.peek_reserved_word_with_prefix(words, None)
     }
 
     /// It is identical to peek_reserved_word.
     /// But allow a prefix token before the reserved word appears.
-    pub fn peek_reserved_word_with_prefix<'a>(
+    pub fn peek_reserved_word_with_prefix<'t>(
         &mut self,
-        words: &'a [&str],
+        words: &'t [&str],
         prefix: Option<&Token>,
-    ) -> Option<&'a str> {
+    ) -> Option<&'t str> {
         if words.is_empty() {
             return None;
         }
@@ -3514,7 +3552,7 @@ where
     /// Checks that one of the specified strings appears as a reserved word
     /// and consumes it, returning the string it matched in case the caller
     /// cares which specific reserved word was found.
-    pub fn reserved_word<'a>(&mut self, words: &'a [&str]) -> Result<&'a str, ()> {
+    pub fn reserved_word<'t>(&mut self, words: &'t [&str]) -> Result<&'t str, ()> {
         match self.peek_reserved_word(words) {
             Some(s) => {
                 self.iter.next();
@@ -4002,9 +4040,9 @@ mod tests {
     }
 
     fn word(s: &str) -> TopLevelWord<String> {
-        TopLevelWord(ComplexWord::Single(Word::Simple(SimpleWord::Literal(
+        TopLevelWord(ComplexWord::Single(Word::Simple(MayM4::Shell(SimpleWord::Literal(
             String::from(s),
-        ))))
+        )))))
     }
 
     fn cmd_args_simple(cmd: &str, args: &[&str]) -> Box<DefaultSimpleCommand> {

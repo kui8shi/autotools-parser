@@ -1,6 +1,6 @@
 //! Defines minimal representations of the shell source.
 use super::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
-use crate::{ast::{map_arith, map_param}, m4_macro::M4Macro};
+use crate::m4_macro::M4Macro;
 use std::fmt;
 
 /// Represents the smallest fragment of any text.
@@ -36,7 +36,21 @@ pub enum WordFragment<L, C, W> {
     Macro(M4Macro<C, W>),
 }
 
-type DefaultParameterSubstitution<L, C, W> = ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>;
+impl<L, C, W> Into<Option<String>> for WordFragment<L, C, W>
+where
+    L: Into<String>,
+{
+    fn into(self) -> Option<String> {
+        use WordFragment::*;
+        match self {
+            Literal(l) => Some(l.into()),
+            _ => None,
+        }
+    }
+}
+
+type DefaultParameterSubstitution<L, C, W> =
+    ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>;
 
 /// A collection of simple words, wrapping a vector of `WordFragment`
 #[derive(Debug, PartialEq, Eq, Clone)]
