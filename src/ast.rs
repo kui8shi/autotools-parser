@@ -936,7 +936,7 @@ mod tests {
         use super::TopLevelWord;
         use super::Word::Simple;
         use crate::lexer::Lexer;
-        use crate::autoconf::DefaultParser;
+        use crate::parse::autoconf::DefaultParser;
 
         let params = vec![
             At,

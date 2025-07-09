@@ -701,13 +701,6 @@ impl<T: BuilderBase + ?Sized> BuilderBase for &mut T {
 impl<T: BuilderBase + ?Sized> BuilderBase for Box<T> {
     impl_builder_body!(T);
 }
-impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for &mut T {
-    impl_shell_builder_body!(T);
-}
-
-impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for Box<T> {
-    impl_shell_builder_body!(T);
-}
 
 impl<T: BuilderBase + M4Builder + M4Builder + ?Sized> M4Builder for &mut T {
     impl_m4_builder_body!(T);
@@ -715,6 +708,14 @@ impl<T: BuilderBase + M4Builder + M4Builder + ?Sized> M4Builder for &mut T {
 
 impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> M4Builder for Box<T> {
     impl_m4_builder_body!(T);
+}
+
+impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for &mut T {
+    impl_shell_builder_body!(T);
+}
+
+impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for Box<T> {
+    impl_shell_builder_body!(T);
 }
 
 /// error produced by ast builder

@@ -1,23 +1,18 @@
-use std::backtrace::{Backtrace, BacktraceStatus};
+//! The definition of a parser (and related methods) for the automake language.
 use std::convert::From;
-use std::error::Error;
 use std::fmt;
 use std::iter::empty as empty_iter;
 use std::mem;
-use std::ops::{AddAssign, Not, SubAssign};
 use std::str::FromStr;
 
-use self::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
+use super::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
+use super::*;
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, M4Builder, ShellBuilder, WordKind};
+use crate::ast::builder::{self, ShellBuilder, WordKind};
 use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
-use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
 use crate::token::Token;
-use crate::token::Token::*;
-
-pub(crate) mod iter;
 
 const CASE: &str = "case";
 const DO: &str = "do";
@@ -36,215 +31,16 @@ const WHILE: &str = "while";
 
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
-pub type DefaultParser<I> = AutoconfParser<I, builder::StringBuilder>;
+pub type DefaultParser<I> = AutomakeParser<I, builder::StringBuilder>;
 
 /// A parser which will use a minimal set of AST builder implementation.
-pub type MinimalParser<I> = AutoconfParser<I, builder::MinimalBuilder<String>>;
+pub type MinimalParser<I> = AutomakeParser<I, builder::MinimalBuilder<String>>;
 
 /// A parser which will use a node-based AST builder implementation.
-pub type NodeParser<I> = AutoconfParser<I, builder::NodeBuilder<String>>;
-
-/// A specialized `Result` type for parsing shell commands.
-pub type ParseResult<T, E> = Result<T, ParseError<E>>;
-
-/// Indicates a character/token position in the original source.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct SourcePos {
-    /// The byte offset since the start of parsing.
-    pub byte: usize,
-    /// The line offset since the start of parsing, useful for error messages.
-    pub line: usize,
-    /// The column offset since the start of parsing, useful for error messages.
-    pub col: usize,
-}
-
-impl Default for SourcePos {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SourcePos {
-    /// Constructs a new, starting, source position
-    pub fn new() -> SourcePos {
-        SourcePos {
-            byte: 0,
-            line: 1,
-            col: 1,
-        }
-    }
-
-    /// Increments self using the length of the provided token.
-    pub fn advance(&mut self, next: &Token) {
-        let newlines = match *next {
-            // Most of these should not have any newlines
-            // embedded within them, but permitting external
-            // tokenizers means we should sanity check anyway.
-            Name(ref s) | Literal(ref s) | Whitespace(ref s) => {
-                s.chars().filter(|&c| c == '\n').count()
-            }
-
-            Newline => 1,
-            _ => 0,
-        };
-
-        let tok_len = next.len();
-        self.byte += tok_len;
-        self.line += newlines;
-        self.col = if newlines == 0 { self.col + tok_len } else { 1 };
-    }
-
-    /// Increments self by `num_tab` tab characters
-    fn advance_tabs(&mut self, num_tab: usize) {
-        self.byte += num_tab;
-        self.col += num_tab;
-    }
-}
-
-/// Wrapper type of `ParseErrorKind` to manage backtrace.
-#[derive(Debug)]
-pub struct ParseError<T> {
-    /// Internal error field.
-    pub kind: ParseErrorKind<T>,
-    /// Take backtrace when the error happened.
-    backtrace: Backtrace,
-}
-
-impl<T> ParseError<T> {
-    /// Create a new ParseError from the error kind and captured backtrace.
-    pub fn new(kind: ParseErrorKind<T>) -> Self {
-        ParseError {
-            kind,
-            backtrace: Backtrace::capture(),
-        }
-    }
-
-    /// Return reference of backtrace.
-    pub fn backtrace(&self) -> &Backtrace {
-        &self.backtrace
-    }
-}
-
-impl<T> From<ParseErrorKind<T>> for ParseError<T> {
-    fn from(value: ParseErrorKind<T>) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<T> PartialEq for ParseError<T>
-where
-    T: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
+pub type NodeParser<I> = AutomakeParser<I, builder::NodeBuilder<String>>;
 
 use ParseErrorKind::*;
-
-/// The error type which is returned from parsing shell commands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseErrorKind<T> {
-    /// Encountered a word that could not be interpreted as a valid file descriptor.
-    /// Stores the start and end position of the invalid word.
-    BadFd(SourcePos, SourcePos),
-    /// Encountered a `Token::Literal` where expecting a `Token::Name`.
-    BadIdent(String, SourcePos),
-    /// Encountered a bad token inside of `${...}`.
-    BadSubst(Token, SourcePos),
-    /// Encountered EOF while looking for a match for the specified token.
-    /// Stores position of opening token.
-    Unmatched(Token, SourcePos),
-    /// Did not find a reserved keyword within a command. The first String is the
-    /// command being parsed, followed by the position of where it starts. Next
-    /// is the missing keyword followed by the position of where the parse
-    /// expected to have encountered it.
-    IncompleteCmd(&'static str, SourcePos, &'static str, SourcePos),
-    /// Encountered a token not appropriate for the current context.
-    Unexpected(Token, SourcePos),
-    /// Encountered the end of input while expecting additional tokens.
-    UnexpectedEOF,
-    /// A custom error returned by the AST builder.
-    Custom(T),
-}
-
-impl<T: Error + 'static> Error for ParseError<T> {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match &self.kind {
-            Custom(e) => Some(e),
-            _ => None,
-        }
-    }
-    // FIXME(breaking): change this to be `source`, breaking because it
-    // would require a new 'static bound on T
-    // fn cause(&self) -> Option<&dyn Error> {
-    //     match *self.kind {
-    //         ParseErrorKind::BadFd(..)
-    //         | ParseErrorKind::BadIdent(..)
-    //         | ParseErrorKind::BadSubst(..)
-    //         | ParseErrorKind::Unmatched(..)
-    //         | ParseErrorKind::IncompleteCmd(..)
-    //         | ParseErrorKind::Unexpected(..)
-    //         | ParseErrorKind::UnexpectedEOF => None,
-    //         ParseErrorKind::Custom(ref e) => Some(e),
-    //     }
-    // }
-}
-
-impl<T: fmt::Display> fmt::Display for ParseError<T> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            BadFd(ref start, ref end) => write!(
-                fmt,
-                "file descriptor found between lines {} - {} cannot possibly be a valid",
-                start, end
-            ),
-            BadIdent(ref id, pos) => {
-                write!(fmt, "not a valid identifier {}: {}", pos, id)
-            }
-            BadSubst(ref t, pos) => {
-                write!(fmt, "bad substitution {}: invalid token: {}", pos, t)
-            }
-            Unmatched(ref t, pos) => {
-                write!(fmt, "unmatched `{}` starting on line {}", t, pos)
-            }
-
-            IncompleteCmd(c, start, kw, kw_pos) => write!(
-                fmt,
-                "did not find `{}` keyword on line {}, in `{}` command which starts on line {}",
-                kw, kw_pos, c, start
-            ),
-
-            // When printing unexpected newlines, print \n instead to avoid confusingly formatted messages
-            Unexpected(Newline, pos) => {
-                write!(fmt, "found unexpected token on line {}: \\n", pos)
-            }
-            Unexpected(ref t, pos) => {
-                write!(fmt, "found unexpected token on line {}: {}", pos, t)
-            }
-
-            UnexpectedEOF => fmt.write_str("unexpected end of input"),
-            Custom(ref e) => write!(fmt, "{}", e),
-        }?;
-        if self.backtrace().status() == BacktraceStatus::Captured {
-            write!(fmt, "\nBacktrace:\n{}", self.backtrace())
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl<T> From<T> for ParseError<T> {
-    fn from(err: T) -> Self {
-        ParseError::new(Custom(err))
-    }
-}
-
-impl fmt::Display for SourcePos {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{}:{}", self.line, self.col)
-    }
-}
+use Token::*;
 
 /// Used to indicate what kind of compound command could be parsed next.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -256,64 +52,28 @@ enum CompoundCmdKeyword {
     Until,
     Brace,
     Subshell,
-    Macro(String),
 }
 
-/// Used to configure when `Parser::command_group` stops parsing commands.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
-pub struct CommandGroupDelimiters<'a, 'b, 'c> {
-    /// Any token which appears after a complete command separator (e.g. `;`, `&`, or a
-    /// newline) will be considered a delimeter for the command group.
-    pub reserved_tokens: &'a [Token],
-    /// Any `Literal` or `Name` token that matches any of these entries completely
-    /// *and* appear after a complete command will be considered a delimeter.
-    pub reserved_words: &'b [&'static str],
-    /// Any token which matches this provided set will be considered a delimeter.
-    pub exact_tokens: &'c [Token],
-}
-
-/// An `Iterator` adapter around a `Parser`.
-///
-/// This iterator is `fused`, that is, if the underlying parser either yields
-/// no command, or an error, no further commands (or errors) will be yielded.
-///
-/// This is because the parser does not do any error handling or backtracking
-/// on errors, thus trying to parse another command after an error is not
-/// well defined, and will either fail as well, or will produce an incorrect
-/// result.
-#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-#[derive(Debug)]
-pub struct ParserIterator<I, B> {
-    /// The underlying parser to poll for complete commands.
-    /// A `None` value indicates the stream has been exhausted.
-    parser: Option<AutoconfParser<I, B>>,
-}
-
-impl<I, B> ParserIterator<I, B> {
-    /// Construct a new adapter with a given parser.
-    fn new(parser: AutoconfParser<I, B>) -> Self {
-        ParserIterator {
-            parser: Some(parser),
-        }
+impl<I, B> Parser for AutomakeParser<I, B>
+where
+    I: Iterator<Item = Token>,
+    B: ShellBuilder,
+    B::WordFragment: Into<Option<String>> + Clone,
+{
+    type TopLevel = B::Command;
+    type Error = B::Error;
+    fn parse(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
+        self.complete_command()
     }
 }
 
-impl<I, B> std::iter::FusedIterator for ParserIterator<I, B>
+impl<I, B> IntoIterator for AutomakeParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
+    B: ShellBuilder,
     B::WordFragment: Into<Option<String>> + Clone,
 {
-}
-
-
-impl<I, B> IntoIterator for AutoconfParser<I, B>
-where
-    I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
-    B::WordFragment: Into<Option<String>> + Clone,
-{
-    type IntoIter = ParserIterator<I, B>;
+    type IntoIter = ParserIterator<Self>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -323,117 +83,38 @@ where
 
 /// A parser for the shell language. It will parse shell commands from a
 /// stream of shell `Token`s, and pass them to an AST builder.
-///
-/// The parser implements the `IntoIterator` trait so that it can behave like
-/// a stream of parsed shell commands. Converting the parser into an `Iterator`
-/// and calling `next()` on the result will yield a complete shell command, or
-/// an error should one arise.
-///
-/// # Building
-///
-/// To construct a parser you need a stream of `Token`s and a `Builder`
-/// which will receive data from the parser and assemble an AST. This
-/// library provides both a default `Token` lexer, as well as an AST `Builder`.
-///
-/// ```
-/// use autoconf_parser::ast::builder::{Builder, RcBuilder};
-/// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::Parser;
-///
-/// let source = "echo hello world";
-/// let lexer = Lexer::new(source.chars());
-/// let mut parser = Parser::with_builder(lexer, RcBuilder::new(), false);
-/// assert!(parser.complete_command().unwrap().is_some());
-/// ```
-///
-/// If you want to use a parser with the default AST builder implementation
-/// you can also use the `DefaultParser` type alias for a simpler setup.
-///
-/// ```
-/// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::DefaultParser;
-///
-/// let source = "echo hello world";
-/// let lexer = Lexer::new(source.chars());
-/// let mut parser = DefaultParser::new(lexer);
-/// assert!(parser.complete_command().unwrap().is_some());
-/// ```
-///
-/// # Token lexing
-///
-/// Lexer implementations are free to yield tokens in whatever manner they wish,
-/// however, there are a few considerations the lexer should take.
-///
-/// First, the lexer should consolidate consecutive tokens such as `Token::Name`,
-/// `Token::Literal`, and `Token::Whitespace` as densely as possible, e.g.
-/// `Literal(foobar)` is preferred over `[Literal(foo), Literal(bar)]`. Although
-/// such splitting of tokens will not cause problems while parsing most shell
-/// commands, certain situations require the parser to look-ahead some fixed
-/// number of tokens so it can avoid backtracking. When the tokens are consolidated
-/// the parser can look-ahead deterministically. If a lexer implementation chooses
-/// not to use this strategy, the parser may unsuccessfully parse certain inputs
-/// normally considered valid.
-///
-/// Second, the lexer can influence how token escaping is handled by the parser.
-/// The backslash token, `\` is used to escape, or make literal, any token which
-/// may or may not have a special meaning. Since the parser operates on tokens and
-/// not characters, the escaping of multi-character tokens is affected by how the
-/// lexer yields them. For example, the source `\<<` is normally considered by shells
-/// as `[Literal(<), Less]`. If this behavior is desired, the lexer should yield
-/// the tokens `[Backslash, Less, Less]` for that source. Otherwise if the lexer
-/// yields the tokens `[Backslash, DLess]`, the parser will treat the source as if
-/// it were `[Literal(<<)]`. The lexer's behavior need not be consistent between different
-/// multi-char tokens, as long as it is aware of the implications.
 #[derive(Debug)]
-pub struct AutoconfParser<I, B> {
+pub struct AutomakeParser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
-    quotes: (Token, Token),
-    quote_stack: Vec<QuoteContext>,
-    last_quote_pos: Option<SourcePos>,
-    detect_user_macro: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum QuoteContextKind {
-    Root,
-    Macro(String),
-    Other(String),
-}
-
-#[derive(Debug)]
-struct QuoteContext {
-    kind: QuoteContextKind,
-    quote_level: usize,
-}
-
-impl<I: Iterator<Item = Token>, B: ShellBuilder + M4Builder + Default> AutoconfParser<I, B>
+impl<I: Iterator<Item = Token>, B: ShellBuilder + Default> AutomakeParser<I, B>
 where
     B::WordFragment: Into<Option<String>> + Clone,
 {
     /// Creates a new Parser from a Token iterator or collection.
-    pub fn new<T>(iter: T) -> AutoconfParser<I, B>
+    pub fn new<T>(iter: T) -> AutomakeParser<I, B>
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
-        AutoconfParser::with_builder(iter.into_iter(), Default::default(), false)
+        AutomakeParser::with_builder(iter.into_iter(), Default::default())
     }
 
     /// Creates a new Parser with options
-    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> AutoconfParser<I, B>
+    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> AutomakeParser<I, B>
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
-        AutoconfParser::with_builder(iter.into_iter(), Default::default(), detect_macro)
+        AutomakeParser::with_builder(iter.into_iter(), Default::default())
     }
 }
 
-impl<I, L> AutoconfParser<I, builder::NodeBuilder<L>>
+impl<I, L> AutomakeParser<I, builder::NodeBuilder<L>>
 where
     I: Iterator<Item = Token>,
     L: Into<String> + From<String> + Clone + fmt::Debug,
-    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment:
-        Into<Option<String>> + Clone,
+    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment: Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
@@ -521,10 +202,10 @@ macro_rules! arith_parse {
     }
 }
 
-impl<I, B> AutoconfParser<I, B>
+impl<I, B> AutomakeParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
+    B: ShellBuilder,
     B::WordFragment: Into<Option<String>> + Clone,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
@@ -540,17 +221,10 @@ where
     }
 
     /// Creates a new Parser from a Token iterator and provided AST builder.
-    pub fn with_builder(iter: I, builder: B, detect_user_macro: bool) -> Self {
-        AutoconfParser {
+    pub fn with_builder(iter: I, builder: B) -> Self {
+        AutomakeParser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
-            quotes: (SquareOpen, SquareClose),
-            quote_stack: vec![QuoteContext {
-                kind: QuoteContextKind::Root,
-                quote_level: 0,
-            }],
-            last_quote_pos: None,
-            detect_user_macro,
         }
     }
 
@@ -586,28 +260,19 @@ where
     /// the caller should perform any EOF checks.
     fn complete_command_with_leading_comments(
         &mut self,
-        mut pre_cmd_comments: Vec<builder::Newline>,
+        pre_cmd_comments: Vec<builder::Newline>,
         start_pos: SourcePos,
     ) -> ParseResult<B::Command, B::Error> {
-        if self.may_open_quote(None, false) {
-            // @kui8shi
-            // Since `pre_cmd_comments` do not include comments after an opening quote character,
-            // We need to sweep newlines again.
-            pre_cmd_comments.extend(self.linebreak());
-        }
         let cmd = self.and_or_list()?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
             Semi => {
-                self.may_close_quote(None, false);
                 (builder::SeparatorKind::Semi, self.newline())
             },
             Amp  => {
-                self.may_close_quote(None, false);
                 (builder::SeparatorKind::Amp , self.newline())
             };
             _ => {
-                self.may_close_quote(None, false);
                 match self.newline() {
                     n@Some(_) => (builder::SeparatorKind::Newline, n),
                     None => (builder::SeparatorKind::Other, None),
@@ -711,11 +376,8 @@ where
     pub fn simple_command(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
         use crate::ast::{RedirectOrCmdWord, RedirectOrEnvVar};
 
-        let (_, quote_close) = self.get_quotes();
         let mut vars = Vec::new();
         let mut cmd_args = Vec::new();
-
-        self.may_open_quote(Some(1), true);
 
         // 1st loop: [EnvVar | Redirect]* + CmdWord(exec)
         loop {
@@ -723,13 +385,7 @@ where
             let is_name = {
                 let mut peeked = self.iter.multipeek();
                 if let Some(&Name(_)) = peeked.peek_next() {
-                    let tok = peeked.peek_next();
-                    let maybe_equal = if tok == Some(&quote_close) {
-                        // var name might be quoted. (e.g. [var]=value)
-                        peeked.peek_next()
-                    } else {
-                        tok
-                    };
+                    let maybe_equal = peeked.peek_next();
                     Some(&Equals) == maybe_equal
                 } else {
                     false
@@ -738,16 +394,12 @@ where
 
             if is_name {
                 if let Some(Name(var)) = self.iter.next() {
-                    self.may_close_quote(None, true);
                     self.iter.next(); // Consume the =
 
                     let value = if let Some(&Whitespace(_)) = self.iter.peek() {
                         None
                     } else {
-                        let w = match self.word_preserve_trailing_whitespace_raw_with_delim(
-                            self.in_root().not().then_some(&[Comma, ParenClose]),
-                            false,
-                        )? {
+                        let w = match self.word_preserve_trailing_whitespace_raw()? {
                             Some(w) => Some(self.builder.word(w)?),
                             None => None,
                         };
@@ -785,11 +437,6 @@ where
         // Now that all assignments are taken care of, any other occurances of `=` will be
         // treated as literals when we attempt to parse a word out.
         loop {
-            self.may_close_quote(None, true);
-            if !self.in_quote() && matches!(self.iter.peek(), Some(Comma) | Some(ParenClose)) {
-                // an unquoted command macro argument ends with ',' or ')'
-                break;
-            }
             match self.redirect()? {
                 Some(Ok(redirect)) => cmd_args.push(RedirectOrCmdWord::Redirect(redirect)),
                 Some(Err(w)) => cmd_args.push(RedirectOrCmdWord::CmdWord(w)),
@@ -837,38 +484,6 @@ where
     /// will result if a redirect is found, `Ok(Some(Err(word)))` if a word is found,
     /// or `Ok(None)` if neither is found.
     pub fn redirect(&mut self) -> ParseResult<Option<Result<B::Redirect, B::Word>>, B::Error> {
-        // fn could_be_numeric<C, W>(word: &WordKind<C, W>) -> bool {
-        //     let could_be_numeric = |word: &WordKind<C, W>| match word {
-        //         MayM4::Shell(w) => match w {
-        //             WordKind::Star
-        //             | WordKind::Question
-        //             | WordKind::SquareOpen
-        //             | WordKind::SquareClose
-        //             | WordKind::Tilde
-        //             | WordKind::Colon => false,
-
-        //             // Literals and can be statically checked if they have non-numeric characters
-        //             WordKind::Escaped(ref s) | WordKind::Literal(ref s) => {
-        //                 s.chars().all(|c| c.is_ascii_digit())
-        //             }
-
-        //             // These could end up evaluating to a numeric,
-        //             // but we'll have to see at runtime.
-        //             WordKind::Param(_) | WordKind::Subst(_) | WordKind::CommandSubst(_) => true,
-        //         },
-        //         // @kui8shi
-        //         // The only macro that I know to be a file descriptor, is AC_FD_CC.
-        //         // It's too specific but good for remembering it in the code.
-        //         M4WordKind::Macro(ref name, _) => name != "AC_FD_CC",
-        //     };
-
-        //     match *word {
-        //         Simple(ref s) => could_be_numeric(s),
-        //         SingleQuoted(ref s) => s.chars().all(|c| c.is_ascii_digit()),
-        //         DoubleQuoted(ref fragments) => fragments.iter().all(could_be_numeric),
-        //     }
-        // }
-
         fn as_num<W>(word: &ConcatWordKind<W>) -> Option<u16>
         where
             W: Into<Option<String>> + Clone,
@@ -899,16 +514,7 @@ where
             }
         }
 
-        if !self.in_quote() && self.iter.peek() == Some(&Comma) {
-            // @kui8shi
-            // Comma can be the end of macro argument of command type.
-            return Ok(None);
-        }
-
-        let (src_fd, src_fd_as_word) = match self.word_preserve_trailing_whitespace_raw_with_delim(
-            self.in_root().not().then_some(&[Comma, ParenClose]),
-            false,
-        )? {
+        let (src_fd, src_fd_as_word) = match self.word_preserve_trailing_whitespace_raw()? {
             None => (None, None),
             Some(w) => match as_num(&w) {
                 Some(num) => (Some(num), Some(w)),
@@ -932,10 +538,7 @@ where
 
         macro_rules! get_path {
             ($parser:expr) => {
-                match $parser.word_preserve_trailing_whitespace_raw_with_delim(
-                    $parser.in_root().not().then_some(&[Comma, ParenClose]),
-                    false,
-                )? {
+                match $parser.word_preserve_trailing_whitespace_raw()? {
                     Some(p) => $parser.builder.word(p)?,
                     None => return Err(self.make_unexpected_err()),
                 }
@@ -952,25 +555,12 @@ where
                     ))
                 } else {
                     // let path_start_pos = $parser.iter.pos();
-                    let path = if let Some(p) = $parser
-                        .word_preserve_trailing_whitespace_raw_with_delim(
-                            $parser.in_root().not().then_some(&[Comma, ParenClose]),
-                            false,
-                        )? {
+                    let path = if let Some(p) = $parser.word_preserve_trailing_whitespace_raw()? {
                         p
                     } else {
                         return Err($parser.make_unexpected_err());
                     };
                     path
-                    // let is_numeric = match path {
-                    //     Single(ref p) => could_be_numeric(&p),
-                    //     Concat(ref v) => v.iter().all(could_be_numeric),
-                    // };
-                    // if is_numeric {
-                    //     path
-                    // } else {
-                    //     return Err(ParseError::new(BadFd(path_start_pos, self.iter.pos())));
-                    // }
                 };
                 $parser.builder.word(path)?
             }};
@@ -990,162 +580,6 @@ where
         };
 
         Ok(Some(Ok(self.builder.redirect(redirect)?)))
-    }
-
-    /// Get current quoting tokens.
-    /// The quoting tokens are special to programs using m4.
-    /// For example, '[' and ']' are the quoting tokens in autoconf language.
-    fn get_quotes(&self) -> (Token, Token) {
-        self.quotes.clone()
-    }
-
-    fn is_opening_quote(&mut self) -> bool {
-        let (quote_open, _) = self.get_quotes();
-        self.iter.peek() == Some(&quote_open)
-    }
-
-    fn is_closing_quote(&mut self) -> bool {
-        let (_, quote_close) = self.get_quotes();
-        self.iter.peek() == Some(&quote_close)
-    }
-
-    /// Consume opening quote if exists.
-    ///
-    /// This implementation is sound for multiple calls without token consumptions.
-    /// as it tracks the position of the quote token to avoid processing it multiple times.
-    fn may_open_quote(&mut self, upper_limit: Option<usize>, consume: bool) -> bool {
-        if upper_limit.is_some_and(|lim| lim <= *self.quote_level()) {
-            // quote level reaches the upper limit.
-            return false;
-        }
-
-        if !self.is_opening_quote() {
-            // Not at opening quote
-            return false;
-        }
-
-        // Check if we're at the same position as the last quote we've seen
-        let current_pos = self.pos();
-        if let Some(last_pos) = self.last_quote_pos {
-            if current_pos == last_pos {
-                // We've already saw this token.
-                return false;
-            }
-        }
-
-        // Record that we've seen this quote
-        self.last_quote_pos = Some(current_pos);
-
-        // Always adjust the level for a fresh token
-        self.quote_level().add_assign(1);
-
-        // Only consume the token if it's an outermost quote or being forced.
-        let consume = consume || *self.quote_level() == 1;
-        if consume {
-            self.iter.next();
-            // Clear the position since we consumed the token
-            self.last_quote_pos = None;
-        }
-
-        consume
-    }
-
-    /// Consume closing quote token if in quotes.
-    ///
-    /// This implementation is sound for multiple calls without token consumptions.
-    /// as it tracks the position of the quote token to avoid processing it multiple times.
-    fn may_close_quote(&mut self, lower_limit: Option<usize>, consume: bool) -> bool {
-        if lower_limit.is_some_and(|lim| *self.quote_level() <= lim) {
-            // quote level reaches the lower limit.
-            return false;
-        }
-
-        if !self.is_closing_quote() {
-            // Not at closing quote
-            return false;
-        }
-
-        // Check if we're at the same position as the last quote we've seen
-        let current_pos = self.pos();
-        if let Some(last_pos) = self.last_quote_pos {
-            if current_pos == last_pos {
-                // We've already saw this token.
-                return false;
-            }
-        }
-
-        // Record that we've seen this quote
-        self.last_quote_pos = Some(current_pos);
-
-        // Only consume the token if it's an outermost quote or being forced.
-        let consume = consume || *self.quote_level() == 1;
-        if consume {
-            self.iter.next();
-            // Clear the position since we consumed the token
-            self.last_quote_pos = None;
-        }
-
-        // Adjust the level if no underflow.
-        if self.in_quote() {
-            self.quote_level().sub_assign(1);
-        }
-
-        consume
-    }
-
-    fn in_quote(&self) -> bool {
-        self.quote_stack.last().unwrap().quote_level > 0
-    }
-
-    fn in_root(&self) -> bool {
-        self.quote_stack
-            .iter()
-            .rev()
-            .skip_while(|ctx| matches!(ctx.kind, QuoteContextKind::Other(_)))
-            .next()
-            .is_some_and(|ctx| matches!(ctx.kind, QuoteContextKind::Root))
-    }
-
-    fn stash_quote_context(&mut self, kind: QuoteContextKind) {
-        self.quote_stack.push(QuoteContext {
-            kind,
-            quote_level: 0,
-        })
-    }
-
-    fn pop_quote_context(&mut self) -> QuoteContext {
-        let res = self.quote_stack.pop().unwrap();
-        debug_assert_eq!(res.quote_level, 0);
-        res
-    }
-
-    /// check function for debugging
-    pub fn assert_quote_closed(&mut self) -> Result<(), ParseError<B::Error>> {
-        if self.quote_stack.len() != 1 {
-            return Err(self.make_unexpected_err());
-        }
-        assert_eq!(self.quote_stack.len(), 1);
-        let res = self.quote_stack.last().unwrap();
-        if res.quote_level != 0 {
-            Err(self.make_unexpected_err())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn quote_level(&mut self) -> &mut usize {
-        &mut self.quote_stack.last_mut().unwrap().quote_level
-    }
-
-    fn should_skip_macro_evaluation(&self) -> bool {
-        use QuoteContextKind::*;
-        // we skip macro evaluationwhen in quotes.
-        // in the actual configure.ac, such macro calls quoted are not evaluated.
-        let quote_context = self.quote_stack.last().unwrap();
-        match &quote_context.kind {
-            Root | Other(_) => quote_context.quote_level >= 1,
-            Macro(_) => quote_context.quote_level >= 2,
-        }
     }
 
     /// Parses a heredoc redirection and the heredoc's body.
@@ -1410,8 +844,6 @@ where
         self.iter
             .buffer_tokens_to_yield_first(saved_tokens, saved_pos);
 
-        self.stash_quote_context(QuoteContextKind::Other("heredoc".into()));
-
         let body = if quoted {
             let body = heredoc.into_iter().flat_map(|(t, _)| t).collect::<Vec<_>>();
             Single(Simple(
@@ -1437,8 +869,6 @@ where
                 Single(Simple(body))
             }
         };
-
-        self.pop_quote_context();
 
         let word = self.builder.word(body)?;
         Ok(self
@@ -1476,7 +906,7 @@ where
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
     ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
-        self.word_preserve_trailing_whitespace_raw_with_delim(None, false)
+        self.word_preserve_trailing_whitespace_raw_with_delim(None)
     }
 
     /// Identical to `Parser::word_preserve_trailing_whitespace_raw()` but
@@ -1484,11 +914,8 @@ where
     fn word_preserve_trailing_whitespace_raw_with_delim(
         &mut self,
         delims: Option<&[Token]>,
-        refresh_quote_context: bool,
     ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         self.skip_whitespace();
-        let (quote_open, quote_close) = self.get_quotes();
-
         // Make sure we don't consume comments,
         // e.g. if a # is at the start of a word.
         match self.iter.peek() {
@@ -1496,49 +923,8 @@ where
             Some(Name(n)) if n == "dnl" => return Ok(None),
             _ => (),
         }
-
-        if refresh_quote_context {
-            self.stash_quote_context(QuoteContextKind::Other("refreshed word".into()));
-        }
-
         let mut words = Vec::new();
         loop {
-            let quote_level = *self.quote_level();
-            if quote_level == 0 {
-                if let Some(delims) = delims {
-                    if let Some(tok) = self.iter.peek() {
-                        if delims.iter().any(|t| t == tok) {
-                            break;
-                        } else if tok == &quote_close {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // check an edge case of quoted parameter
-            let res = {
-                let mut m = self.iter.multipeek();
-                [&quote_open, &Dollar, &quote_close]
-                    .iter()
-                    .all(|t| m.peek_next() == Some(t))
-            };
-            if res {
-                // it must be a parameter with dollar quoted
-                // such quoting pairs should be consumed within parameter_raw
-                let param = self.parameter_raw()?;
-                words.push(Simple(self.builder.word_fragment(param)?));
-                continue;
-            }
-
-            if self.may_open_quote(None, false) {
-                continue;
-            }
-
-            if self.may_close_quote(None, false) {
-                continue;
-            }
-
             match self.iter.peek() {
                 Some(&CurlyOpen) | Some(&CurlyClose) | Some(&SquareOpen) | Some(&SquareClose)
                 | Some(&SingleQuote) | Some(&DoubleQuote) | Some(&Pound) | Some(&Star)
@@ -1565,24 +951,11 @@ where
                     continue;
                 }
 
-                Some(&Whitespace(_)) if quote_level > 1 => {
-                    self.iter.next();
-                    continue;
-                }
-
                 Some(&Newline) | Some(&ParenOpen) | Some(&ParenClose) | Some(&Semi)
                 | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf) | Some(&DSemi)
                 | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
                 | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber) | Some(&LessGreat)
                 | Some(&Whitespace(_)) | None => break,
-            }
-
-            if let Some(Name(_)) = self.iter.peek() {
-                if let Some(name) = self.maybe_macro_call() {
-                    let macro_call = self.macro_call(&[&name])?;
-                    words.push(Simple(self.builder.macro_into_word(macro_call)?));
-                    continue;
-                }
             }
 
             let start_pos = self.iter.pos();
@@ -1660,10 +1033,6 @@ where
             words.push(w);
         }
 
-        if refresh_quote_context {
-            self.pop_quote_context();
-        }
-
         let ret = if words.is_empty() {
             None
         } else if words.len() == 1 {
@@ -1695,7 +1064,6 @@ where
     ) -> ParseResult<Vec<B::WordFragment>, B::Error> {
         let mut words = Vec::new();
         let mut buf = String::new();
-        let (quote_open, quote_close) = self.get_quotes();
         let is_delim = |tok: Option<Token>| {
             if let Some(delims) = delims {
                 delims.iter().find(|&d| Some(d) == tok.as_ref()).is_some()
@@ -1703,13 +1071,8 @@ where
                 tok.is_none()
             }
         };
-        let delim_is_quote = is_delim(Some(quote_close.clone()));
         loop {
-            if delim_is_quote {
-                if !self.in_quote() {
-                    break;
-                }
-            } else if is_delim(self.iter.peek().cloned()) {
+            if is_delim(self.iter.peek().cloned()) {
                 break;
             }
 
@@ -1721,34 +1084,6 @@ where
                     }
                     words.push($word);
                 }};
-            }
-
-            // check macro call
-            if let Some(Name(_)) = self.iter.peek() {
-                if let Some(name) = self.maybe_macro_call() {
-                    let macro_call = self.macro_call(&[&name])?;
-                    store!(self.builder.macro_into_word(macro_call)?);
-                    continue;
-                }
-            }
-
-            // check an edge case of quoted parameter
-            let res = {
-                let mut m = self.iter.multipeek();
-                [&quote_open, &Dollar, &quote_close]
-                    .iter()
-                    .all(|t| m.peek_next() == Some(t))
-            };
-            if res {
-                // it must be a parameter with dollar quoted
-                // such quoting pairs should be consumed within parameter_raw
-                let param = self.parameter_raw()?;
-                store!(self.builder.word_fragment(param)?);
-                continue;
-            }
-
-            if self.may_open_quote(None, false) || self.may_close_quote(None, false) {
-                continue;
             }
 
             // Make sure we don't consume any $ (or any specific parameter token)
@@ -1789,10 +1124,6 @@ where
 
                 Some(Dollar) => unreachable!(),   // Sanity
                 Some(Backtick) => unreachable!(), // Sanity
-
-                Some(EmptyQuotes) if !self.in_quote() => {
-                    // even in interpolated shell strings, raw empty quotes should be ignored.
-                }
 
                 Some(t) => buf.push_str(t.as_str()),
                 None => match delims {
@@ -1868,18 +1199,13 @@ where
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
-        self.stash_quote_context(QuoteContextKind::Other("parameter".into()));
-        self.may_open_quote(None, false);
         let ret = match self.iter.next() {
             Some(ParamPositional(p)) => Ok(WordKind::Param(Parameter::Positional(p as u32))),
 
             Some(Dollar) => {
-                // dollar might be quoted (e.g. [$]var)
-                self.may_close_quote(None, false);
                 // an empty quote might be inserted (e.g. $[]var)
                 eat_maybe!(self, { EmptyQuotes => {} });
                 // parameter body might be quoted (e.g. $[var])
-                let in_quote = self.may_open_quote(None, false);
                 let p = match self.iter.peek() {
                     Some(&Star) | Some(&Pound) | Some(&Question) | Some(&Dollar) | Some(&Bang)
                     | Some(&Dash) | Some(&At) | Some(&Name(_)) => {
@@ -1897,16 +1223,12 @@ where
 
                     _ => Ok(WordKind::Literal(Dollar.to_string())),
                 };
-                if in_quote {
-                    self.may_close_quote(None, false);
-                }
                 p
             }
 
             Some(t) => Err(ParseError::new(Unexpected(t, start_pos))),
             None => Err(ParseError::new(UnexpectedEOF)),
         };
-        self.pop_quote_context();
         ret
     }
 
@@ -2011,9 +1333,7 @@ where
                 }
             }
 
-            match self
-                .word_preserve_trailing_whitespace_raw_with_delim(Some(&[CurlyClose]), true)?
-            {
+            match self.word_preserve_trailing_whitespace_raw_with_delim(Some(&[CurlyClose]))? {
                 Some(Single(w)) => words.push(w),
                 Some(Concat(ws)) => words.extend(ws),
                 None => break 'capture_words,
@@ -2288,8 +1608,6 @@ where
             Some(CompoundCmdKeyword::Subshell)
         } else if self.peek_reserved_token(&[CurlyOpen]).is_some() {
             Some(CompoundCmdKeyword::Brace)
-        } else if let Some(name) = self.maybe_macro_call() {
-            Some(CompoundCmdKeyword::Macro(name))
         } else {
             match self.peek_reserved_word(&[FOR, CASE, IF, WHILE, UNTIL]) {
                 Some(FOR) => Some(CompoundCmdKeyword::For),
@@ -2314,75 +1632,45 @@ where
         &mut self,
         kw: Option<CompoundCmdKeyword>,
     ) -> ParseResult<B::CompoundCommand, B::Error> {
-        self.may_open_quote(None, true);
         let cmd = match kw.or_else(|| self.next_compound_command_type()) {
             Some(CompoundCmdKeyword::If) => {
                 let fragments = self.if_command()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.if_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::While) | Some(CompoundCmdKeyword::Until) => {
                 let (until, guard_body_pair) = self.loop_command()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.loop_command(until, guard_body_pair, io)?
             }
 
             Some(CompoundCmdKeyword::For) => {
                 let for_fragments = self.for_command()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.for_command(for_fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Case) => {
                 let fragments = self.case_command()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.case_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Brace) => {
                 let cmds = self.brace_group()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.brace_group(cmds, io)?
             }
 
             Some(CompoundCmdKeyword::Subshell) => {
                 let cmds = self.subshell()?;
-                self.may_close_quote(None, true);
                 let io = self.redirect_list()?;
                 self.builder.subshell(cmds, io)?
             }
 
-            Some(CompoundCmdKeyword::Macro(name)) => {
-                let cmds = self.macro_call(&[&name])?;
-                self.may_close_quote(None, true);
-
-                self.skip_whitespace();
-                let io = match self.iter.peek() {
-                    Some(
-                        Less | Great | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber
-                        | LessGreat,
-                    ) => self.redirect_list()?,
-                    // @kui8shi
-                    // FIXME: Macro of commands sometimes don't end with newline but with another command
-                    // which will be incorrectly treated as redirection words, leading to an error.
-                    // To ease the problem, we ban the redirection after macro of commands.
-                    // Offcourse by this dumb fix, the parser loses its complete support for redirection
-                    // following a macro of command. So we may need an alternative fix later.
-                    _ => vec![],
-                };
-
-                self.builder.macro_into_compound_command(cmds, io)?
-            }
-
             None => return Err(self.make_unexpected_err()),
         };
-        self.may_close_quote(None, false);
 
         Ok(cmd)
     }
@@ -2607,7 +1895,7 @@ where
         self.reserved_word(&[CASE])
             .map_err(|_| self.make_unexpected_err())?;
 
-        let word = match self.word_preserve_trailing_whitespace_raw_with_delim(None, true)? {
+        let word = match self.word_preserve_trailing_whitespace_raw_with_delim(None)? {
             Some(w) => self.builder.word(w)?,
             None => return Err(self.make_unexpected_err()),
         };
@@ -2639,16 +1927,13 @@ where
                 return Err(()).map_err(missing_esac!());
             }
 
-            self.stash_quote_context(QuoteContextKind::Other("patterns".into()));
             let mut patterns = Vec::new();
             loop {
                 // only see the outermost opening quote.
-                self.may_open_quote(Some(1), false);
                 match self.word()? {
                     Some(p) => patterns.push(p),
                     None => return Err(self.make_unexpected_err()),
                 }
-                self.may_close_quote(None, false);
                 self.skip_whitespace();
 
                 match self.iter.peek() {
@@ -2668,8 +1953,6 @@ where
                     _ => return Err(self.make_unexpected_err()),
                 }
             }
-            self.may_close_quote(None, false);
-            self.pop_quote_context();
 
             let pattern_comment = self.newline();
             let body = self.command_group_internal(CommandGroupDelimiters {
@@ -2720,497 +2003,6 @@ where
         })
     }
 
-    /// Parses a m4 macro call if present. If no macro call is present,
-    /// nothing is consumed from the token stream.
-    pub fn maybe_macro_call(&mut self) -> Option<String> {
-        if self.should_skip_macro_evaluation() {
-            return None;
-        }
-        let names = m4_macro::MACROS
-            .keys()
-            .map(|s| s.as_str())
-            .collect::<Vec<&str>>();
-        let (quote_open, _) = self.get_quotes();
-        if let Some(name) = self.peek_reserved_word_with_prefix(&names, Some(&quote_open)) {
-            if m4_macro::get_macro(name).unwrap().1.num_args_required > 0 {
-                // maybe the macro name is confusing (e.g. define).
-                // so we additionally check if '(' follows.
-                let mut m = self.iter.multipeek();
-                m.peek_next(); // skip macro name
-                if m.peek_next() == Some(&ParenOpen) {
-                    Some(name.to_string())
-                } else {
-                    None
-                }
-            } else {
-                Some(name.to_string())
-            }
-        } else if self.detect_user_macro {
-            // check if user-defined macro call
-            let found_quote_open = self.iter.peek() == Some(&quote_open);
-            let mut peeked = self.iter.multipeek();
-            if found_quote_open {
-                peeked.peek_next();
-            }
-            if let Some(Name(name)) = peeked.peek_next() {
-                let name = name.to_string();
-                // @kui8shi
-                // We ignore user-defined macro names with lower-case characters to
-                // distinct the macro calls and shell command/function calls without any arguments.
-                // It is just a heuristic.
-                // They are indistinguishable especially in the case of no arguments.
-                let is_macro_name = name.chars().next().is_some_and(|first| {
-                    (first.is_ascii() && first.is_alphabetic() && first.is_uppercase())
-                        || first == '_'
-                }) && name.chars().skip(1).all(|c| {
-                    (c.is_ascii() && c.is_alphabetic() && c.is_uppercase())
-                        || c.is_numeric()
-                        || c == '_'
-                });
-                if is_macro_name {
-                    match peeked.peek_next() {
-                        Some(&ParenOpen) | Some(&Newline) | None => Some(name),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Crafts a macro call
-    pub fn macro_call(&mut self, name_candidates: &[&str]) -> ParseResult<B::M4Macro, B::Error> {
-        use m4_macro::{M4Argument, M4Type};
-        let name = self
-            .reserved_word(name_candidates)
-            .map_err(|()| self.make_unexpected_err())?;
-        let (name, macro_entry, original_name) = match m4_macro::get_macro(name) {
-            Some((k, v, o)) => (k.as_ref(), Some(v), o),
-            None => (name, None, None),
-        };
-        let mut effects = macro_entry
-            .and_then(|sig| (!sig.has_no_exports()).then_some(sig))
-            .map(|sig| sig.clone().into());
-        if Some(&ParenOpen) == self.iter.peek() {
-            eat!(self, { ParenOpen => {} });
-        } else {
-            return Ok(self.builder.macro_call(
-                name.to_string(),
-                Vec::new(),
-                effects,
-                original_name.map(|s| s.to_string()),
-            )?);
-        }
-        self.stash_quote_context(QuoteContextKind::Macro(name.into()));
-        let (_, quote_close) = self.get_quotes();
-        let peeked_args = self.peek_macro_args()?;
-        let num_args = peeked_args.len();
-        let args = if let Some(signature) = macro_entry {
-            let arg_types = &signature.arg_types;
-            let _ret_type = signature.ret_type;
-            let repeat = signature.repeat;
-            let mut parsed_args = Vec::new();
-            let mut idx_arg_type = 0;
-            for (i, peeked_arg) in peeked_args.into_iter().enumerate() {
-                self.linebreak();
-                self.may_open_quote(None, false);
-                let found_macro = self
-                    .maybe_macro_call()
-                    .and_then(|name| m4_macro::get_macro(&name).map(|(_, v, _)| v.clone()))
-                    .is_some_and(|sig| {
-                        sig.ret_type
-                            .is_some_and(|ref t| t == &arg_types[idx_arg_type])
-                    });
-                let arg_type = if found_macro {
-                    match &arg_types[idx_arg_type] {
-                        &M4Type::Cmds => &M4Type::Cmds,
-                        _ => &M4Type::Word,
-                    }
-                } else {
-                    if arg_types.len() <= idx_arg_type {
-                        dbg!(&name, self.iter.pos(), &self.quote_stack);
-                        panic!();
-                    }
-                    &arg_types[idx_arg_type]
-                };
-                if matches!(&arg_type, M4Type::Cmds) {
-                    // To consume commands empty but with whitespaces/newlines.
-                    // `Parser::command_group` fails when parsing empty commands.
-                    self.linebreak();
-                }
-                let arg = match arg_type {
-                    M4Type::Lit | M4Type::AMCond => {
-                        self.skip_macro_arg()?;
-                        M4Argument::Literal(peeked_arg.clone())
-                    }
-                    M4Type::VarName(itself, f) => {
-                        let arg = peeked_arg.clone();
-                        if let Some(attr) = itself {
-                            effects.get_or_insert_default().add_shell_var(&arg, attr);
-                        }
-                        if let Some(f) = f {
-                            for (export_type, val) in f(&arg) {
-                                effects
-                                    .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
-                            }
-                        }
-                        self.skip_macro_arg()?;
-                        M4Argument::Literal(arg)
-                    }
-                    M4Type::Type(f) => {
-                        let arg = peeked_arg.clone();
-                        if let Some(f) = f {
-                            for (export_type, val) in f(&arg) {
-                                effects
-                                    .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
-                            }
-                        }
-                        self.skip_macro_arg()?;
-                        M4Argument::Literal(arg)
-                    }
-                    // FIXME: Macro body should be parsed as the same type as its return type.
-                    M4Type::Prog => {
-                        self.skip_macro_arg()?;
-                        M4Argument::Program(peeked_arg.clone())
-                    }
-                    M4Type::CPP => {
-                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
-                            Some(&[Comma, ParenClose]),
-                            false,
-                        )? {
-                            M4Argument::Word(self.builder.word(word)?)
-                        } else {
-                            self.skip_macro_arg()?;
-                            M4Argument::Literal(peeked_arg.clone())
-                        }
-                    }
-                    M4Type::Word => {
-                        self.skip_whitespace();
-                        if self.in_quote() {
-                            let words = self.word_interpolated_raw(
-                                Some(&[quote_close.clone()]),
-                                self.iter.pos(),
-                            )?;
-                            M4Argument::Word(
-                                self.builder
-                                    .word(Concat(words.into_iter().map(Simple).collect()))?,
-                            )
-                        } else if let Some(&Comma | &ParenClose) = self.iter.peek() {
-                            // we do not found any effective words.
-                            // empty arguments like '[]' were already skipped by `Parser::linebreak()`.
-                            M4Argument::Literal("".into())
-                        } else if let Some(word) = self
-                            .word_preserve_trailing_whitespace_raw_with_delim(
-                                Some(&[Comma]),
-                                false,
-                            )?
-                        {
-                            M4Argument::Word(self.builder.word(word)?)
-                        } else {
-                            self.skip_macro_arg()?;
-                            M4Argument::Literal(peeked_arg.clone())
-                        }
-                    }
-                    M4Type::Library(f) => {
-                        if self.in_quote() {
-                            let words = self.word_interpolated_raw(
-                                Some(&[quote_close.clone()]),
-                                self.iter.pos(),
-                            )?;
-                            M4Argument::Word(
-                                self.builder
-                                    .word(Concat(words.into_iter().map(Simple).collect()))?,
-                            )
-                        } else if let Some(word) = self
-                            .word_preserve_trailing_whitespace_raw_with_delim(
-                                Some(&[Comma]),
-                                false,
-                            )?
-                        {
-                            // TODO: How can we track side effects like defining `${var}_suffix`?
-                            M4Argument::Word(self.builder.word(word)?)
-                        } else {
-                            let arg = peeked_arg.clone();
-                            if let Some(f) = f {
-                                for (export_type, val) in f(&arg) {
-                                    effects
-                                        .get_or_insert_default()
-                                        .add_side_effect(&export_type, &val);
-                                }
-                            }
-                            M4Argument::Literal(arg)
-                        }
-                    }
-                    M4Type::Path(f) | M4Type::Symbol(f) => {
-                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
-                            Some(&[Comma]),
-                            false,
-                        )? {
-                            M4Argument::Word(self.builder.word(word)?)
-                        } else {
-                            let arg = peeked_arg.clone();
-                            if let Some(f) = f {
-                                for (export_type, val) in f(&arg) {
-                                    effects
-                                        .get_or_insert_default()
-                                        .add_side_effect(&export_type, &val);
-                                }
-                            }
-                            M4Argument::Literal(arg)
-                        }
-                    }
-                    M4Type::Arr(delim) => {
-                        let end = if i < num_args - 1 {
-                            // array should end with comma
-                            &Comma
-                        } else {
-                            // array should end with ')'
-                            &ParenClose
-                        };
-                        self.macro_arg_array(delim, end, &mut effects, None)?
-                    }
-                    M4Type::Symbols(delim, f)
-                    | M4Type::Paths(delim, f)
-                    | M4Type::Types(delim, f) => {
-                        let end = if i < num_args - 1 {
-                            // array should end with comma
-                            &Comma
-                        } else {
-                            // array should end with ')'
-                            &ParenClose
-                        };
-                        self.macro_arg_array(delim, end, &mut effects, *f)?
-                    }
-                    M4Type::Cmds => {
-                        self.may_close_quote(None, false);
-                        if let Some(&Comma | &ParenClose) = self.iter.peek() {
-                            // we do not found any effective commands.
-                            // empty arguments like '[]' were already skipped by `Parser::linebreak()`.
-                            M4Argument::Commands(Vec::new())
-                        } else {
-                            let delims = if i < num_args - 1 {
-                                // argument should end with comma
-                                &[Comma, quote_close.clone()]
-                            } else {
-                                // argument should end with ')'
-                                &[ParenClose, quote_close.clone()]
-                            };
-                            let cmds = self
-                                .command_group(CommandGroupDelimiters {
-                                    exact_tokens: delims,
-                                    ..Default::default()
-                                })?
-                                .commands;
-                            M4Argument::Commands(cmds)
-                        }
-                    }
-                    M4Type::Body => {
-                        self.skip_macro_arg()?;
-                        // we really wanted to analyze the type of macro body
-                        // but it needs a lot of analysis on the entire script
-                        // such work should be delegated to later process. so leave unknown.
-                        M4Argument::Unknown(peeked_arg.clone())
-                    }
-                    unknown => {
-                        eprintln!("Unexpected M4Type for arguments: {:?}", unknown);
-                        return Err(self.make_unexpected_err());
-                    }
-                };
-                self.linebreak();
-                self.may_close_quote(None, false);
-                self.linebreak();
-                eat!(self, { Comma => {}, ParenClose => {} });
-                idx_arg_type += 1;
-                if let Some((start, end)) = repeat {
-                    // repeat in [start..=end]
-                    let remain_size = num_args - i - 1;
-                    let repeat_size = end - start + 1;
-                    if (idx_arg_type > end) && remain_size >= repeat_size {
-                        idx_arg_type = start
-                    }
-                }
-                parsed_args.push(arg);
-            }
-            parsed_args
-        } else {
-            // user-defined macro arguments' types are unknown
-            while let Comma = self.skip_macro_arg()? {
-                eat!(self, {Comma => {}});
-            }
-            self.linebreak();
-            eat!(self, {ParenClose => {}});
-            peeked_args.into_iter().map(M4Argument::Unknown).collect()
-        };
-        assert!(!self.in_quote());
-        self.pop_quote_context();
-        // A whitespace is not allowed between m4 macro name and the opening parenthesis
-        // eat!(self, { ParenOpen => {} });
-        Ok(self.builder.macro_call(
-            name.to_string(),
-            args,
-            effects,
-            original_name.map(|s| s.to_string()),
-        )?)
-    }
-
-    // multipeek does not have pos() trait
-    fn skip_macro_arg(&mut self) -> ParseResult<Token, B::Error> {
-        let mut unquoted_paren_depth = 0;
-        loop {
-            self.may_open_quote(None, false);
-            self.may_close_quote(None, false);
-            let in_quote = self.in_quote();
-            match self.iter.peek() {
-                Some(&Comma) if !in_quote && unquoted_paren_depth == 0 => return Ok(Comma),
-                Some(&ParenOpen) if !in_quote => {
-                    unquoted_paren_depth += 1;
-                }
-                Some(&ParenClose) if !in_quote => {
-                    if unquoted_paren_depth < 1 {
-                        return Ok(ParenClose);
-                    }
-                    unquoted_paren_depth -= 1;
-                }
-                Some(_) => (),
-                None => return Err(ParseError::new(UnexpectedEOF)),
-            }
-            // consume token
-            self.iter.next();
-        }
-    }
-
-    fn macro_arg_array(
-        &mut self,
-        delim: &ArrayDelim,
-        end: &Token,
-        effects: &mut Option<SideEffect>,
-        func: Option<M4ExportFunc>,
-    ) -> ParseResult<M4Argument<B::Command, B::Word>, B::Error> {
-        let (_, quote_close) = self.get_quotes();
-        let mut arr = Vec::new();
-        // Parse array argument
-        loop {
-            self.skip_whitespace();
-            // @kui8shi
-            // FIXME: For brevity of the implementation, we include any tokens
-            // that is taken to be an end of shell word (e.g. parenthesis)
-            // to the delimiters of the array.
-            let word = match delim {
-                ArrayDelim::Blank => {
-                    let delims = &[Whitespace(" ".into()), Newline, end.clone()];
-                    eat_maybe!(self, { Newline => { self.iter.next(); } });
-                    self.word_preserve_trailing_whitespace_raw_with_delim(Some(delims), false)?
-                }
-                ArrayDelim::Comma => {
-                    eat_maybe!(self, { Newline => { self.iter.next(); } });
-                    let mut words =
-                        self.word_interpolated_raw(Some(&[Comma, end.clone()]), self.iter.pos())?;
-                    if words.len() == 0 {
-                        None
-                    } else if words.len() == 1 {
-                        Some(Single(Simple(words.pop().unwrap())))
-                    } else {
-                        Some(Concat(words.into_iter().map(Simple).collect()))
-                    }
-                }
-            };
-            if let Some(word) = word {
-                if let Some(f) = func {
-                    if let Single(Simple(ref frag)) = word {
-                        if let Some(elm) = frag.clone().into() {
-                            for (export_type, val) in f(&elm) {
-                                effects
-                                    .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
-                            }
-                        }
-                    }
-                }
-                // empty words are ignored (the case of None).
-                arr.push(self.builder.word(word)?);
-            }
-            let in_quote = self.in_quote();
-            if let Some(tok) = self.iter.peek() {
-                if tok == &quote_close {
-                    self.iter.next();
-                    *self.quote_level() -= 1;
-                    self.skip_whitespace();
-                    if self.iter.peek() == Some(end) {
-                        break;
-                    } else {
-                        return Err(self.make_unexpected_err());
-                    }
-                } else if tok == end && !in_quote {
-                    break;
-                } else if matches!(tok, Comma | Newline) && in_quote {
-                    self.iter.next();
-                }
-            }
-        }
-        self.may_close_quote(None, false);
-        Ok(M4Argument::Array(arr))
-    }
-
-    /// Parse arbitrary arguments of m4 macro call as raw literals,
-    /// The literal contains all chracters except leading/trailing whitespaces.
-    fn peek_macro_args(&mut self) -> ParseResult<Vec<String>, B::Error> {
-        let (quote_open, quote_close) = self.get_quotes();
-        let mut peeked = self.iter.multipeek();
-        let mut quote_level = 0;
-        let mut unquoted_paren_level = 0;
-        let mut literals = Vec::new();
-        let mut buf = String::new();
-        loop {
-            match peeked.peek_next() {
-                Some(&Comma) if quote_level == 0 && unquoted_paren_level == 0 => {
-                    literals.push(buf.trim().to_string());
-                    buf = String::new();
-                }
-                Some(&ParenOpen) if quote_level == 0 => {
-                    unquoted_paren_level += 1;
-                    if unquoted_paren_level >= 1 {
-                        buf.push_str(ParenOpen.as_str());
-                    }
-                }
-                Some(&ParenClose) if quote_level == 0 => {
-                    if unquoted_paren_level < 1 {
-                        literals.push(buf.trim().to_string());
-                        return Ok(literals);
-                    } else {
-                        buf.push_str(ParenClose.as_str());
-                    }
-                    unquoted_paren_level -= 1;
-                }
-                Some(Newline | Whitespace(_)) if buf.is_empty() => continue,
-                Some(EmptyQuotes) if quote_level == 0 => continue,
-                Some(tok) => {
-                    if tok == &quote_open {
-                        quote_level += 1;
-                        if quote_level == 1 {
-                            // The quote is outermost
-                            continue;
-                        }
-                    } else if tok == &quote_close {
-                        quote_level -= 1;
-                        if quote_level == 0 {
-                            // The quote is outermost
-                            continue;
-                        }
-                    }
-                    buf.push_str(tok.as_str());
-                }
-                None => return Err(ParseError::new(UnexpectedEOF)),
-            }
-        }
-    }
-
     /// Parses a single function declaration if present. If no function is present,
     /// nothing is consumed from the token stream.
     pub fn maybe_function_declaration(
@@ -3223,12 +2015,12 @@ where
         let is_fn = {
             let mut peeked = self.iter.multipeek();
             if let Some(&Name(_)) = peeked.peek_next() {
-                match peeked.peek_next() {
-                    Some(&Whitespace(_)) => Some(&ParenOpen) == peeked.peek_next(),
-                    // @kui8shi
-                    // We expect whitespaces between the function name and the parentheses to distinct the function declaration from m4 macro calls.
-                    // It does not adhere to the standard but I think this simple distinction works in most cases.
-                    _ => false,
+                loop {
+                    match peeked.peek_next() {
+                        Some(&Whitespace(_)) => continue,
+                        Some(&ParenOpen) => break true,
+                        _ => break false,
+                    }
                 }
             } else {
                 false
@@ -3247,8 +2039,6 @@ where
     /// A function declaration must either begin with the `function` reserved word, or
     /// the name of the function must be followed by `()`. Whitespace is allowed between
     /// the name and `(`, and whitespace is allowed between `()`.
-    /// @kui8shi
-    /// We disallowed whitespace between '()' for the distinction from m4 macro calls.
     pub fn function_declaration(&mut self) -> ParseResult<B::PipeableCommand, B::Error> {
         let (name, post_name_comments, body) = self.function_declaration_internal()?;
         Ok(self
@@ -3364,17 +2154,6 @@ where
 
         match self.iter.peek() {
             Some(&Pound) => {
-                let comment = self
-                    .iter
-                    .by_ref()
-                    .take_while(|t| t != &Newline)
-                    .collect::<Vec<_>>();
-                Some(builder::Newline(Some(concat_tokens(&comment))))
-            }
-
-            // @kui8shi
-            // Treats any line which starts with the word "dnl" as a comment.
-            Some(Name(s)) if s == "dnl" => {
                 let comment = self
                     .iter
                     .by_ref()
@@ -3544,9 +2323,7 @@ where
         &mut self,
         cfg: CommandGroupDelimiters<'_, '_, '_>,
     ) -> ParseResult<builder::CommandGroup<B::Command>, B::Error> {
-        self.may_open_quote(None, false);
         let group = self.command_group_internal(cfg)?;
-        self.may_close_quote(None, false);
         if group.commands.is_empty() {
             Err(self.make_unexpected_err())
         } else {
@@ -3559,7 +2336,7 @@ where
         &mut self,
         cfg: CommandGroupDelimiters<'_, '_, '_>,
     ) -> ParseResult<builder::CommandGroup<B::Command>, B::Error> {
-        let found_delim = |slf: &mut AutoconfParser<_, _>| {
+        let found_delim = |slf: &mut AutomakeParser<_, _>| {
             let found_exact = !cfg.exact_tokens.is_empty()
                 && slf
                     .iter
@@ -3576,12 +2353,6 @@ where
         let mut trailing_comments = Vec::new();
 
         loop {
-            if self.is_closing_quote() && !self.may_close_quote(None, false) {
-                // in most cases, quotes encountering here is strange ones.
-                // we alywas unwrap the quotes around the command independent of quote context
-                self.iter.next();
-            }
-
             let start_pos = self.iter.pos();
 
             let leading_comments = self.linebreak();
@@ -3590,12 +2361,6 @@ where
                 debug_assert!(trailing_comments.is_empty());
                 trailing_comments = leading_comments;
                 break;
-            }
-
-            if self.is_opening_quote() && !self.may_open_quote(None, false) {
-                // in most cases, quotes encountering here is strange ones.
-                // we always unwrap the quotes around the command independent of quote context
-                self.iter.next();
             }
 
             cmds.push(self.complete_command_with_leading_comments(leading_comments, start_pos)?);
@@ -3994,4 +2759,3 @@ fn concat_tokens(tokens: &[Token]) -> String {
     s.extend(tokens.iter().map(Token::as_str));
     s
 }
-

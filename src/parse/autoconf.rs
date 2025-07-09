@@ -1,18 +1,19 @@
-//! The definition of a parser (and related methods) for the shell language.
+//! The definition of a parser (and related methods) for the autoconf language.
 // FIXME: consider parsing [[ exr ]] as keywords? otherwise [[ foo && bar ]] won't get parsed right
 // FIXME: consider parsing out array index syntax? (e.g. ${array[some index]}
 // FIXME: arithmetic substitutions don't currently support param/comand substitutions
 
-use std::backtrace::{Backtrace, BacktraceStatus};
 use std::convert::From;
-use std::error::Error;
 use std::fmt;
 use std::iter::empty as empty_iter;
 use std::mem;
 use std::ops::{AddAssign, Not, SubAssign};
 use std::str::FromStr;
 
-use self::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
+use super::iter::{
+    PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator, UnmatchedError,
+};
+use super::*;
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, M4Builder, ShellBuilder, WordKind};
@@ -20,24 +21,6 @@ use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
 use crate::token::Token;
-use crate::token::Token::*;
-
-pub(crate) mod iter;
-
-const CASE: &str = "case";
-const DO: &str = "do";
-const DONE: &str = "done";
-const ELIF: &str = "elif";
-const ELSE: &str = "else";
-const ESAC: &str = "esac";
-const FI: &str = "fi";
-const FOR: &str = "for";
-const FUNCTION: &str = "function";
-const IF: &str = "if";
-const IN: &str = "in";
-const THEN: &str = "then";
-const UNTIL: &str = "until";
-const WHILE: &str = "while";
 
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
@@ -52,204 +35,8 @@ pub type NodeParser<I> = AutoconfParser<I, builder::NodeBuilder<String>>;
 /// A specialized `Result` type for parsing shell commands.
 pub type ParseResult<T, E> = Result<T, ParseError<E>>;
 
-/// Indicates a character/token position in the original source.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct SourcePos {
-    /// The byte offset since the start of parsing.
-    pub byte: usize,
-    /// The line offset since the start of parsing, useful for error messages.
-    pub line: usize,
-    /// The column offset since the start of parsing, useful for error messages.
-    pub col: usize,
-}
-
-impl Default for SourcePos {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SourcePos {
-    /// Constructs a new, starting, source position
-    pub fn new() -> SourcePos {
-        SourcePos {
-            byte: 0,
-            line: 1,
-            col: 1,
-        }
-    }
-
-    /// Increments self using the length of the provided token.
-    pub fn advance(&mut self, next: &Token) {
-        let newlines = match *next {
-            // Most of these should not have any newlines
-            // embedded within them, but permitting external
-            // tokenizers means we should sanity check anyway.
-            Name(ref s) | Literal(ref s) | Whitespace(ref s) => {
-                s.chars().filter(|&c| c == '\n').count()
-            }
-
-            Newline => 1,
-            _ => 0,
-        };
-
-        let tok_len = next.len();
-        self.byte += tok_len;
-        self.line += newlines;
-        self.col = if newlines == 0 { self.col + tok_len } else { 1 };
-    }
-
-    /// Increments self by `num_tab` tab characters
-    fn advance_tabs(&mut self, num_tab: usize) {
-        self.byte += num_tab;
-        self.col += num_tab;
-    }
-}
-
-/// Wrapper type of `ParseErrorKind` to manage backtrace.
-#[derive(Debug)]
-pub struct ParseError<T> {
-    /// Internal error field.
-    pub kind: ParseErrorKind<T>,
-    /// Take backtrace when the error happened.
-    backtrace: Backtrace,
-}
-
-impl<T> ParseError<T> {
-    /// Create a new ParseError from the error kind and captured backtrace.
-    pub fn new(kind: ParseErrorKind<T>) -> Self {
-        ParseError {
-            kind,
-            backtrace: Backtrace::capture(),
-        }
-    }
-
-    /// Return reference of backtrace.
-    pub fn backtrace(&self) -> &Backtrace {
-        &self.backtrace
-    }
-}
-
-impl<T> From<ParseErrorKind<T>> for ParseError<T> {
-    fn from(value: ParseErrorKind<T>) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<T> PartialEq for ParseError<T>
-where
-    T: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
-
 use ParseErrorKind::*;
-
-/// The error type which is returned from parsing shell commands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseErrorKind<T> {
-    /// Encountered a word that could not be interpreted as a valid file descriptor.
-    /// Stores the start and end position of the invalid word.
-    BadFd(SourcePos, SourcePos),
-    /// Encountered a `Token::Literal` where expecting a `Token::Name`.
-    BadIdent(String, SourcePos),
-    /// Encountered a bad token inside of `${...}`.
-    BadSubst(Token, SourcePos),
-    /// Encountered EOF while looking for a match for the specified token.
-    /// Stores position of opening token.
-    Unmatched(Token, SourcePos),
-    /// Did not find a reserved keyword within a command. The first String is the
-    /// command being parsed, followed by the position of where it starts. Next
-    /// is the missing keyword followed by the position of where the parse
-    /// expected to have encountered it.
-    IncompleteCmd(&'static str, SourcePos, &'static str, SourcePos),
-    /// Encountered a token not appropriate for the current context.
-    Unexpected(Token, SourcePos),
-    /// Encountered the end of input while expecting additional tokens.
-    UnexpectedEOF,
-    /// A custom error returned by the AST builder.
-    Custom(T),
-}
-
-impl<T: Error + 'static> Error for ParseError<T> {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match &self.kind {
-            Custom(e) => Some(e),
-            _ => None,
-        }
-    }
-    // FIXME(breaking): change this to be `source`, breaking because it
-    // would require a new 'static bound on T
-    // fn cause(&self) -> Option<&dyn Error> {
-    //     match *self.kind {
-    //         ParseErrorKind::BadFd(..)
-    //         | ParseErrorKind::BadIdent(..)
-    //         | ParseErrorKind::BadSubst(..)
-    //         | ParseErrorKind::Unmatched(..)
-    //         | ParseErrorKind::IncompleteCmd(..)
-    //         | ParseErrorKind::Unexpected(..)
-    //         | ParseErrorKind::UnexpectedEOF => None,
-    //         ParseErrorKind::Custom(ref e) => Some(e),
-    //     }
-    // }
-}
-
-impl<T: fmt::Display> fmt::Display for ParseError<T> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            BadFd(ref start, ref end) => write!(
-                fmt,
-                "file descriptor found between lines {} - {} cannot possibly be a valid",
-                start, end
-            ),
-            BadIdent(ref id, pos) => {
-                write!(fmt, "not a valid identifier {}: {}", pos, id)
-            }
-            BadSubst(ref t, pos) => {
-                write!(fmt, "bad substitution {}: invalid token: {}", pos, t)
-            }
-            Unmatched(ref t, pos) => {
-                write!(fmt, "unmatched `{}` starting on line {}", t, pos)
-            }
-
-            IncompleteCmd(c, start, kw, kw_pos) => write!(
-                fmt,
-                "did not find `{}` keyword on line {}, in `{}` command which starts on line {}",
-                kw, kw_pos, c, start
-            ),
-
-            // When printing unexpected newlines, print \n instead to avoid confusingly formatted messages
-            Unexpected(Newline, pos) => {
-                write!(fmt, "found unexpected token on line {}: \\n", pos)
-            }
-            Unexpected(ref t, pos) => {
-                write!(fmt, "found unexpected token on line {}: {}", pos, t)
-            }
-
-            UnexpectedEOF => fmt.write_str("unexpected end of input"),
-            Custom(ref e) => write!(fmt, "{}", e),
-        }?;
-        if self.backtrace().status() == BacktraceStatus::Captured {
-            write!(fmt, "\nBacktrace:\n{}", self.backtrace())
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl<T> From<T> for ParseError<T> {
-    fn from(err: T) -> Self {
-        ParseError::new(Custom(err))
-    }
-}
-
-impl fmt::Display for SourcePos {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{}:{}", self.line, self.col)
-    }
-}
+use Token::*;
 
 /// Used to indicate what kind of compound command could be parsed next.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -264,76 +51,16 @@ enum CompoundCmdKeyword {
     Macro(String),
 }
 
-/// Used to configure when `Parser::command_group` stops parsing commands.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
-pub struct CommandGroupDelimiters<'a, 'b, 'c> {
-    /// Any token which appears after a complete command separator (e.g. `;`, `&`, or a
-    /// newline) will be considered a delimeter for the command group.
-    pub reserved_tokens: &'a [Token],
-    /// Any `Literal` or `Name` token that matches any of these entries completely
-    /// *and* appear after a complete command will be considered a delimeter.
-    pub reserved_words: &'b [&'static str],
-    /// Any token which matches this provided set will be considered a delimeter.
-    pub exact_tokens: &'c [Token],
-}
-
-/// An `Iterator` adapter around a `Parser`.
-///
-/// This iterator is `fused`, that is, if the underlying parser either yields
-/// no command, or an error, no further commands (or errors) will be yielded.
-///
-/// This is because the parser does not do any error handling or backtracking
-/// on errors, thus trying to parse another command after an error is not
-/// well defined, and will either fail as well, or will produce an incorrect
-/// result.
-#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-#[derive(Debug)]
-pub struct ParserIterator<I, B> {
-    /// The underlying parser to poll for complete commands.
-    /// A `None` value indicates the stream has been exhausted.
-    parser: Option<AutoconfParser<I, B>>,
-}
-
-impl<I, B> ParserIterator<I, B> {
-    /// Construct a new adapter with a given parser.
-    fn new(parser: AutoconfParser<I, B>) -> Self {
-        ParserIterator {
-            parser: Some(parser),
-        }
-    }
-}
-
-impl<I, B> std::iter::FusedIterator for ParserIterator<I, B>
+impl<I, B> Parser for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
     B::WordFragment: Into<Option<String>> + Clone,
 {
-}
-
-impl<I, B> Iterator for ParserIterator<I, B>
-where
-    I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
-    B::WordFragment: Into<Option<String>> + Clone,
-{
-    type Item = ParseResult<B::Command, B::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.parser.as_mut().map(AutoconfParser::complete_command) {
-            None => None,
-            Some(ret) => match ret {
-                Ok(Some(c)) => Some(Ok(c)),
-                Ok(None) => {
-                    let _ = self.parser.take();
-                    None
-                }
-                Err(e) => {
-                    let _ = self.parser.take();
-                    Some(Err(e))
-                }
-            },
-        }
+    type TopLevel = B::Command;
+    type Error = B::Error;
+    fn parse(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
+        self.complete_command()
     }
 }
 
@@ -343,7 +70,7 @@ where
     B: ShellBuilder + M4Builder,
     B::WordFragment: Into<Option<String>> + Clone,
 {
-    type IntoIter = ParserIterator<I, B>;
+    type IntoIter = ParserIterator<Self>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -462,8 +189,7 @@ impl<I, L> AutoconfParser<I, builder::NodeBuilder<L>>
 where
     I: Iterator<Item = Token>,
     L: Into<String> + From<String> + Clone + fmt::Debug,
-    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment:
-        Into<Option<String>> + Clone,
+    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment: Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
@@ -1208,7 +934,7 @@ where
 
         macro_rules! try_map {
             ($result:expr) => {
-                $result.map_err(|e: iter::UnmatchedError| ParseError::new(Unmatched(e.0, e.1)))?
+                $result.map_err(|e: UnmatchedError| ParseError::new(Unmatched(e.0, e.1)))?
             };
         }
 
@@ -4027,22 +3753,22 @@ fn concat_tokens(tokens: &[Token]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::ast::builder::Newline;
     use crate::ast::Command::*;
     use crate::ast::CompoundCommandKind::*;
     use crate::ast::*;
     use crate::lexer::Lexer;
     use crate::m4_macro::*;
-    use crate::autoconf::*;
 
     fn make_parser(src: &str) -> DefaultParser<Lexer<std::str::Chars<'_>>> {
         DefaultParser::new(Lexer::new(src.chars()))
     }
 
     fn word(s: &str) -> TopLevelWord<String> {
-        TopLevelWord(ComplexWord::Single(Word::Simple(MayM4::Shell(SimpleWord::Literal(
-            String::from(s),
-        )))))
+        TopLevelWord(ComplexWord::Single(Word::Simple(MayM4::Shell(
+            SimpleWord::Literal(String::from(s)),
+        ))))
     }
 
     fn cmd_args_simple(cmd: &str, args: &[&str]) -> Box<DefaultSimpleCommand> {

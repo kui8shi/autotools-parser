@@ -4,7 +4,7 @@ use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::Parameter::*;
 use autoconf_parser::ast::ParameterSubstitution::*;
 use autoconf_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
-use autoconf_parser::autoconf::ParseErrorKind::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;

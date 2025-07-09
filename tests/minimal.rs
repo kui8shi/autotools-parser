@@ -7,7 +7,7 @@ use autoconf_parser::lexer::Lexer;
 use autoconf_parser::m4_macro::M4Argument;
 use autoconf_parser::m4_macro::SideEffect;
 use autoconf_parser::m4_macro::Var;
-use autoconf_parser::autoconf::MinimalParser;
+use autoconf_parser::parse::autoconf::MinimalParser;
 mod minimal_util;
 use minimal_util::*;
 

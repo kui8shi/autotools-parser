@@ -10,7 +10,7 @@ use autoconf_parser::ast::PatternBodyPair;
 use autoconf_parser::ast::{Arithmetic, Parameter, ParameterSubstitution};
 use autoconf_parser::m4_macro::M4Argument;
 use autoconf_parser::m4_macro::M4Macro;
-use autoconf_parser::autoconf::*;
+use autoconf_parser::parse::autoconf::MinimalParser;
 
 pub type MinimalWord = Word<String, MinimalCommand>;
 pub type MinimalWordFragment = WordFragment<String, MinimalCommand, MinimalWord>;

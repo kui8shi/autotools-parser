@@ -3,7 +3,7 @@ use autoconf_parser::ast::ComplexWord::*;
 use autoconf_parser::ast::Redirect::Heredoc;
 use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
-use autoconf_parser::autoconf::ParseErrorKind::*;
+use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;
 
 mod parse_support;

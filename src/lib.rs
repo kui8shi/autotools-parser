@@ -44,7 +44,6 @@
 pub mod ast;
 pub mod lexer;
 pub mod m4_macro;
-pub mod autoconf;
-pub mod automake;
+pub mod parse;
 pub mod preprocess;
 pub mod token;
