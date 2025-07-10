@@ -7,6 +7,7 @@ use super::{
     SeparatorKind, ShellBuilder, WordKind,
 };
 
+use crate::ast::builder::{Coalesce, CoalesceResult};
 use crate::ast::minimal::Command::*;
 use crate::ast::{map_arith, map_param};
 use crate::{
@@ -479,6 +480,7 @@ where
         };
         Ok(simple)
     }
+
     /// Constructs a `ast::Word` from the provided input.
     fn word(
         &mut self,
@@ -504,7 +506,7 @@ where
             Ok(word)
         };
 
-        let word = match kind {
+        let word = match compress(kind) {
             ConcatWordKind::Single(s) => {
                 map_quote_word(s)?.map_or(Word::Empty, |w| Word::Single(w))
             }
@@ -540,12 +542,12 @@ where
     }
 }
 
-pub(crate) fn parse_condition<T, C>(
-    words: &[Word<T, C>],
-) -> Result<Operator<Word<T, C>>, BuilderError>
+pub(crate) fn parse_condition<L, C>(
+    words: &[Word<L, C>],
+) -> Result<Operator<Word<L, C>>, BuilderError>
 where
-    T: Into<String> + Clone,
-    Word<T, C>: Clone,
+    L: Into<String> + Clone + Debug,
+    Word<L, C>: Clone + Debug,
 {
     enum OperatorKind {
         Eq,
@@ -566,6 +568,7 @@ where
     let mut rhs = Word::Empty;
     let mut operator_kind = None;
     let mut flipped = false;
+    dbg!(&words);
     for word in words {
         if operator_kind.is_none() {
             if let Word::Single(w) = &word {
@@ -623,11 +626,11 @@ where
 
 type MinimalWord<V> = Word<V, CommandWrapper<V>>;
 
-fn make_condition<V>(
-    cmd: CommandWrapper<V>,
-) -> Result<Condition<CommandWrapper<V>, MinimalWord<V>>, BuilderError>
+fn make_condition<L>(
+    cmd: CommandWrapper<L>,
+) -> Result<Condition<CommandWrapper<L>, MinimalWord<L>>, BuilderError>
 where
-    V: Into<String> + Clone + Debug,
+    L: Into<String> + Clone + Debug,
 {
     match &cmd.cmd {
         Cmd(words) => {
@@ -661,4 +664,71 @@ where
         _ => None,
     }
     .map_or(Ok(Condition::ReturnZero(Box::new(cmd))), Ok)
+}
+
+fn compress<L, C, W>(
+    word: ConcatWordKind<WordFragment<L, C, W>>,
+) -> ConcatWordKind<WordFragment<L, C, W>>
+where
+    L: Into<String> + From<String>,
+{
+    fn coalesce_m4_word<L, C, W>(
+        a: WordFragment<L, C, W>,
+        b: WordFragment<L, C, W>,
+    ) -> CoalesceResult<WordFragment<L, C, W>>
+    where
+        L: Into<String> + From<String>,
+    {
+        use crate::ast::minimal::WordFragment::Literal;
+        match (a, b) {
+            (Literal(a), Literal(b)) => {
+                let (mut a, b) = (a.into(), b.into());
+                a.push_str(&b);
+                Ok(Literal(a.into()))
+            }
+            (a, b) => Err((a, b)),
+        }
+    }
+
+    fn coalesce_quote_word<L, C, W>(
+        a: QuoteWordKind<WordFragment<L, C, W>>,
+        b: QuoteWordKind<WordFragment<L, C, W>>,
+    ) -> CoalesceResult<QuoteWordKind<WordFragment<L, C, W>>>
+    where
+        L: Into<String> + From<String>,
+    {
+        use QuoteWordKind::*;
+        match (a, b) {
+            (Simple(a), Simple(b)) => coalesce_m4_word(a, b)
+                .map(|s| Simple(s))
+                .map_err(|(a, b)| (Simple(a), Simple(b))),
+            (SingleQuoted(mut a), SingleQuoted(b)) => {
+                a.push_str(&b);
+                Ok(SingleQuoted(a))
+            }
+            (DoubleQuoted(a), DoubleQuoted(b)) => {
+                let quoted =
+                    Coalesce::new(a.into_iter().chain(b), |a, b| coalesce_m4_word(a, b)).collect();
+                Ok(DoubleQuoted(quoted))
+            }
+            (a, b) => Err((a, b)),
+        }
+    }
+
+    use crate::ast::builder::ConcatWordKind::*;
+    use QuoteWordKind::*;
+    match word {
+        Single(s) => Single(match s {
+            s @ Simple(_) | s @ SingleQuoted(_) => s,
+            DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_m4_word).collect()),
+        }),
+        Concat(v) => {
+            let mut body: Vec<_> = Coalesce::new(v, coalesce_quote_word).collect();
+            if body.len() == 1 {
+                Single(body.pop().unwrap())
+            } else {
+                Concat(body)
+            }
+        }
+    }
 }

@@ -4,7 +4,7 @@
 
 use autoconf_parser::ast;
 use autoconf_parser::lexer::Lexer;
-use autoconf_parser::autoconf::DefaultParser;
+use autoconf_parser::parse::autoconf::DefaultParser;
 
 use std::io::{stdin, Read};
 

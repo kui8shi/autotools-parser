@@ -13,7 +13,10 @@ use std::str::FromStr;
 use super::iter::{
     PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator, UnmatchedError,
 };
-use super::*;
+use super::{
+    CommandGroupDelimiters, ParseError, ParseErrorKind, ParseResult, Parser, ParserIterator,
+    SourcePos, CASE, DO, DONE, ELIF, ELSE, ESAC, FI, FOR, FUNCTION, IF, IN, THEN, UNTIL, WHILE,
+};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, M4Builder, ShellBuilder, WordKind};
@@ -31,9 +34,6 @@ pub type MinimalParser<I> = AutoconfParser<I, builder::MinimalBuilder<String>>;
 
 /// A parser which will use a node-based AST builder implementation.
 pub type NodeParser<I> = AutoconfParser<I, builder::NodeBuilder<String>>;
-
-/// A specialized `Result` type for parsing shell commands.
-pub type ParseResult<T, E> = Result<T, ParseError<E>>;
 
 use ParseErrorKind::*;
 use Token::*;
@@ -93,13 +93,13 @@ where
 /// library provides both a default `Token` lexer, as well as an AST `Builder`.
 ///
 /// ```
-/// use autoconf_parser::ast::builder::{Builder, RcBuilder};
+/// use autoconf_parser::ast::builder::StringBuilder;
 /// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::Parser;
+/// use autoconf_parser::parse::autoconf::AutoconfParser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
-/// let mut parser = Parser::with_builder(lexer, RcBuilder::new(), false);
+/// let mut parser = AutoconfParser::with_builder(lexer, StringBuilder::new(), false);
 /// assert!(parser.complete_command().unwrap().is_some());
 /// ```
 ///
@@ -108,7 +108,7 @@ where
 ///
 /// ```
 /// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::DefaultParser;
+/// use autoconf_parser::parse::autoconf::DefaultParser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
@@ -1188,9 +1188,13 @@ where
             if body.len() > 1 {
                 Concat(body.into_iter().map(Simple).collect())
             } else {
-                let body = body.pop().unwrap();
-                // _or(self.builder.word_fragment(WordKind::Literal(String::new())));
-                Single(Simple(body))
+                let word = match body.pop() {
+                    Some(w) => w,
+                    None => self
+                        .builder
+                        .word_fragment(WordKind::Literal(String::new()))?,
+                };
+                Single(Simple(word))
             }
         };
 

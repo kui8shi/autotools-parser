@@ -11,6 +11,7 @@ use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::parse::autoconf::DefaultParser;
+use autoconf_parser::parse::SourcePos;
 use autoconf_parser::token::Token;
 
 pub fn lit(s: &str) -> DefaultWord {

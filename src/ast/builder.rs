@@ -734,3 +734,59 @@ impl Display for BuilderError {
         }
     }
 }
+
+#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
+struct Coalesce<I: Iterator, F> {
+    iter: I,
+    cur: Option<I::Item>,
+    func: F,
+}
+
+impl<I: Iterator, F> Coalesce<I, F> {
+    fn new<T>(iter: T, func: F) -> Self
+    where
+        T: IntoIterator<IntoIter = I, Item = I::Item>,
+    {
+        Coalesce {
+            iter: iter.into_iter(),
+            cur: None,
+            func,
+        }
+    }
+}
+
+type CoalesceResult<T> = Result<T, (T, T)>;
+impl<I, F> Iterator for Coalesce<I, F>
+where
+    I: Iterator,
+    F: FnMut(I::Item, I::Item) -> CoalesceResult<I::Item>,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let cur = self.cur.take().or_else(|| self.iter.next());
+        let (mut left, mut right) = match (cur, self.iter.next()) {
+            (Some(l), Some(r)) => (l, r),
+            (Some(l), None) | (None, Some(l)) => return Some(l),
+            (None, None) => return None,
+        };
+
+        loop {
+            match (self.func)(left, right) {
+                Ok(combined) => match self.iter.next() {
+                    Some(next) => {
+                        left = combined;
+                        right = next;
+                    }
+                    None => return Some(combined),
+                },
+
+                Err((left, right)) => {
+                    debug_assert!(self.cur.is_none());
+                    self.cur = Some(right);
+                    return Some(left);
+                }
+            }
+        }
+    }
+}

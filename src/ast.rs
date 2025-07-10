@@ -633,7 +633,8 @@ impl_top_level_cmd! {
 /// A type alias for the default hiearchy for representing word fragments.
 pub type DefaultWordFragment = M4Word<String, TopLevelCommand<String>, TopLevelWord<String>>;
 
-type M4Word<L, C, W> = MayM4<
+/// A type alias for word fragments
+pub(crate) type M4Word<L, C, W> = MayM4<
     SimpleWord<L, Parameter<L>, Box<ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>>>,
     M4Macro<C, W>,
 >;

@@ -5,29 +5,19 @@ use std::iter::empty as empty_iter;
 use std::mem;
 use std::str::FromStr;
 
-use super::iter::{PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator};
-use super::*;
+use super::iter::{
+    PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator, UnmatchedError,
+};
+use super::{
+    CommandGroupDelimiters, ParseError, ParseErrorKind, ParseResult, Parser, ParserIterator,
+    SourcePos, CASE, DO, DONE, ELIF, ELSE, ESAC, FI, FOR, FUNCTION, IF, IN, THEN, UNTIL, WHILE,
+};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, ShellBuilder, WordKind};
 use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::token::Token;
-
-const CASE: &str = "case";
-const DO: &str = "do";
-const DONE: &str = "done";
-const ELIF: &str = "elif";
-const ELSE: &str = "else";
-const ESAC: &str = "esac";
-const FI: &str = "fi";
-const FOR: &str = "for";
-const FUNCTION: &str = "function";
-const IF: &str = "if";
-const IN: &str = "in";
-const THEN: &str = "then";
-const UNTIL: &str = "until";
-const WHILE: &str = "while";
 
 /// A parser which will use a default AST builder implementation,
 /// yielding results in terms of types defined in the `ast` module.
@@ -612,7 +602,7 @@ where
 
         macro_rules! try_map {
             ($result:expr) => {
-                $result.map_err(|e: iter::UnmatchedError| ParseError::new(Unmatched(e.0, e.1)))?
+                $result.map_err(|e: UnmatchedError| ParseError::new(Unmatched(e.0, e.1)))?
             };
         }
 
@@ -925,6 +915,14 @@ where
         }
         let mut words = Vec::new();
         loop {
+            if let Some(delims) = delims {
+                if let Some(tok) = self.iter.peek() {
+                    if delims.iter().any(|t| t == tok) {
+                        break;
+                    }
+                }
+            }
+
             match self.iter.peek() {
                 Some(&CurlyOpen) | Some(&CurlyClose) | Some(&SquareOpen) | Some(&SquareClose)
                 | Some(&SingleQuote) | Some(&DoubleQuote) | Some(&Pound) | Some(&Star)

@@ -1,11 +1,25 @@
-use crate::ast::builder::*;
-use crate::ast::*;
+use crate::ast::builder::{
+    BuilderBase, Coalesce, CoalesceResult, M4Builder, QuoteWordKind, ShellBuilder, WordKind,
+};
+use crate::ast::{
+    map_arith, map_param, AndOr, AndOrList, AtomicShellPipeableCommand, AtomicTopLevelCommand,
+    AtomicTopLevelWord, Command, ComplexWord, CompoundCommand, CompoundCommandKind, GuardBodyPair,
+    ListableCommand, M4Word, MayM4, ParameterSubstitution, PatternBodyPair, PipeableCommand,
+    Redirect, RedirectOrCmdWord, RedirectOrEnvVar, ShellCompoundCommand, ShellPipeableCommand,
+    ShellWord, SimpleCommand, SimpleWord, TopLevelCommand, TopLevelWord, Word,
+};
+use crate::m4_macro::{M4Argument, M4Macro, SideEffect};
 use std::default::Default;
 use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
 use void::Void;
+
+use super::{
+    CaseFragments, CommandGroup, ConcatWordKind, ForFragments, GuardBodyPairGroup, IfFragments,
+    LoopKind, Newline, RedirectKind, SeparatorKind,
+};
 
 /// A macro for defining a default builder, its boilerplate, and delegating
 /// the `Builder` trait to its respective `CoreBuilder` type.
@@ -59,7 +73,7 @@ macro_rules! default_builder {
 
         impl<T> Copy for $Builder<T> {}
 
-        impl<T: From<String>> BuilderBase for $Builder<T> {
+        impl<T: Into<String> + From<String>> BuilderBase for $Builder<T> {
             type Command         = $Cmd<T>;
             type CompoundCommand = ShellCompoundCommand<T, Self::Command, Self::Word>;
             type Word            = $Word<T>;
@@ -68,7 +82,7 @@ macro_rules! default_builder {
             type Error           = Void;
         }
 
-        impl<T: From<String>> M4Builder for $Builder<T> {
+        impl<T: Into<String> + From<String>> M4Builder for $Builder<T> {
             type M4Macro         = M4Macro<Self::Command, Self::Word>;
             type M4Argument      = M4Argument<Self::Command, Self::Word>;
             fn macro_into_compound_command(
@@ -98,7 +112,7 @@ macro_rules! default_builder {
 
         }
 
-        impl<T: From<String>> ShellBuilder for $Builder<T> {
+        impl<T: Into<String> + From<String>> ShellBuilder for $Builder<T> {
             type CommandList     = AndOrList<Self::ListableCommand>;
             type ListableCommand = ListableCommand<Self::PipeableCommand>;
             type PipeableCommand = $PipeableCmd<T, Self::Command, Self::Word>;
@@ -324,12 +338,12 @@ impl<L, C, W, F> BuilderBase for AutoconfFullBuilderBase<L, C, W, F> {
     type Error = Void;
 }
 
-impl<T, C, W, F> M4Builder for AutoconfFullBuilderBase<T, C, W, F>
+impl<L, C, W, F> M4Builder for AutoconfFullBuilderBase<L, C, W, F>
 where
-    T: From<String>,
-    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<T, C, W, F>>>>>,
-    W: From<ShellWord<T, C, W>>,
-    F: From<ShellCompoundCommand<T, C, W>>,
+    L: From<String>,
+    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<L, C, W, F>>>>>,
+    W: From<ShellWord<L, C, W>>,
+    F: From<ShellCompoundCommand<L, C, W>>,
 {
     type M4Macro = M4Macro<Self::Command, Self::Word>;
     type M4Argument = M4Argument<Self::Command, Self::Word>;
@@ -367,16 +381,16 @@ where
     }
 }
 
-impl<T, C, W, F> ShellBuilder for AutoconfFullBuilderBase<T, C, W, F>
+impl<L, C, W, F> ShellBuilder for AutoconfFullBuilderBase<L, C, W, F>
 where
-    T: From<String>,
-    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<T, C, W, F>>>>>,
-    W: From<ShellWord<T, C, W>>,
-    F: From<ShellCompoundCommand<T, C, W>>,
+    L: Into<String> + From<String>,
+    C: From<Command<AndOrList<ListableCommand<BuilderPipeableCommand<L, C, W, F>>>>>,
+    W: From<ShellWord<L, C, W>>,
+    F: From<ShellCompoundCommand<L, C, W>>,
 {
     type CommandList = AndOrList<Self::ListableCommand>;
     type ListableCommand = ListableCommand<Self::PipeableCommand>;
-    type PipeableCommand = BuilderPipeableCommand<T, C, W, F>;
+    type PipeableCommand = BuilderPipeableCommand<L, C, W, F>;
 
     /// Constructs a `Command::Job` node with the provided inputs if the command
     /// was delimited by an ampersand or the command itself otherwise.
@@ -712,7 +726,7 @@ where
             Ok(word)
         };
 
-        let word = match kind {
+        let word = match compress(kind) {
             ConcatWordKind::Single(s) => ComplexWord::Single(map_quote_word(s)?),
             ConcatWordKind::Concat(words) => ComplexWord::Concat(
                 words
@@ -742,95 +756,41 @@ where
     }
 }
 
-#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-struct Coalesce<I: Iterator, F> {
-    iter: I,
-    cur: Option<I::Item>,
-    func: F,
-}
-
-impl<I: Iterator, F> Coalesce<I, F> {
-    fn new<T>(iter: T, func: F) -> Self
-    where
-        T: IntoIterator<IntoIter = I, Item = I::Item>,
-    {
-        Coalesce {
-            iter: iter.into_iter(),
-            cur: None,
-            func,
-        }
-    }
-}
-
-type CoalesceResult<T> = Result<T, (T, T)>;
-impl<I, F> Iterator for Coalesce<I, F>
+fn compress<L, C, W>(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<M4Word<L, C, W>>
 where
-    I: Iterator,
-    F: FnMut(I::Item, I::Item) -> CoalesceResult<I::Item>,
+    L: Into<String> + From<String>,
 {
-    type Item = I::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let cur = self.cur.take().or_else(|| self.iter.next());
-        let (mut left, mut right) = match (cur, self.iter.next()) {
-            (Some(l), Some(r)) => (l, r),
-            (Some(l), None) | (None, Some(l)) => return Some(l),
-            (None, None) => return None,
-        };
-
-        loop {
-            match (self.func)(left, right) {
-                Ok(combined) => match self.iter.next() {
-                    Some(next) => {
-                        left = combined;
-                        right = next;
-                    }
-                    None => return Some(combined),
-                },
-
-                Err((left, right)) => {
-                    debug_assert!(self.cur.is_none());
-                    self.cur = Some(right);
-                    return Some(left);
-                }
-            }
-        }
-    }
-}
-/*
-pub(crate) fn compress(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<W> {
     use crate::ast::builder::ConcatWordKind::*;
     use crate::ast::builder::QuoteWordKind::*;
-    use crate::ast::builder::WordKind::*;
+    use crate::ast::MayM4::*;
+    use crate::ast::SimpleWord::*;
 
-    fn coalesce_simple<W>(a: WordKind<W>, b: WordKind<W>) -> CoalesceResult<WordKind<W>> {
+    fn coalesce_m4_word<L, C, W>(
+        a: M4Word<L, C, W>,
+        b: M4Word<L, C, W>,
+    ) -> CoalesceResult<M4Word<L, C, W>>
+    where
+        L: Into<String> + From<String>,
+    {
         match (a, b) {
-            (Literal(mut a), Literal(b)) => {
+            (Shell(Literal(a)), Shell(Literal(b))) => {
+                let (mut a, b) = (a.into(), b.into());
                 a.push_str(&b);
-                Ok(Literal(a))
+                Ok(Shell(Literal(a.into())))
             }
             (a, b) => Err((a, b)),
         }
     }
 
-    // fn coalesce_m4_word<C, W>(
-    //     a: M4WordKind<C, W>,
-    //     b: M4WordKind<C, W>,
-    // ) -> CoalesceResult<M4WordKind<C, W>> {
-    //     match (a, b) {
-    //         (Word(a), Word(b)) => coalesce_simple(a, b)
-    //             .map(Word)
-    //             .map_err(|(a, b)| (Word(a), Word(b))),
-    //         (a, b) => Err((a, b)),
-    //     }
-    // }
-
-    fn coalesce_word<W>(
-        a: QuoteWordKind<W>,
-        b: QuoteWordKind<W>,
-    ) -> CoalesceResult<QuoteWordKind<W>> {
+    fn coalesce_quote_word<L, C, W>(
+        a: QuoteWordKind<M4Word<L, C, W>>,
+        b: QuoteWordKind<M4Word<L, C, W>>,
+    ) -> CoalesceResult<QuoteWordKind<M4Word<L, C, W>>>
+    where
+        L: Into<String> + From<String>,
+    {
         match (a, b) {
-            (Simple(a), Simple(b)) => coalesce_simple(a, b)
+            (Simple(a), Simple(b)) => coalesce_m4_word(a, b)
                 .map(|s| Simple(s))
                 .map_err(|(a, b)| (Simple(a), Simple(b))),
             (SingleQuoted(mut a), SingleQuoted(b)) => {
@@ -838,7 +798,8 @@ pub(crate) fn compress(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<
                 Ok(SingleQuoted(a))
             }
             (DoubleQuoted(a), DoubleQuoted(b)) => {
-                let quoted = Coalesce::new(a.into_iter().chain(b), coalesce_m4_word).collect();
+                let quoted =
+                    Coalesce::new(a.into_iter().chain(b), |a, b| coalesce_m4_word(a, b)).collect();
                 Ok(DoubleQuoted(quoted))
             }
             (a, b) => Err((a, b)),
@@ -851,7 +812,7 @@ pub(crate) fn compress(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<
             DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_m4_word).collect()),
         }),
         Concat(v) => {
-            let mut body: Vec<_> = Coalesce::new(v, coalesce_word).collect();
+            let mut body: Vec<_> = Coalesce::new(v, coalesce_quote_word).collect();
             if body.len() == 1 {
                 Single(body.pop().unwrap())
             } else {
@@ -860,4 +821,3 @@ pub(crate) fn compress(word: ConcatWordKind<M4Word<L, C, W>>) -> ConcatWordKind<
         }
     }
 }
-*/
