@@ -22,7 +22,7 @@ mod node_builder;
 
 pub use self::default_builder::*;
 pub use self::minimal_builder::MinimalBuilder;
-pub use self::node_builder::NodeBuilder;
+pub use self::node_builder::AcNodeBuilder;
 
 /// An indicator to the builder of how complete commands are separated.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -519,6 +519,31 @@ pub trait M4Builder: BuilderBase {
     ) -> Result<Self::M4Macro, Self::Error>;
 }
 
+/// A trait which defines an interface which the parser defined in the `parse` module
+/// uses to delegate Abstract Syntax Tree creation, especially makefile parts.
+pub trait MakeBuilder: BuilderBase {
+    /// The type which represents a toplevel makefile element.
+    type TopLevel;
+    /// The type which represents a makefile rule.
+    type Rule;
+    /// The type which represents a makefile directive.
+    type Directive;
+    /// The type which represents a makefile assignment.
+    type Assignment;
+
+    /// doc
+    fn top_level(&mut self) -> Result<Self::TopLevel, Self::Error>;
+
+    /// doc
+    fn recipe(&mut self) -> Result<Self::Rule, Self::Error>;
+
+    /// doc
+    fn directive(&mut self) -> Result<Self::Directive, Self::Error>;
+
+    /// doc
+    fn assignment(&mut self) -> Result<Self::Assignment, Self::Error>;
+}
+
 macro_rules! impl_builder_body {
     ($T:ident) => {
         type Command = $T::Command;
@@ -691,6 +716,31 @@ macro_rules! impl_m4_builder_body {
             original_name: Option<String>,
         ) -> Result<Self::M4Macro, Self::Error> {
             (**self).macro_call(name, args, effects, original_name)
+        }
+    };
+}
+
+macro_rules! impl_make_builder_body {
+    ($T:ident) => {
+        type TopLevel = $T::TopLevel;
+        type Rule = $T::Rule;
+        type Directive = $T::Directive;
+        type Assignment = $T::Assignment;
+
+        fn top_level(&mut self) -> Result<Self::TopLevel, Self::Error> {
+            (**self).top_level()
+        }
+
+        fn recipe(&mut self) -> Result<Self::Rule, Self::Error>{
+            (**self).top_level()
+        }
+
+        fn directive(&mut self) -> Result<Self::Directive, Self::Error>{
+            (**self).top_level()
+        }
+
+        fn assignment(&mut self) -> Result<Self::Assignment, Self::Error>{
+            (**self).assignment()
         }
     };
 }

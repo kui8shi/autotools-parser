@@ -1,72 +1,118 @@
 //! Defines node representations of the shell source.
 use crate::m4_macro;
+use slab::Slab;
 use std::fmt;
 
 /// Represents a unique node id
 pub type NodeId = usize;
-/// Wraps minimal Word with fixing generics
-pub type Word<L> = super::minimal::Word<L, NodeId>;
 /// Wraps minimal word fragment with fixing generics
-pub type WordFragment<L> = super::minimal::WordFragment<L, NodeId, Word<L>>;
+pub type WordFragment<L, W> = super::minimal::WordFragment<L, NodeId, W>;
 /// Wraps minimal condition with fixing generics
-pub type Condition<L> = super::minimal::Condition<NodeId, Word<L>>;
+pub type Condition<W> = super::minimal::Condition<NodeId, W>;
 /// Wraps minimal operator with fixing generics
-pub type Operator<L> = super::minimal::Operator<Word<L>>;
+pub type Operator<W> = super::minimal::Operator<W>;
 /// Wraps minimal guard body pair with fixing generics
-pub type GuardBodyPair<L> = super::minimal::GuardBodyPair<NodeId, Word<L>>;
+pub type GuardBodyPair<W> = super::minimal::GuardBodyPair<NodeId, W>;
 /// Wraps pattern body pair with fixing generics
-pub type PatternBodyPair<L> = super::PatternBodyPair<NodeId, Word<L>>;
+pub type PatternBodyPair<W> = super::PatternBodyPair<NodeId, W>;
 /// Wraps redirect with fixing generics
-pub type Redirect<L> = super::Redirect<Word<L>>;
+pub type Redirect<W> = super::Redirect<W>;
 /// Wraps parameter substitution with fixing generics
-pub type ParameterSubstitution<L> =
-    super::ParameterSubstitution<super::Parameter<L>, NodeId, Word<L>, super::Arithmetic<L>>;
+pub type ParameterSubstitution<L, W> =
+    super::ParameterSubstitution<super::Parameter<L>, NodeId, W, super::Arithmetic<L>>;
 /// Wraps m4 macro with fixing generics
-pub type M4Macro<L> = m4_macro::M4Macro<NodeId, Word<L>>;
+pub type M4Macro<L> = m4_macro::M4Macro<NodeId, AcWord<L>>;
 /// Wraps m4 argument with fixing generics
-pub type M4Argument<L> = m4_macro::M4Argument<NodeId, Word<L>>;
+pub type M4Argument<L> = m4_macro::M4Argument<NodeId, AcWord<L>>;
+/// Wraps minimal word fragment with fixing generics
+pub type AcWordFragment<L> = super::MayM4<WordFragment<L, AcWord<L>>, M4Macro<L>>;
+
+/// Wraps minimal Word with fixing generics
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AcWord<L>(pub super::minimal::Word<AcWordFragment<L>>);
+
+impl<L> From<super::minimal::Word<AcWordFragment<L>>> for AcWord<L> {
+    fn from(value: super::minimal::Word<AcWordFragment<L>>) -> Self {
+        Self(value)
+    }
+}
+
+impl<L> From<&super::minimal::Word<AcWordFragment<L>>> for AcWord<L>
+where
+    L: Clone,
+{
+    fn from(value: &super::minimal::Word<AcWordFragment<L>>) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl<L> From<AcWord<L>> for super::minimal::Word<AcWordFragment<L>> {
+    fn from(value: AcWord<L>) -> Self {
+        value.0
+    }
+}
+
+
+/// Wraps command with fixing generics
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AcCommand<L>(pub super::MayM4<ShellCommand<L, AcWord<L>>, M4Macro<L>>);
+
+impl<L> AcCommand<L> {
+    /// Creates a new command from a shell command.
+    pub fn new_cmd(cmd: ShellCommand<L, AcWord<L>>) -> Self {
+        Self(super::MayM4::Shell(cmd))
+    }
+
+    /// Creates a new command from an M4 macro.
+    pub fn new_macro(m4_macro: M4Macro<L>) -> Self {
+        Self(super::MayM4::Macro(m4_macro))
+    }
+}
 
 /// Complete the parsed command with additional information such as comment, line numbers, etc.
 #[derive(Debug, Clone)]
-pub struct Node<L> {
+pub struct Node<C, U> {
     /// trailing comments
     pub comment: Option<String>,
     /// range of line numbers in the original script.
     pub range: Option<(usize, usize)>,
     /// the command parsed
-    pub kind: NodeKind<L>,
+    pub cmd: C,
+    /// extra information (put user-defined struct here)
+    pub info: U,
 }
 
-impl<L> Node<L> {
+impl<C, U> Node<C, U> {
     /// Creates a new node instance
-    pub fn new(comment: Option<String>, range: Option<(usize, usize)>, kind: NodeKind<L>) -> Self {
+    pub fn new(comment: Option<String>, range: Option<(usize, usize)>, cmd: C, info: U) -> Self {
         Self {
             comment,
             range,
-            kind,
+            cmd,
+            info,
         }
     }
 }
 
 /// represents any kinds of commands
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeKind<L> {
+pub enum ShellCommand<L, W> {
     /// An assignment command that associates a value with a variable.
-    Assignment(L, Word<L>),
+    Assignment(L, W),
     /// A simple command represented by a sequence of words.
-    Cmd(Vec<Word<L>>),
+    Cmd(Vec<W>),
     /// A group of commands that should be executed in the current environment.
     Brace(Vec<NodeId>),
     /// A group of commands that should be executed in a subshell environment.
     Subshell(Vec<NodeId>),
     /// A while loop, represented as a guard-body pair.
-    While(GuardBodyPair<L>),
+    While(GuardBodyPair<W>),
     /// A until loop, represented as a guard-body pair.
-    Until(GuardBodyPair<L>),
+    Until(GuardBodyPair<W>),
     /// An if statement with one or more conditionals and an optional else branch.
     If {
         /// List of guard-body pairs for the if/else-if branches.
-        conditionals: Vec<GuardBodyPair<L>>,
+        conditionals: Vec<GuardBodyPair<W>>,
         /// Commands to execute if none of the conditions are met (else branch).
         else_branch: Vec<NodeId>,
     },
@@ -75,25 +121,25 @@ pub enum NodeKind<L> {
         /// The loop variable name.
         var: String,
         /// The list of words to iterate over.
-        words: Vec<Word<L>>,
+        words: Vec<W>,
         /// The commands to execute in each iteration.
         body: Vec<NodeId>,
     },
     /// A case statement for pattern matching.
     Case {
         /// The word to match against the provided patterns.
-        word: Word<L>,
+        word: W,
         /// A list of pattern-body pairs.
-        arms: Vec<PatternBodyPair<L>>,
+        arms: Vec<PatternBodyPair<W>>,
     },
     /// Executes a command if a condition holds (logical AND).
-    And(Condition<L>, NodeId),
+    And(Condition<W>, NodeId),
     /// Executes a command if a condition holds (logical OR).
-    Or(Condition<L>, NodeId),
+    Or(Condition<W>, NodeId),
     /// Executes commands connecting stdout/in via a pipe.
     Pipe(bool, Vec<NodeId>),
     /// A command with associated redirections.
-    Redirect(NodeId, Vec<Redirect<L>>),
+    Redirect(NodeId, Vec<Redirect<W>>),
     /// A command that is executed in the background.
     Background(NodeId),
     /// A function declaration
@@ -103,185 +149,337 @@ pub enum NodeKind<L> {
         /// Commands in the body
         body: NodeId,
     },
-    /// A macro call utilizing M4 macros.
-    Macro(M4Macro<L>),
 }
+
+/// Trait for displaying nodes in a formatted way.
+pub trait DisplayNode {
+    /// The word type used for display.
+    type Word;
+
+    /// Display a node with the given ID and indentation level.
+    fn display_node(&self, node_id: NodeId, indent_level: usize) -> String;
+
+    /// Display a word, optionally with quotes.
+    fn display_word(&self, word: &Self::Word, should_quote: bool) -> String;
+}
+
+#[derive(Debug, Clone)]
+/// A pool of autoconf commands stored as nodes.
+pub struct AutoconfPool<L, U = ()> {
+    /// Contains all nodes. `NodeId` represents indexes of nodes in this slab.
+    pub nodes: Slab<Node<AcCommand<L>, U>>,
+}
+
+impl<L, U> AutoconfPool<L, U> {
+    /// Construct a new pool of autoconf commands
+    pub fn new() -> Self {
+        Self {
+            nodes: Default::default(),
+        }
+    }
+
+    /// Construct a new pool from a given vector of autoconf commands
+    pub fn from_vec(nodes: Vec<Node<AcCommand<L>, U>>) -> Self {
+        let nodes = {
+            let mut tmp = Slab::with_capacity(nodes.len());
+            for node in nodes {
+                tmp.insert(node);
+            }
+            tmp
+        };
+        Self { nodes }
+    }
+
+    /// Get the number of nodes (commands)
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Get a node by its ID.
+    pub fn get(&self, id: NodeId) -> Option<&Node<AcCommand<L>, U>> {
+        self.nodes.get(id)
+    }
+}
+
+impl<L, U> DisplayNode for AutoconfPool<L, U>
+where
+    L: fmt::Display + fmt::Debug,
+{
+    type Word = AcWord<L>;
+
+    fn display_node(&self, node_id: NodeId, indent_level: usize) -> String {
+        use super::MayM4::*;
+        self.nodes
+            .get(node_id)
+            .map_or(String::new(), |node| match &node.cmd.0 {
+                Macro(m4_macro) => self.m4_macro_to_string(m4_macro, indent_level),
+                Shell(cmd) => self.command_to_string(cmd, node.comment.clone(), indent_level),
+            })
+    }
+
+    fn display_word(&self, word: &AcWord<L>, should_quote: bool) -> String {
+        use super::minimal::Word::*;
+        use super::minimal::WordFragment::DoubleQuoted;
+        match &word.0 {
+            Empty => "\"\"".to_string(),
+            Concat(frags) => {
+                format!(
+                    "{}",
+                    frags
+                        .iter()
+                        .map(|w| self.may_m4_word_to_string(w))
+                        .collect::<Vec<String>>()
+                        .concat()
+                )
+            }
+            Single(frag) => {
+                let s = self.may_m4_word_to_string(frag);
+                if should_quote && !matches!(frag, super::MayM4::Shell(DoubleQuoted(_))) {
+                    format!("\"{}\"", s)
+                } else {
+                    s
+                }
+            }
+        }
+    }
+}
+
+impl<L, U> AutoconfPool<L, U>
+where
+    L: fmt::Display + fmt::Debug,
+{
+    fn may_m4_word_to_string(&self, frag: &AcWordFragment<L>) -> String {
+        use super::MayM4::*;
+        match frag {
+            Macro(macro_word) => format!(
+                "{}({})",
+                macro_word.name,
+                macro_word
+                    .args
+                    .iter()
+                    .map(|arg| self.m4_argument_to_string(arg, 0))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Shell(shell_word) => self.shell_word_to_string(shell_word),
+        }
+    }
+
+    /// Format an M4 macro call (`M4Macro`) into a string
+    fn m4_macro_to_string(&self, m4_macro: &M4Macro<L>, indent_level: usize) -> String {
+        const TAB_WIDTH: usize = 2;
+        let tab = " ".repeat(indent_level * TAB_WIDTH);
+        format!(
+            "{tab}{}({})",
+            m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
+            m4_macro
+                .args
+                .iter()
+                .map(|arg| self.m4_argument_to_string(arg, indent_level + 1))
+                .collect::<Vec<String>>()
+                .join(&format!(",\n{tab}  "))
+        )
+    }
+
+    /// Format an M4 macro argument (`M4Argument`) into a string, applying `indent_level`
+    /// spaces for multiline argument formatting.
+    fn m4_argument_to_string(&self, arg: &M4Argument<L>, indent_level: usize) -> String {
+        use crate::m4_macro::M4Argument::*;
+        let newline = format!("\n{}", " ".repeat(indent_level));
+        match arg {
+            Literal(lit) => format!("[{}]", lit),
+            Word(word) => self.display_word(word, false),
+            Array(words) => format!(
+                "{}",
+                words
+                    .iter()
+                    .map(|w| self.display_word(w, false))
+                    .collect::<Vec<String>>()
+                    .join(if words.len() < 10 { " " } else { &newline })
+            ),
+            Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
+            Commands(cmds) => format!(
+                "[\n{}{newline}]",
+                cmds.iter()
+                    .map(|c| self.display_node(*c, indent_level + 2)) // TODO: check if the +2 should be +1
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ),
+            Unknown(unknown) => format!("[{}]", unknown),
+        }
+    }
+}
+
+impl<L, U> NodePool<L, AcWord<L>> for AutoconfPool<L, U> where L: fmt::Display + fmt::Debug {}
+
+/// A macro call utilizing M4 macros.
+//Macro(M4Macro<L>),
 
 /// Trait providing access to a pool of AST nodes and methods to convert AST nodes
 /// and components to their shell script string representations.
 ///
 /// The type parameter `L` represents the literal type used in words and must implement
 /// `fmt::Display` for formatting.
-pub trait NodePool<L>
+pub trait NodePool<L, W>: DisplayNode<Word = W>
 where
     L: fmt::Display + fmt::Debug,
 {
-    /// Retrieve an optional reference to the AST `Node` identified by `node_id`.
-    /// If None, tracking is skipped.
-    fn get_node_for_display(&self, node_id: NodeId) -> Option<(&NodeKind<L>, Option<&String>)>;
-
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
-    fn node_to_string(&self, node_id: NodeId, indent_level: usize) -> String {
-        use self::NodeKind::*;
+    fn command_to_string(
+        &self,
+        cmd: &ShellCommand<L, W>,
+        comment: Option<String>,
+        indent_level: usize,
+    ) -> String {
+        use self::ShellCommand::*;
         const TAB_WIDTH: usize = 2;
         let tab = " ".repeat(indent_level * TAB_WIDTH);
 
-        let body_to_string = |cmds: &[NodeId], n| {
-            cmds.iter()
-                .map(|c| self.node_to_string(*c, n))
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<String>>()
-                .join("\n")
-        };
-
-        if let Some((kind, comment)) = self.get_node_for_display(node_id) {
-            let content = match kind {
-                Assignment(name, word) => {
-                    format!("{tab}{}={}", name, self.word_to_string(word, true))
-                }
-                Cmd(words) => format!(
-                    "{tab}{}",
-                    words
-                        .iter()
-                        .map(|w| self.word_to_string(w, false))
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                ),
-                Brace(cmds) => {
-                    format!(
-                        "{tab}{{\n{}\n{tab}}}",
-                        body_to_string(cmds, indent_level + 1)
-                    )
-                }
-                Subshell(cmds) => {
-                    format!("{tab}(\n{}\n{tab})", body_to_string(cmds, indent_level + 1))
-                }
-                While(pair) => format!(
-                    "{tab}while {}; do\n{}\n{tab}done",
-                    self.condition_to_string(&pair.condition),
-                    body_to_string(&pair.body, indent_level + 1)
-                ),
-                Until(pair) => format!(
-                    "{tab}until {}; do\n{}\n{tab}done",
-                    self.condition_to_string(&pair.condition),
-                    body_to_string(&pair.body, indent_level + 1)
-                ),
-                If {
-                    conditionals,
-                    else_branch,
-                } => {
-                    let first_if = {
-                        let pair = conditionals.first().unwrap();
-                        format!(
-                            "{tab}if {}; then\n{}\n",
-                            self.condition_to_string(&pair.condition),
-                            body_to_string(&pair.body, indent_level + 1)
-                        )
-                    };
-                    let else_if = conditionals
-                        .iter()
-                        .skip(1)
-                        .map(|pair| {
-                            format!(
-                                "{tab}else if {}; then\n{}\n",
-                                self.condition_to_string(&pair.condition),
-                                body_to_string(&pair.body, indent_level + 1)
-                            )
-                        })
-                        .collect::<Vec<String>>()
-                        .join("");
-                    let rest = if else_branch.is_empty() {
-                        format!("{tab}fi")
-                    } else {
-                        format!(
-                            "{tab}else\n{}\n{tab}fi",
-                            body_to_string(else_branch, indent_level + 1)
-                        )
-                    };
-                    format!("{}{}{}", first_if, else_if, rest)
-                }
-                For { var, words, body } => format!(
-                    "{tab}for {var} in {}; do\n{}\n{tab}done",
-                    words
-                        .iter()
-                        .map(|w| self.word_to_string(w, true))
-                        .collect::<Vec<String>>()
-                        .join(" "),
-                    body_to_string(body, indent_level + 1)
-                ),
-                Case { word, arms } => format!(
-                    "{tab}case {} in\n{}\n{tab}esac",
-                    self.word_to_string(word, false),
-                    arms.iter()
-                        .map(|arm| format!(
-                            "{tab}  {})\n{}\n{tab}    ;;",
-                            arm.patterns
-                                .iter()
-                                .map(|w| self.word_to_string(w, false))
-                                .collect::<Vec<String>>()
-                                .join("|"),
-                            body_to_string(&arm.body, indent_level + 2)
-                        ))
-                        .collect::<Vec<String>>()
-                        .join("\n")
-                ),
-                And(cond, cmd) => format!(
-                    "{} && {}",
-                    self.condition_to_string(cond),
-                    self.node_to_string(*cmd, indent_level)
-                ),
-                Or(cond, cmd) => format!(
-                    "{} || {}",
-                    self.condition_to_string(cond),
-                    self.node_to_string(*cmd, indent_level)
-                ),
-                Pipe(bang, cmds) => format!(
-                    "{}{}",
-                    if *bang { "!" } else { "" },
-                    cmds.iter()
-                        .map(|c| self.node_to_string(*c, 0))
-                        .collect::<Vec<String>>()
-                        .join(" | ")
-                ),
-                Redirect(cmd, redirects) => format!(
-                    "{} {}",
-                    self.node_to_string(*cmd, indent_level),
-                    redirects
-                        .iter()
-                        .map(|r| self.redirect_to_string(r))
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                ),
-                Background(cmd) => format!("{} &", self.node_to_string(*cmd, indent_level)),
-                FunctionDef { name, body } => {
-                    format!("function {name} () {}", self.node_to_string(*body, 0))
-                }
-                Macro(m4_macro) => format!(
-                    "{tab}{}({})",
-                    m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
-                    m4_macro
-                        .args
-                        .iter()
-                        .map(|arg| self.m4_argument_to_string(arg, indent_level + 1))
-                        .collect::<Vec<String>>()
-                        .join(&format!(",\n{tab}  "))
-                ),
-            };
-            if let Some(comment) = comment {
-                let newline = format!("\n{tab}");
-                format!("{tab}{}\n{}", comment.replace('\n', &newline), content)
-            } else {
-                content
+        let content = match cmd {
+            Assignment(name, word) => {
+                format!("{tab}{}={}", name, self.display_word(word, true))
             }
+            Cmd(words) => format!(
+                "{tab}{}",
+                words
+                    .iter()
+                    .map(|w| self.display_word(w, false))
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            ),
+            Brace(cmds) => {
+                format!(
+                    "{tab}{{\n{}\n{tab}}}",
+                    self.body_to_string(cmds, indent_level + 1)
+                )
+            }
+            Subshell(cmds) => {
+                format!(
+                    "{tab}(\n{}\n{tab})",
+                    self.body_to_string(cmds, indent_level + 1)
+                )
+            }
+            While(pair) => format!(
+                "{tab}while {}; do\n{}\n{tab}done",
+                self.condition_to_string(&pair.condition),
+                self.body_to_string(&pair.body, indent_level + 1)
+            ),
+            Until(pair) => format!(
+                "{tab}until {}; do\n{}\n{tab}done",
+                self.condition_to_string(&pair.condition),
+                self.body_to_string(&pair.body, indent_level + 1)
+            ),
+            If {
+                conditionals,
+                else_branch,
+            } => {
+                let first_if = {
+                    let pair = conditionals.first().unwrap();
+                    format!(
+                        "{tab}if {}; then\n{}\n",
+                        self.condition_to_string(&pair.condition),
+                        self.body_to_string(&pair.body, indent_level + 1)
+                    )
+                };
+                let else_if = conditionals
+                    .iter()
+                    .skip(1)
+                    .map(|pair| {
+                        format!(
+                            "{tab}else if {}; then\n{}\n",
+                            self.condition_to_string(&pair.condition),
+                            self.body_to_string(&pair.body, indent_level + 1)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("");
+                let rest = if else_branch.is_empty() {
+                    format!("{tab}fi")
+                } else {
+                    format!(
+                        "{tab}else\n{}\n{tab}fi",
+                        self.body_to_string(else_branch, indent_level + 1)
+                    )
+                };
+                format!("{}{}{}", first_if, else_if, rest)
+            }
+            For { var, words, body } => format!(
+                "{tab}for {var} in {}; do\n{}\n{tab}done",
+                words
+                    .iter()
+                    .map(|w| self.display_word(w, true))
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                self.body_to_string(body, indent_level + 1)
+            ),
+            Case { word, arms } => format!(
+                "{tab}case {} in\n{}\n{tab}esac",
+                self.display_word(word, false),
+                arms.iter()
+                    .map(|arm| format!(
+                        "{tab}  {})\n{}\n{tab}    ;;",
+                        arm.patterns
+                            .iter()
+                            .map(|w| self.display_word(w, false))
+                            .collect::<Vec<String>>()
+                            .join("|"),
+                        self.body_to_string(&arm.body, indent_level + 2)
+                    ))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ),
+            And(cond, id) => format!(
+                "{} && {}",
+                self.condition_to_string(cond),
+                self.display_node(*id, indent_level)
+            ),
+            Or(cond, id) => format!(
+                "{} || {}",
+                self.condition_to_string(cond),
+                self.display_node(*id, indent_level)
+            ),
+            Pipe(bang, cmds) => format!(
+                "{}{}",
+                if *bang { "!" } else { "" },
+                cmds.iter()
+                    .map(|c| self.display_node(*c, 0))
+                    .collect::<Vec<String>>()
+                    .join(" | ")
+            ),
+            Redirect(cmd, redirects) => format!(
+                "{} {}",
+                self.display_node(*cmd, indent_level),
+                redirects
+                    .iter()
+                    .map(|r| self.redirect_to_string(r))
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            ),
+            Background(cmd) => format!("{} &", self.display_node(*cmd, indent_level)),
+            FunctionDef { name, body } => {
+                format!("function {name} () {}", self.display_node(*body, 0))
+            }
+        };
+        if let Some(comment) = comment {
+            let newline = format!("\n{tab}");
+            format!("{tab}{}\n{}", comment.replace('\n', &newline), content)
         } else {
-            // if node was not found, empty string is returned.
-            String::new()
+            content
         }
     }
 
+    /// Convert a list of command node IDs to a formatted string.
+    fn body_to_string(&self, cmds: &[NodeId], level: usize) -> String {
+        cmds.iter()
+            .map(|c| self.display_node(*c, level))
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
     /// Format a `Condition` AST into its shell script string representation.
-    fn condition_to_string(&self, cond: &Condition<L>) -> String {
+    fn condition_to_string(&self, cond: &Condition<W>) -> String {
         use super::minimal::Condition::*;
         match cond {
             Cond(op) => format!("test {}", self.operator_to_string(op)),
@@ -298,101 +496,73 @@ where
             Eval(cmds) => format!(
                 "eval \"{}\"",
                 cmds.iter()
-                    .map(|c| self.node_to_string(*c, 0))
+                    .map(|c| self.display_node(*c, 0))
                     .collect::<Vec<String>>()
                     .join("; ")
             ),
-            ReturnZero(cmd) => format!("{}", self.node_to_string(**cmd, 0)),
-        }
-    }
-
-    /// Format an M4 macro argument (`M4Argument`) into a string, applying `indent`
-    /// spaces for multiline argument formatting.
-    fn m4_argument_to_string(&self, arg: &M4Argument<L>, indent: usize) -> String {
-        use crate::m4_macro::M4Argument::*;
-        let newline = format!("\n{}", " ".repeat(indent));
-        match arg {
-            Literal(lit) => format!("[{}]", lit),
-            Word(word) => self.word_to_string(word, false),
-            Array(words) => format!(
-                "{}",
-                words
-                    .iter()
-                    .map(|w| self.word_to_string(w, false))
-                    .collect::<Vec<String>>()
-                    .join(if words.len() < 10 { " " } else { &newline })
-            ),
-            Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
-            Commands(cmds) => format!(
-                "[\n{}{newline}]",
-                cmds.iter()
-                    .map(|c| self.node_to_string(*c, indent + 2))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            ),
-            Unknown(unknown) => format!("[{}]", unknown),
+            ReturnZero(cmd) => format!("{}", self.display_node(**cmd, 0)),
         }
     }
 
     /// Format a redirection AST (`Redirect`) into its shell script string representation,
     /// such as input/output redirections and here-documents.
-    fn redirect_to_string(&self, redirect: &Redirect<L>) -> String {
+    fn redirect_to_string(&self, redirect: &Redirect<W>) -> String {
         use super::Redirect::*;
         match redirect {
             Read(fd, file) => format!(
                 "{}< {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             Write(fd, file) => format!(
                 "{}> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             ReadWrite(fd, file) => format!(
                 "{}<> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             Append(fd, file) => format!(
                 "{}>> {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             Clobber(fd, file) => format!(
                 "{}>| {}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             Heredoc(fd, file) => format!(
                 "{}<<EOF\n{}EOF",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             DupRead(fd, file) => format!(
                 "{}<&{}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
             DupWrite(fd, file) => format!(
                 "{}>&{}",
                 fd.map_or("".to_string(), |f| f.to_string()),
-                self.word_to_string(file, false)
+                self.display_word(file, false)
             ),
         }
     }
 
     /// Recursively format a `WordFragment` into its literal string form, handling quoting
     /// and parameter substitutions.
-    fn word_fragment_to_string(&self, frag: &WordFragment<L>) -> String {
+    fn shell_word_to_string(&self, shell_word: &WordFragment<L, W>) -> String {
         use crate::ast::minimal::WordFragment::*;
-        match frag {
+        match &shell_word {
             Literal(lit) => lit.to_string(),
             DoubleQuoted(frags) => format!(
                 "\"{}\"",
                 frags
                     .iter()
-                    .map(|frag| self.word_fragment_to_string(frag))
+                    .map(|frag| self.shell_word_to_string(frag))
                     .collect::<Vec<String>>()
                     .concat()
             ),
@@ -405,54 +575,20 @@ where
             SquareClose => "]".to_string(),
             Tilde => "~".to_string(),
             Colon => ":".to_string(),
-            Macro(m4_macro) => format!(
-                "{}({})",
-                m4_macro.name,
-                m4_macro
-                    .args
-                    .iter()
-                    .map(|arg| self.m4_argument_to_string(arg, 0))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-        }
-    }
-
-    /// Format a complete `Word` (which may consist of fragments) into its shell script string form.
-    fn word_to_string(&self, word: &Word<L>, quote: bool) -> String {
-        use super::minimal::Word::*;
-        use super::minimal::WordFragment::DoubleQuoted;
-        match word {
-            Empty => "\"\"".to_string(),
-            Concat(frags) => {
-                format!(
-                    "{}",
-                    frags
-                        .iter()
-                        .map(|w| self.word_fragment_to_string(w))
-                        .collect::<Vec<String>>()
-                        .concat()
-                )
-            }
-            Single(frag) => {
-                let s = self.word_fragment_to_string(frag);
-                if quote && !matches!(frag, DoubleQuoted(_)) {
-                    format!("\"{}\"", s)
-                } else {
-                    s
-                }
-            }
         }
     }
 
     /// Format a parameter substitution AST (`ParameterSubstitution`) into its shell script string representation.
-    fn parameter_substitution_to_string(&self, param_subst: &ParameterSubstitution<L>) -> String {
+    fn parameter_substitution_to_string(
+        &self,
+        param_subst: &ParameterSubstitution<L, W>,
+    ) -> String {
         use super::ParameterSubstitution::*;
         match param_subst {
             Command(cmds) => format!(
                 "$({})",
                 cmds.iter()
-                    .map(|c| self.node_to_string(*c, 0))
+                    .map(|c| self.display_node(*c, 0))
                     .collect::<Vec<String>>()
                     .join(";")
             ),
@@ -465,97 +601,97 @@ where
                 "${{{}:-{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Assign(_, param, word) => format!(
                 "${{{}:={}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Error(_, param, word) => format!(
                 "${{{}:?{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Alternative(_, param, word) => format!(
                 "${{{}:+{}}}",
                 param_raw(param),
                 word.as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveSmallestSuffix(param, pattern) => format!(
                 "${{{}%{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveLargestSuffix(param, pattern) => format!(
                 "${{{}%%{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveSmallestPrefix(param, pattern) => format!(
                 "${{{}#{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveLargestPrefix(param, pattern) => format!(
                 "${{{}##{}}}",
                 param_raw(param),
                 pattern
                     .as_ref()
-                    .map_or("".to_string(), |w| self.word_to_string(w, false))
+                    .map_or("".to_string(), |w| self.display_word(w, false))
             ),
         }
     }
 
     /// Format an operator AST (`Operator`) into its shell test string representation
     /// (e.g., equality tests, file tests, and unary operators).
-    fn operator_to_string(&self, op: &Operator<L>) -> String {
+    fn operator_to_string(&self, op: &Operator<W>) -> String {
         use super::minimal::Operator::*;
         match op {
             Eq(lhs, rhs) => format!(
                 "{} = {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
             Neq(lhs, rhs) => format!(
                 "{} != {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
             Ge(lhs, rhs) => format!(
                 "{} -ge {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
             Gt(lhs, rhs) => format!(
                 "{} -gt {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
             Le(lhs, rhs) => format!(
                 "{} -le {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
             Lt(lhs, rhs) => format!(
                 "{} -lt {}",
-                self.word_to_string(lhs, false),
-                self.word_to_string(rhs, false)
+                self.display_word(lhs, false),
+                self.display_word(rhs, false)
             ),
-            Empty(w) => format!("-z {}", self.word_to_string(w, false)),
-            NonEmpty(w) => format!("-n {}", self.word_to_string(w, false)),
-            Dir(w) => format!("-d {}", self.word_to_string(w, false)),
-            File(w) => format!("-f {}", self.word_to_string(w, false)),
-            NoExists(w) => format!("! -e {}", self.word_to_string(w, false)),
+            Empty(w) => format!("-z {}", self.display_word(w, false)),
+            NonEmpty(w) => format!("-n {}", self.display_word(w, false)),
+            Dir(w) => format!("-d {}", self.display_word(w, false)),
+            File(w) => format!("-f {}", self.display_word(w, false)),
+            NoExists(w) => format!("! -e {}", self.display_word(w, false)),
         }
     }
 }
@@ -577,154 +713,148 @@ fn param_raw<L: fmt::Display>(param: &super::Parameter<L>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AcCommand, AcWord, AutoconfPool, Node, NodePool, ShellCommand};
+    use crate::ast::minimal::Word;
+    use crate::ast::minimal::WordFragment::*;
+    use crate::ast::node::Condition;
+    use crate::ast::node::DisplayNode;
+    use crate::ast::node::GuardBodyPair;
+    use crate::ast::node::Operator;
+    use crate::ast::node::ParameterSubstitution;
+    use crate::ast::node::PatternBodyPair;
+    use crate::ast::node::Redirect;
+    use crate::ast::MayM4::*;
     use crate::ast::Parameter;
     use crate::m4_macro::{M4Argument, M4Macro};
 
-    struct DummyPool {
-        nodes: Vec<Node<String>>,
-    }
-
-    impl DummyPool {
-        fn new(nodes: Vec<Node<String>>) -> Self {
-            DummyPool { nodes }
-        }
-    }
-
-    impl NodePool<String> for DummyPool {
-        fn get_node_for_display(
-            &self,
-            node_id: NodeId,
-        ) -> Option<(&NodeKind<String>, Option<&String>)> {
-            let n = &self.nodes[node_id];
-            Some((&n.kind, n.comment.as_ref()))
-        }
-    }
+    type C = ShellCommand<String, AcWord<String>>;
 
     #[test]
     fn test_get_node_kind() {
-        let node = Node::new(None, None, NodeKind::<String>::Cmd(vec![]));
-        let pool = DummyPool::new(vec![node.clone()]);
-        assert_eq!(
-            pool.get_node_for_display(0).map(|(kind, _)| kind),
-            Some(&node.kind)
-        );
+        let node = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![])), None::<()>);
+        let pool = AutoconfPool::from_vec(vec![node.clone()]);
+        assert_eq!(pool.get(0).map(|n| &n.cmd), Some(&node.cmd));
     }
 
     #[test]
     fn test_node_to_string_assignment_and_cmd() {
-        let word = Word::Single(WordFragment::Literal("value".to_string()));
+        let word: AcWord<_> = Word::Single(Shell(Literal("value".to_string()))).into();
         let assign_node = Node::new(
             None,
             None,
-            NodeKind::Assignment("var".to_string(), word.clone()),
+            AcCommand::new_cmd(C::Assignment("var".to_string(), word.clone().into())),
+            (),
         );
-        let echo = Word::Single(WordFragment::Literal("echo".to_string()));
-        let cmd_node = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), word.clone()]));
-        let pool = DummyPool::new(vec![assign_node, cmd_node]);
-        assert_eq!(pool.node_to_string(0, 0), "var=\"value\"");
-        assert_eq!(pool.node_to_string(1, 1), "  echo value");
+        let echo: AcWord<_> = Word::Single(Shell(Literal("echo".to_string()))).into();
+        let cmd_node = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![echo.clone(), word.clone()])), ());
+        let pool = AutoconfPool::from_vec(vec![assign_node, cmd_node]);
+        assert_eq!(pool.display_node(0, 0), "var=\"value\"");
+        assert_eq!(pool.display_node(1, 1), "  echo value");
     }
 
     #[test]
     fn test_operator_to_string() {
-        let pool: DummyPool = DummyPool::new(vec![]);
+        let pool: AutoconfPool::<_, ()> = AutoconfPool::from_vec(vec![]);
         let op = Operator::Eq(
-            Word::Single(WordFragment::Literal("a".to_string())),
-            Word::Single(WordFragment::Literal("b".to_string())),
+            Word::Single(Shell(Literal("a".to_string()))).into(),
+            Word::Single(Shell(Literal("b".to_string()))).into(),
         );
         assert_eq!(pool.operator_to_string(&op), "a = b");
     }
 
     #[test]
     fn test_word_and_fragment_to_string() {
-        let pool: DummyPool = DummyPool::new(vec![]);
-        let frag = WordFragment::DoubleQuoted(vec![WordFragment::Literal("hi".to_string())]);
-        assert_eq!(pool.word_fragment_to_string(&frag), "\"hi\"");
+        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let frag = DoubleQuoted(vec![Literal("hi".to_string())]);
+        assert_eq!(pool.shell_word_to_string(&frag), "\"hi\"");
         let word = Word::Concat(vec![
-            WordFragment::Literal("a".to_string()),
-            WordFragment::Literal("b".to_string()),
-        ]);
-        assert_eq!(pool.word_to_string(&word, false), "ab");
+            Shell(Literal("a".to_string())),
+            Shell(Literal("b".to_string())),
+        ]).into();
+        assert_eq!(pool.display_word(&word, false), "ab");
     }
 
     #[test]
     fn test_condition_to_string() {
-        let pool: DummyPool = DummyPool::new(vec![]);
+        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
         let cond = Condition::Cond(Operator::Neq(
-            Word::Single(WordFragment::Literal("x".to_string())),
-            Word::Single(WordFragment::Literal("y".to_string())),
+            Word::Single(Shell(Literal("x".to_string()))).into(),
+            Word::Single(Shell(Literal("y".to_string()))).into(),
         ));
         assert_eq!(pool.condition_to_string(&cond), "test x != y");
     }
 
     #[test]
     fn test_redirect_to_string() {
-        let pool: DummyPool = DummyPool::new(vec![]);
-        let redir = Redirect::Write(None, Word::Single(WordFragment::Literal("out".to_string())));
+        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let word = Word::Single(Shell(Literal("out".to_string()))).into();
+        let redir = crate::ast::Redirect::Write(None, word);
         assert_eq!(pool.redirect_to_string(&redir), "> out");
     }
 
     #[test]
     fn test_parameter_substitution_to_string_default() {
-        let pool: DummyPool = DummyPool::new(vec![]);
+        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
         let subst = ParameterSubstitution::Default(
             false,
             Parameter::Var("v".to_string()),
-            Some(Word::Single(WordFragment::Literal("w".to_string()))),
+            Some(Word::Single(Shell(Literal("w".to_string()))).into()),
         );
         assert_eq!(pool.parameter_substitution_to_string(&subst), "${v:-w}");
     }
 
     #[test]
     fn test_m4_argument_to_string_literal() {
-        let pool: DummyPool = DummyPool::new(vec![]);
+        let pool: AutoconfPool<String, ()> = AutoconfPool::from_vec(vec![]);
         let arg = M4Argument::Literal("lit".to_string());
         assert_eq!(pool.m4_argument_to_string(&arg, 0), "[lit]");
     }
 
     #[test]
     fn test_node_to_string_brace_and_subshell() {
-        let echo = Word::Single(WordFragment::Literal("echo".to_string()));
-        let hi = Word::Single(WordFragment::Literal("hi".to_string()));
-        let cmd = Node::new(None, None, NodeKind::Cmd(vec![echo.clone(), hi.clone()]));
-        let brace = Node::new(None, None, NodeKind::Brace(vec![0]));
-        let subshell = Node::new(None, None, NodeKind::Subshell(vec![0]));
-        let pool = DummyPool::new(vec![cmd.clone(), brace.clone(), subshell.clone()]);
-        assert_eq!(pool.node_to_string(1, 0), "{\n  echo hi\n}");
-        assert_eq!(pool.node_to_string(2, 0), "(\n  echo hi\n)");
+        let echo: AcWord<_> = Word::Single(Shell(Literal("echo".to_string()))).into();
+        let hi: AcWord<_> = Word::Single(Shell(Literal("hi".to_string()))).into();
+        let cmd = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![echo.clone(), hi.clone()])), ());
+        let brace = Node::new(None, None, AcCommand::new_cmd(C::Brace(vec![0])), ());
+        let subshell = Node::new(None, None, AcCommand::new_cmd(C::Subshell(vec![0])), ());
+        let pool = AutoconfPool::from_vec(vec![cmd, brace, subshell]);
+        assert_eq!(pool.display_node(1, 0), "{\n  echo hi\n}");
+        assert_eq!(pool.display_node(2, 0), "(\n  echo hi\n)");
     }
 
     #[test]
     fn test_node_to_string_while_until() {
-        let w = Word::Single(WordFragment::Literal("f".to_string()));
+        let w: AcWord<_> = Word::Single(Shell(Literal("f".to_string()))).into();
         let cond = Condition::Cond(Operator::Empty(w.clone()));
-        let body = Node::new(None, None, NodeKind::Cmd(vec![w.clone()]));
+        let body = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![w.clone()])), ());
         let gbp = GuardBodyPair {
             condition: cond.clone(),
             body: vec![0],
         };
-        let while_node = Node::new(None, None, NodeKind::While(gbp.clone()));
-        let until_node = Node::new(None, None, NodeKind::Until(gbp));
-        let pool = DummyPool::new(vec![body.clone(), while_node.clone(), until_node.clone()]);
-        assert_eq!(pool.node_to_string(1, 0), "while test -z f; do\n  f\ndone");
-        assert_eq!(pool.node_to_string(2, 0), "until test -z f; do\n  f\ndone");
+        let while_node = Node::new(None, None, AcCommand::new_cmd(C::While(gbp.clone())), ());
+        let until_node = Node::new(None, None, AcCommand::new_cmd(C::Until(gbp.clone())), ());
+        let pool =
+            AutoconfPool::from_vec(vec![body.clone(), while_node.clone(), until_node.clone()]);
+        assert_eq!(pool.display_node(1, 0), "while test -z f; do\n  f\ndone");
+        assert_eq!(pool.display_node(2, 0), "until test -z f; do\n  f\ndone");
     }
 
     #[test]
     fn test_node_to_string_if_else() {
-        let w = Word::Single(WordFragment::Literal("t".to_string()));
+        let w: AcWord<_> = Word::Single(Shell(Literal("t".to_string()))).into();
         let cond = Condition::Cond(Operator::Empty(w.clone()));
-        let cmd_true = Node::new(None, None, NodeKind::Cmd(vec![w.clone()]));
+        let cmd_true = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![w.clone()])), ());
         let cmd_false = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("f".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("f".to_string()))).into()])),
+            (),
         );
         let cmd_else = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("e".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("e".to_string()))).into()])),
+            (),
         );
         let gbp1 = GuardBodyPair {
             condition: cond.clone(),
@@ -737,29 +867,31 @@ mod tests {
         let if_node = Node::new(
             None,
             None,
-            NodeKind::If {
+            AcCommand::new_cmd(C::If {
                 conditionals: vec![gbp1.clone()],
                 else_branch: vec![],
-            },
+            }),
+            (),
         );
         let if_else_node = Node::new(
             None,
             None,
-            NodeKind::If {
+            AcCommand::new_cmd(C::If {
                 conditionals: vec![gbp1, gbp2],
                 else_branch: vec![2],
-            },
+            }),
+            (),
         );
-        let pool = DummyPool::new(vec![
+        let pool = AutoconfPool::from_vec(vec![
             cmd_true.clone(),
             cmd_false.clone(),
             cmd_else.clone(),
             if_node.clone(),
             if_else_node.clone(),
         ]);
-        assert_eq!(pool.node_to_string(3, 0), "if test -z t; then\n  t\nfi");
+        assert_eq!(pool.display_node(3, 0), "if test -z t; then\n  t\nfi");
         assert_eq!(
-            pool.node_to_string(4, 0),
+            pool.display_node(4, 0),
             "if test -z t; then\n  t\nelse if test -z t; then\n  f\nelse\n  e\nfi"
         );
     }
@@ -769,24 +901,26 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("x".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("x".to_string()))).into()])),
+            (),
         );
         let words = vec![
-            Word::Single(WordFragment::Literal("1".to_string())),
-            Word::Single(WordFragment::Literal("2".to_string())),
+            Word::Single(Shell(Literal("1".to_string()))).into(),
+            Word::Single(Shell(Literal("2".to_string()))).into(),
         ];
         let for_node = Node::new(
             None,
             None,
-            NodeKind::For {
+            AcCommand::new_cmd(C::For {
                 var: "i".to_string(),
                 words: words.clone(),
                 body: vec![0],
-            },
+            }),
+            (),
         );
-        let pool = DummyPool::new(vec![cmd.clone(), for_node.clone()]);
+        let pool = AutoconfPool::from_vec(vec![cmd.clone(), for_node.clone()]);
         assert_eq!(
-            pool.node_to_string(1, 0),
+            pool.display_node(1, 0),
             "for i in \"1\" \"2\"; do\n  x\ndone"
         );
     }
@@ -796,10 +930,11 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("c".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("c".to_string()))).into()])),
+            (),
         );
-        let pat1 = Word::Single(WordFragment::Literal("a".to_string()));
-        let pat2 = Word::Single(WordFragment::Literal("b".to_string()));
+        let pat1: AcWord<_> = Word::Single(Shell(Literal("a".to_string()))).into();
+        let pat2: AcWord<_> = Word::Single(Shell(Literal("b".to_string()))).into();
         let arm = PatternBodyPair {
             patterns: vec![pat1.clone(), pat2.clone()],
             body: vec![0],
@@ -807,14 +942,15 @@ mod tests {
         let case_node = Node::new(
             None,
             None,
-            NodeKind::Case {
-                word: Word::Single(WordFragment::Literal("x".to_string())),
+            AcCommand::new_cmd(C::Case {
+                word: Word::Single(Shell(Literal("x".to_string()))).into(),
                 arms: vec![arm],
-            },
+            }),
+            (),
         );
-        let pool = DummyPool::new(vec![cmd.clone(), case_node.clone()]);
+        let pool = AutoconfPool::from_vec(vec![cmd.clone(), case_node.clone()]);
         assert_eq!(
-            pool.node_to_string(1, 0),
+            pool.display_node(1, 0),
             "case x in\n  a|b)\n    c\n    ;;\nesac"
         );
     }
@@ -824,28 +960,29 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("c".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("c".to_string()))).into()])),
+            (),
         );
         let eq = Operator::Eq(
-            Word::Single(WordFragment::Literal("a".to_string())),
-            Word::Single(WordFragment::Literal("b".to_string())),
+            Word::Single(Shell(Literal("a".to_string()))).into(),
+            Word::Single(Shell(Literal("b".to_string()))).into(),
         );
         let cond = Condition::Cond(eq.clone());
-        let and_node = Node::new(None, None, NodeKind::And(cond.clone(), 0));
-        let or_node = Node::new(None, None, NodeKind::Or(cond.clone(), 0));
-        let pipe_node = Node::new(None, None, NodeKind::Pipe(false, vec![0, 0]));
-        let bang_pipe = Node::new(None, None, NodeKind::Pipe(true, vec![0, 0]));
-        let pool = DummyPool::new(vec![
+        let and_node = Node::new(None, None, AcCommand::new_cmd(C::And(cond.clone(), 0)), ());
+        let or_node = Node::new(None, None, AcCommand::new_cmd(C::Or(cond.clone(), 0)), ());
+        let pipe_node = Node::new(None, None, AcCommand::new_cmd(C::Pipe(false, vec![0, 0])), ());
+        let bang_pipe = Node::new(None, None, AcCommand::new_cmd(C::Pipe(true, vec![0, 0])), ());
+        let pool = AutoconfPool::from_vec(vec![
             cmd.clone(),
             and_node.clone(),
             or_node.clone(),
             pipe_node.clone(),
             bang_pipe.clone(),
         ]);
-        assert_eq!(pool.node_to_string(1, 0), "test a = b && c");
-        assert_eq!(pool.node_to_string(2, 0), "test a = b || c");
-        assert_eq!(pool.node_to_string(3, 0), "c | c");
-        assert_eq!(pool.node_to_string(4, 0), "!c | c");
+        assert_eq!(pool.display_node(1, 0), "test a = b && c");
+        assert_eq!(pool.display_node(2, 0), "test a = b || c");
+        assert_eq!(pool.display_node(3, 0), "c | c");
+        assert_eq!(pool.display_node(4, 0), "!c | c");
     }
 
     #[test]
@@ -853,18 +990,16 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("cmd".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("cmd".to_string()))).into()])),
+            (),
         );
-        let r1 = Redirect::Read(None, Word::Single(WordFragment::Literal("in".to_string())));
-        let r2 = Redirect::Write(
-            Some(1),
-            Word::Single(WordFragment::Literal("out".to_string())),
-        );
-        let rd_node = Node::new(None, None, NodeKind::Redirect(0, vec![r1, r2]));
-        let bg_node = Node::new(None, None, NodeKind::Background(0));
-        let pool = DummyPool::new(vec![cmd.clone(), rd_node.clone(), bg_node.clone()]);
-        assert_eq!(pool.node_to_string(1, 0), "cmd < in 1> out");
-        assert_eq!(pool.node_to_string(2, 0), "cmd &");
+        let r1 = Redirect::Read(None, Word::Single(Shell(Literal("in".to_string()))).into());
+        let r2 = Redirect::Write(Some(1), Word::Single(Shell(Literal("out".to_string()))).into());
+        let rd_node = Node::new(None, None, AcCommand::new_cmd(C::Redirect(0, vec![r1, r2])), ());
+        let bg_node = Node::new(None, None, AcCommand::new_cmd(C::Background(0)), ());
+        let pool = AutoconfPool::from_vec(vec![cmd.clone(), rd_node.clone(), bg_node.clone()]);
+        assert_eq!(pool.display_node(1, 0), "cmd < in 1> out");
+        assert_eq!(pool.display_node(2, 0), "cmd &");
     }
 
     #[test]
@@ -872,26 +1007,28 @@ mod tests {
         let body = Node::new(
             None,
             None,
-            NodeKind::Cmd(vec![Word::Single(WordFragment::Literal("b".to_string()))]),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("b".to_string()))).into()])),
+            (),
         );
         let func = Node::new(
             None,
             None,
-            NodeKind::FunctionDef {
+            AcCommand::new_cmd(C::FunctionDef {
                 name: "f".to_string(),
                 body: 0,
-            },
+            }),
+            (),
         );
         let m4 = M4Macro::new(
             "m".to_string(),
             vec![
                 M4Argument::Literal("a".to_string()),
-                M4Argument::Word(Word::Single(WordFragment::Literal("w".to_string()))),
+                M4Argument::Word(Word::Single(Shell(Literal("w".to_string()))).into()),
             ],
         );
-        let mac = Node::new(None, None, NodeKind::Macro(m4.clone()));
-        let pool = DummyPool::new(vec![body.clone(), func.clone(), mac.clone()]);
-        assert_eq!(pool.node_to_string(1, 0), "function f () b");
-        assert_eq!(pool.node_to_string(2, 0), "m([a],\n  w)");
+        let mac = Node::new(None, None, AcCommand::new_macro(m4.clone()), ());
+        let pool = AutoconfPool::from_vec(vec![body.clone(), func.clone(), mac.clone()]);
+        assert_eq!(pool.display_node(1, 0), "function f () b");
+        assert_eq!(pool.display_node(2, 0), "m([a],\n  w)");
     }
 }

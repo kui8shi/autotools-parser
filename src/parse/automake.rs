@@ -27,7 +27,7 @@ pub type DefaultParser<I> = AutomakeParser<I, builder::StringBuilder>;
 pub type MinimalParser<I> = AutomakeParser<I, builder::MinimalBuilder<String>>;
 
 /// A parser which will use a node-based AST builder implementation.
-pub type NodeParser<I> = AutomakeParser<I, builder::NodeBuilder<String>>;
+pub type NodeParser<I, U> = AutomakeParser<I, builder::AcNodeBuilder<String, U>>;
 
 use ParseErrorKind::*;
 use Token::*;
@@ -100,15 +100,17 @@ where
     }
 }
 
-impl<I, L> AutomakeParser<I, builder::NodeBuilder<L>>
+impl<I, L, U> AutomakeParser<I, builder::AcNodeBuilder<L, U>>
 where
     I: Iterator<Item = Token>,
     L: Into<String> + From<String> + Clone + fmt::Debug,
-    <builder::NodeBuilder<L> as builder::BuilderBase>::WordFragment: Into<Option<String>> + Clone,
+    U: Default,
+    <builder::AcNodeBuilder<L, U> as builder::BuilderBase>::WordFragment:
+        Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
-    pub fn parse_all(mut self) -> (slab::Slab<Node<L>>, Vec<NodeId>) {
+    pub fn parse_all(mut self) -> (slab::Slab<Node<ast::node::AcCommand<L>, U>>, Vec<NodeId>) {
         let mut top_ids = Vec::new();
         // Parse all complete commands
         let mut take = || match self.complete_command() {

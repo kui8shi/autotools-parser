@@ -1,20 +1,22 @@
-use autoconf_parser::ast::minimal::Command::*;
+use autoconf_parser::ast::minimal::AcWord;
+use autoconf_parser::ast::minimal::CompoundCommand::*;
 use autoconf_parser::ast::minimal::Condition;
 use autoconf_parser::ast::minimal::GuardBodyPair;
 use autoconf_parser::ast::minimal::Operator;
 use autoconf_parser::ast::minimal::Word;
 use autoconf_parser::ast::minimal::WordFragment::*;
-use autoconf_parser::ast::minimal::{CommandWrapper, WordFragment};
-use autoconf_parser::ast::minimal::{CompoundCommand, CompoundCommand::*};
+use autoconf_parser::ast::minimal::{AcCommand, WordFragment};
+use autoconf_parser::ast::MayM4::{self, *};
 use autoconf_parser::ast::PatternBodyPair;
 use autoconf_parser::ast::{Arithmetic, Parameter, ParameterSubstitution};
 use autoconf_parser::m4_macro::M4Argument;
 use autoconf_parser::m4_macro::M4Macro;
 use autoconf_parser::parse::SourcePos;
 
-pub type MinimalWord = Word<String, MinimalCommand>;
+pub type MinimalWord = AcWord<String>;
 pub type MinimalWordFragment = WordFragment<String, MinimalCommand, MinimalWord>;
-pub type MinimalCommand = CommandWrapper<String>;
+pub type MinimalMayM4Word = MayM4<MinimalWordFragment, MinimalM4Macro>;
+pub type MinimalCommand = AcCommand<String, AcWord<String>>;
 pub type MinimalParameterSubstitution =
     ParameterSubstitution<Parameter<String>, MinimalCommand, MinimalWord, Arithmetic<String>>;
 pub type MinimalOperator = Operator<MinimalWord>;
@@ -26,6 +28,14 @@ pub fn lit(s: &str) -> MinimalWordFragment {
     Literal(String::from(s))
 }
 
+pub fn may_lit(s: &str) -> MinimalMayM4Word {
+    Shell(lit(s))
+}
+
+pub fn word_lit(s: &str) -> MinimalWord {
+    word(may_lit(s))
+}
+
 pub fn escaped(s: &str) -> MinimalWordFragment {
     Escaped(String::from(s))
 }
@@ -34,8 +44,10 @@ pub fn subst(s: MinimalParameterSubstitution) -> MinimalWordFragment {
     Subst(Box::new(s))
 }
 
-pub fn double_quoted(v: &[MinimalWordFragment]) -> MinimalWordFragment {
-    DoubleQuoted(v.to_owned())
+pub fn double_quoted(
+    v: &[WordFragment<String, MinimalCommand, MinimalWord>],
+) -> MinimalMayM4Word {
+    Shell(DoubleQuoted(v.to_owned()))
 }
 
 pub fn param(p: Parameter<String>) -> MinimalWordFragment {
@@ -46,53 +58,57 @@ pub fn var(v: &str) -> MinimalWordFragment {
     Param(Parameter::Var(v.to_owned()))
 }
 
-pub fn word(fragment: MinimalWordFragment) -> MinimalWord {
-    Word::Single(fragment)
+pub fn word_var(v: &str) -> MinimalWord {
+    word(Shell(Param(Parameter::Var(v.to_owned()))))
 }
 
-pub fn words(fragments: &[MinimalWordFragment]) -> MinimalWord {
-    Word::Concat(fragments.to_owned())
+pub fn word(fragment: MinimalMayM4Word) -> MinimalWord {
+    Word::Single(fragment).into()
+}
+
+pub fn words(fragments: &[MinimalMayM4Word]) -> MinimalWord {
+    Word::Concat(fragments.to_owned()).into()
 }
 
 pub fn assign(name: &str, val: MinimalWord) -> MinimalCommand {
-    CommandWrapper::new(Assignment(name.into(), val))
+    AcCommand::new_assign(name.into(), val)
 }
 
 pub fn cmd_from_lits(cmd: &str, args: &[&str]) -> MinimalCommand {
     let mut cmd_args = Vec::with_capacity(args.len() + 1);
-    cmd_args.push(word(lit(cmd)));
-    cmd_args.extend(args.iter().map(|&a| word(lit(a))));
+    cmd_args.push(word(Shell(lit(cmd))));
+    cmd_args.extend(args.iter().map(|&a| word(Shell(lit(a)))));
 
-    CommandWrapper::new(Cmd(cmd_args))
+    AcCommand::new_cmd(cmd_args)
 }
 
 pub fn cmd_from_words(cmd: &str, args: &[MinimalWord]) -> MinimalCommand {
     let mut cmd_args = Vec::with_capacity(args.len() + 1);
-    cmd_args.push(word(lit(cmd)));
+    cmd_args.push(word(Shell(lit(cmd))));
     cmd_args.extend(args.to_vec());
 
-    CommandWrapper::new(Cmd(cmd_args))
+    AcCommand::new_cmd(cmd_args)
 }
 
 pub fn empty_cmd() -> MinimalCommand {
-    CommandWrapper::new(Cmd(vec![]))
+    AcCommand::new_cmd(vec![])
 }
 
 pub fn cmd_if(cond: MinimalCondition, cmds: &[MinimalCommand]) -> MinimalCommand {
-    CommandWrapper::new(Compound(If {
+    AcCommand::new_compound(If {
         conditionals: vec![GuardBodyPair {
             condition: cond,
             body: cmds.to_vec(),
         }],
         else_branch: vec![],
-    }))
+    })
 }
 
 pub fn cmd_case(
     target: MinimalWord,
     patterns: &[(&[MinimalWord], &[MinimalCommand])],
 ) -> MinimalCommand {
-    CommandWrapper::new(Compound(Case {
+    AcCommand::new_compound(Case {
         word: target,
         arms: patterns
             .iter()
@@ -101,15 +117,15 @@ pub fn cmd_case(
                 body: c.to_vec(),
             })
             .collect(),
-    }))
+    })
 }
 
 pub fn cmd_brace(cmds: &[MinimalCommand]) -> MinimalCommand {
-    CommandWrapper::new(Compound(Brace(cmds.to_owned())))
+    AcCommand::new_compound(Brace(cmds.to_owned()))
 }
 
 pub fn cmd_macro(m: MinimalM4Macro) -> MinimalCommand {
-    CommandWrapper::new(Compound(CompoundCommand::Macro(m)))
+    AcCommand::new_macro(m)
 }
 
 pub fn eq(lhs: MinimalWord, rhs: MinimalWord) -> MinimalOperator {
@@ -163,11 +179,11 @@ pub fn m4_lit(s: &str) -> MinimalM4Argument {
 }
 
 pub fn m4_var(s: &str) -> MinimalM4Argument {
-    M4Argument::Word(Word::Single(var(s)))
+    M4Argument::Word(Word::Single(Shell(var(s))).into())
 }
 
-pub fn m4_word(w: MinimalWordFragment) -> MinimalM4Argument {
-    M4Argument::Word(Word::Single(w.clone()))
+pub fn m4_word(w: MinimalMayM4Word) -> MinimalM4Argument {
+    M4Argument::Word(Word::Single(w).into())
 }
 
 pub fn m4_arr(words: &[MinimalWord]) -> MinimalM4Argument {
@@ -198,8 +214,8 @@ pub fn m4_macro_as_cmd(name: &str, args: &[MinimalM4Argument]) -> MinimalCommand
     cmd_macro(m4_macro(name, args))
 }
 
-pub fn m4_macro_as_word(name: &str, args: &[MinimalM4Argument]) -> MinimalWordFragment {
-    WordFragment::Macro(m4_macro(name, args))
+pub fn m4_macro_as_word(name: &str, args: &[MinimalM4Argument]) -> MinimalMayM4Word {
+    Macro(m4_macro(name, args))
 }
 
 pub fn src(byte: usize, line: usize, col: usize) -> SourcePos {

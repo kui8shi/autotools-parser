@@ -362,7 +362,7 @@ where
         &mut self,
         macro_call: Self::M4Macro,
     ) -> Result<Self::WordFragment, Self::Error> {
-        Ok(MayM4::Macro(macro_call.name.to_string(), macro_call))
+        Ok(MayM4::Macro(macro_call))
     }
 
     fn macro_call(

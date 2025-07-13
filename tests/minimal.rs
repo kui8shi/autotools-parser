@@ -1,7 +1,14 @@
 #![deny(rust_2018_idioms)]
+use autoconf_parser::ast::minimal::AcCommand;
+use autoconf_parser::ast::minimal::Command;
 use autoconf_parser::ast::minimal::Command::*;
 use autoconf_parser::ast::minimal::CompoundCommand;
-use autoconf_parser::ast::minimal::*;
+use autoconf_parser::ast::minimal::Condition;
+use autoconf_parser::ast::minimal::Operator;
+use autoconf_parser::ast::minimal::Word;
+use autoconf_parser::ast::minimal::WordFragment;
+use autoconf_parser::ast::MayM4;
+use autoconf_parser::ast::MayM4::*;
 use autoconf_parser::ast::Redirect;
 use autoconf_parser::lexer::Lexer;
 use autoconf_parser::m4_macro::M4Argument;
@@ -224,13 +231,10 @@ fn test_condition() {
     let mut p = make_parser(input);
 
     // Create expected structure with AND condition
-    let expected = MinimalCommand::new(Compound(CompoundCommand::And(
-        Condition::Cond(Operator::Eq(word(var("foo")), word(lit("yes")))),
-        Box::new(CommandWrapper::new(Assignment(
-            "foo".into(),
-            word(lit("1")),
-        ))),
-    )));
+    let expected = MinimalCommand::new_compound(CompoundCommand::And(
+        Condition::Cond(Operator::Eq(word_var("foo"), word_lit("yes"))),
+        Box::new(AcCommand::new_assign("foo".into(), word_lit("1"))),
+    ));
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -248,9 +252,9 @@ fn test_macro_word_and_empty_quotes() {
     let input = r#"WORD_[]MACRO([$var],[arg2],[arg3])[]_SUFFIX)"#;
     let mut p = make_parser(input);
     let expected = words(&[
-        lit("WORD_"),
+        may_lit("WORD_"),
         m4_macro_as_word("MACRO", &[m4_raw("$var"), m4_raw("arg2"), m4_raw("arg3")]),
-        lit("_SUFFIX"),
+        may_lit("_SUFFIX"),
     ]);
     match p.word() {
         Ok(w) => assert_eq!(w, Some(expected)),
@@ -272,7 +276,7 @@ fn test_minimal_macro_with_quoted_command_group() {
             m4_lit(""),
             m4_cmds(&[
                 cmd_from_lits("echo", &["found"]),
-                cmd_from_words("echo", &[word(var("var"))]),
+                cmd_from_words("echo", &[word_var("var")]),
             ]),
             m4_cmds(&[]),
         ],
@@ -306,9 +310,9 @@ ENABLE_OPTION=default)"#;
         "AC_ARG_ENABLE",
         &[
             m4_lit("option"),
-            m4_word(WordFragment::Macro(as_help_string)),
-            m4_cmd(assign("ENABLE_OPTION", word(var("enableval")))),
-            m4_cmd(assign("ENABLE_OPTION", word(lit("default")))),
+            m4_word(Macro(as_help_string)),
+            m4_cmd(assign("ENABLE_OPTION", word_var("enableval"))),
+            m4_cmd(assign("ENABLE_OPTION", word_lit("default"))),
         ],
     );
     // supplement side effects of AC_ARG_ENABLE
@@ -325,17 +329,17 @@ ENABLE_OPTION=default)"#;
 fn test_unevaluated_define_macro() {
     let input = r#"echo ["define(<VAR>,<$var>)"] >> config.m4"#;
 
-    let expected = MinimalCommand::new(Compound(CompoundCommand::Redirect(
-        Box::new(MinimalCommand::new(Cmd(vec![
-            word(lit("echo")),
+    let expected = AcCommand::new_compound(CompoundCommand::Redirect(
+        Box::new(AcCommand::new_cmd(vec![
+            word_lit("echo"),
             word(double_quoted(&[
                 lit("define(<VAR>,<"),
                 var("var"),
                 lit(">)"),
             ])),
-        ]))),
-        vec![Redirect::Append(None, word(lit("config.m4")))],
-    )));
+        ])),
+        vec![Redirect::Append(None, word_lit("config.m4"))],
+    ));
 
     let mut p = make_parser(input);
     assert_eq!(p.complete_command().unwrap().unwrap(), expected);
@@ -349,8 +353,8 @@ fn test_quoted_command_in_root() {
 fi]"#;
 
     let expected = cmd_if(
-        cond(eq(word(var("ENABLE_OPTION")), word(lit("no")))),
-        &[assign("var", word(var("configdir")))],
+        cond(eq(word_var("ENABLE_OPTION"), word_lit("no"))),
+        &[assign("var", word_var("configdir"))],
     );
 
     let mut p = make_parser(input);
@@ -381,34 +385,34 @@ esac],
             ],
         )),
         m4_cmd(cmd_case(
-            word(var("enableval")),
+            word_var("enableval"),
             &[
                 (
                     &[
-                        word(lit("yes")),
-                        word(lit("no")),
+                        word_lit("yes"),
+                        word_lit("no"),
                         words(&[
-                            WordFragment::SquareOpen,
-                            lit("02468"),
-                            WordFragment::SquareClose,
+                            Shell(WordFragment::SquareOpen),
+                            may_lit("02468"),
+                            Shell(WordFragment::SquareClose),
                         ]),
                         words(&[
-                            WordFragment::SquareOpen,
-                            lit("0-9"),
-                            WordFragment::SquareClose,
-                            WordFragment::SquareOpen,
-                            lit("02468"),
-                            WordFragment::SquareClose,
+                            Shell(WordFragment::SquareOpen),
+                            may_lit("0-9"),
+                            Shell(WordFragment::SquareClose),
+                            Shell(WordFragment::SquareOpen),
+                            may_lit("02468"),
+                            Shell(WordFragment::SquareClose),
                         ]),
                     ],
                     &[],
                 ),
                 (
                     &[words(&[
-                        WordFragment::Star,
-                        WordFragment::SquareOpen,
-                        lit("13579"),
-                        WordFragment::SquareClose,
+                        Shell(WordFragment::Star),
+                        Shell(WordFragment::SquareOpen),
+                        may_lit("13579"),
+                        Shell(WordFragment::SquareClose),
                     ])],
                     &[m4_macro_as_cmd(
                         "AC_MSG_ERROR",
@@ -416,7 +420,7 @@ esac],
                     )],
                 ),
                 (
-                    &[word(WordFragment::Star)],
+                    &[word(Shell(WordFragment::Star))],
                     &[m4_macro_as_cmd(
                         "AC_MSG_ERROR",
                         &[m4_lit("bad value, need yes/no/number")],
@@ -424,13 +428,13 @@ esac],
                 ),
             ],
         )),
-        m4_cmd(assign("enable_size", word(lit("no")))),
+        m4_cmd(assign("enable_size", word_lit("no"))),
     ];
 
     let mut p = make_parser(input);
     match p.complete_command() {
         Ok(Some(cmd)) => {
-            if let Compound(CompoundCommand::Macro(m)) = cmd.cmd {
+            if let Compound(MayM4::Macro(m)) = *cmd.cmd {
                 assert_eq!("AC_ARG_ENABLE", m.name);
                 for (actual, expected) in m.args.iter().zip(expected_args.iter()) {
                     assert_eq!(actual, expected);
@@ -456,35 +460,33 @@ fn test_backticked_command_in_macro_argument() {
     let mut p = make_parser(input);
 
     // Create the backticked shell command for the sed expression
-    let echo_cmd = MinimalCommand::new(Cmd(vec![word(lit("echo")), word(var("name"))]));
+    let echo_cmd = MinimalCommand::new_cmd(vec![word_lit("echo"), word_var("name")]);
 
-    let sed_cmd = MinimalCommand::new(Cmd(vec![
-        word(lit("sed")),
-        word(lit("-e")),
-        word(lit(r"/\//s:^[^/]*/::")),
-        word(lit("-e")),
-        word(lit("s:[\\/]:_:g")),
-    ]));
+    let sed_cmd = MinimalCommand::new_cmd(vec![
+        word_lit("sed"),
+        word_lit("-e"),
+        word_lit(r"/\//s:^[^/]*/::"),
+        word_lit("-e"),
+        word_lit("s:[\\/]:_:g"),
+    ]);
 
     // Create the pipeline command
-    let piped_cmd = MinimalCommand::new(Compound(CompoundCommand::Pipe(
-        false,
-        vec![echo_cmd, sed_cmd],
-    )));
+    let piped_cmd =
+        MinimalCommand::new_compound(CompoundCommand::Pipe(false, vec![echo_cmd, sed_cmd]));
 
     // Create the entire backticked expression
-    let backtick_expr = WordFragment::Subst(Box::new(MinimalParameterSubstitution::Command(vec![
-        piped_cmd,
-    ])));
+    let backtick_expr = Shell(WordFragment::Subst(Box::new(
+        MinimalParameterSubstitution::Command(vec![piped_cmd]),
+    )));
 
     // Create the assignment command
-    let assign_expr = CommandWrapper::new(Assignment("var".into(), Word::Single(backtick_expr)));
+    let assign_expr = AcCommand::new_assign("var".into(), Word::Single(backtick_expr).into());
 
     // Create the expected define macro
-    let expected = MinimalCommand::new(Compound(CompoundCommand::Macro(m4_macro(
+    let expected = MinimalCommand::new_macro(m4_macro(
         "m4_esyscmd",
         &[M4Argument::Commands(vec![assign_expr])],
-    ))));
+    ));
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -526,42 +528,42 @@ fn test_macro_patsubst_nested() {
     let mut p = make_parser(input);
 
     // Create expected structures for version commands
-    let version_cmd = MinimalCommand::new(Compound(CompoundCommand::Redirect(
-        Box::new(CommandWrapper::new(Cmd(vec![
-            word(lit("grep")),
-            word(lit("^#define VERSION ")),
-            word(lit("config.h.in")),
-            word(lit("/dev/null")),
-        ]))),
-        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
-    )));
+    let version_cmd = AcCommand::new_compound(CompoundCommand::Redirect(
+        Box::new(AcCommand::new_cmd(vec![
+            word_lit("grep"),
+            word_lit("^#define VERSION "),
+            word_lit("config.h.in"),
+            word_lit("/dev/null"),
+        ])),
+        vec![Redirect::Write(Some(2), word_lit("/dev/null"))],
+    ));
 
-    let version_minor_cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
-        Box::new(CommandWrapper::new(Cmd(vec![
-            word(lit("grep")),
-            word(lit("^#define VERSION_MINOR ")),
-            word(lit("config.h.in")),
-            word(lit("/dev/null")),
-        ]))),
-        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
-    )));
+    let version_minor_cmd = AcCommand::new_compound(CompoundCommand::Redirect(
+        Box::new(AcCommand::new_cmd(vec![
+            word_lit("grep"),
+            word_lit("^#define VERSION_MINOR "),
+            word_lit("config.h.in"),
+            word_lit("/dev/null"),
+        ])),
+        vec![Redirect::Write(Some(2), word_lit("/dev/null"))],
+    ));
 
-    let version_patchlevel_cmd = CommandWrapper::new(Compound(CompoundCommand::Redirect(
-        Box::new(CommandWrapper::new(Cmd(vec![
-            word(lit("grep")),
-            word(lit("^#define VERSION_PATCHLEVEL ")),
-            word(lit("config.h.in")),
-            word(lit("/dev/null")),
-        ]))),
-        vec![Redirect::Write(Some(2), word(lit("/dev/null")))],
-    )));
+    let version_patchlevel_cmd = AcCommand::new_compound(CompoundCommand::Redirect(
+        Box::new(AcCommand::new_cmd(vec![
+            word_lit("grep"),
+            word_lit("^#define VERSION_PATCHLEVEL "),
+            word_lit("config.h.in"),
+            word_lit("/dev/null"),
+        ])),
+        vec![Redirect::Write(Some(2), word_lit("/dev/null"))],
+    ));
 
     // Create nested m4 macros for the version components
     let version_esyscmd = m4_macro("m4_esyscmd", &[M4Argument::Commands(vec![version_cmd])]);
     let version_patsubst1 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(version_esyscmd))),
+            M4Argument::Word(Word::Single(Macro(version_esyscmd)).into()),
             m4_lit("^.*VERSION\t+"),
             m4_lit(""),
         ],
@@ -569,7 +571,7 @@ fn test_macro_patsubst_nested() {
     let version_patsubst2 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(version_patsubst1))),
+            M4Argument::Word(Word::Single(Macro(version_patsubst1)).into()),
             m4_lit("*$"),
             m4_lit(""),
         ],
@@ -583,7 +585,7 @@ fn test_macro_patsubst_nested() {
     let version_minor_patsubst1 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(version_minor_esyscmd))),
+            M4Argument::Word(Word::Single(Macro(version_minor_esyscmd)).into()),
             m4_lit("^.*VERSION_MINOR \t+"),
             m4_lit(""),
         ],
@@ -591,7 +593,7 @@ fn test_macro_patsubst_nested() {
     let version_minor_patsubst2 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(version_minor_patsubst1))),
+            M4Argument::Word(Word::Single(Macro(version_minor_patsubst1)).into()),
             m4_lit("*$"),
             m4_lit(""),
         ],
@@ -605,9 +607,7 @@ fn test_macro_patsubst_nested() {
     let version_patchlevel_patsubst1 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(
-                version_patchlevel_esyscmd,
-            ))),
+            M4Argument::Word(Word::Single(Macro(version_patchlevel_esyscmd)).into()),
             m4_lit("^.*VERSION_PATCHLEVEL\t+"),
             m4_lit(""),
         ],
@@ -615,9 +615,7 @@ fn test_macro_patsubst_nested() {
     let version_patchlevel_patsubst2 = m4_macro(
         "m4_bpatsubst",
         &[
-            M4Argument::Word(Word::Single(WordFragment::Macro(
-                version_patchlevel_patsubst1,
-            ))),
+            M4Argument::Word(Word::Single(Macro(version_patchlevel_patsubst1)).into()),
             m4_lit("*$"),
             m4_lit(""),
         ],
@@ -625,16 +623,17 @@ fn test_macro_patsubst_nested() {
 
     // Combine all components into the version string with dot separators
     let expected_patsubst_arg = Word::Concat(vec![
-        WordFragment::Macro(version_patsubst2),
-        lit("."),
-        WordFragment::Macro(version_minor_patsubst2),
-        lit("."),
-        WordFragment::Macro(version_patchlevel_patsubst2),
-    ]);
+        Macro(version_patsubst2),
+        may_lit("."),
+        Macro(version_minor_patsubst2),
+        may_lit("."),
+        Macro(version_patchlevel_patsubst2),
+    ])
+    .into();
 
     match p.complete_command() {
         Ok(Some(cmd)) => {
-            if let Compound(CompoundCommand::Macro(m)) = cmd.cmd {
+            if let Command::Compound(MayM4::Macro(m)) = *cmd.cmd {
                 assert_eq!("AC_INIT", m.name);
                 assert_eq!(
                     vec![

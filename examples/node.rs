@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     stdin().read_to_string(&mut input)?;
     // Initialize our token lexer and shell parser with the program's input
     let lex = Lexer::new(input.chars());
-    let (nodes, top_ids) = NodeParser::new(lex).parse_all();
+    let (nodes, top_ids) = NodeParser::<_, ()>::new(lex).parse_all();
 
     // Parse our input!
     for node_id in top_ids {

@@ -570,7 +570,7 @@ pub enum MayM4<S, M> {
     /// Normal syntax node
     Shell(S),
     /// M4 macro node
-    Macro(String, M),
+    Macro(M),
 }
 
 macro_rules! impl_top_level_cmd {

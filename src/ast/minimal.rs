@@ -1,5 +1,5 @@
 //! Defines minimal representations of the shell source.
-use super::{Arithmetic, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
+use super::{Arithmetic, MayM4, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
 use crate::m4_macro::M4Macro;
 use std::fmt;
 
@@ -32,33 +32,58 @@ pub enum WordFragment<L, C, W> {
     Tilde,
     /// Represents `:`, useful for handling tilde expansions.
     Colon,
-    /// m4 macro call to be expanded to a literal
-    Macro(M4Macro<C, W>),
 }
 
-impl<L, C, W> Into<Option<String>> for WordFragment<L, C, W>
+impl<L, C, W> Into<Option<String>> for MayM4<WordFragment<L, C, W>, M4Macro<C, W>>
 where
     L: Into<String>,
 {
     fn into(self) -> Option<String> {
+        use MayM4::*;
         use WordFragment::*;
         match self {
-            Literal(l) => Some(l.into()),
+            Shell(Literal(l)) => Some(l.into()),
             _ => None,
         }
     }
 }
 
-type DefaultParameterSubstitution<L, C, W> =
-    ParameterSubstitution<Parameter<L>, C, W, Arithmetic<L>>;
+#[derive(Debug, PartialEq, Eq, Clone)]
+/// Wraps minimal Word with fixing generics
+pub struct AcWord<L>(pub Word<MinimalWordFragment<L>>);
+
+/// Wraps command with fixing generics
+pub type MinimalCommand<L> = AcCommand<L, AcWord<L>>;
+
+/// Wraps compound command with fixing generics
+pub type MinimalCompoundCommand<L> =
+    MayM4<CompoundCommand<MinimalCommand<L>, AcWord<L>>, M4Macro<MinimalCommand<L>, AcWord<L>>>;
+
+/// Wraps word fragment with fixing generics
+pub type MinimalWordFragment<L> = MayM4<
+    WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>,
+    M4Macro<MinimalCommand<L>, AcWord<L>>,
+>;
+
+impl<L> From<Word<MinimalWordFragment<L>>> for AcWord<L> {
+    fn from(value: Word<MinimalWordFragment<L>>) -> Self {
+        Self(value)
+    }
+}
+
+impl<L> From<AcWord<L>> for Word<MinimalWordFragment<L>> {
+    fn from(value: AcWord<L>) -> Self {
+        value.0
+    }
+}
 
 /// A collection of simple words, wrapping a vector of `WordFragment`
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Word<L, C> {
+pub enum Word<X> {
     /// A word composed of multiple fragments concatenated together
-    Concat(Vec<WordFragment<L, C, Self>>),
+    Concat(Vec<X>),
     /// A word containing exactly one fragment
-    Single(WordFragment<L, C, Self>),
+    Single(X),
     /// A word which is equivalent to an empty strng, such as '', "".
     Empty,
 }
@@ -167,41 +192,62 @@ pub enum CompoundCommand<C, W> {
         /// Commands in the body
         body: Box<C>,
     },
-    /// A macro call utilizing M4 macros.
-    Macro(M4Macro<C, W>),
 }
 
 /// Complete the parsed command with additional information such as comment, line numbers, etc.
 #[derive(Debug, Clone)]
-pub struct CommandWrapper<V> {
+pub struct AcCommand<L, W> {
     /// trailing comments
     pub comment: Option<String>,
     /// range of line numbers in the original script.
     pub range: Option<(usize, usize)>,
     /// the command parsed
-    pub cmd: Command<V>,
+    pub cmd: Box<Command<L, MayM4<CompoundCommand<Self, W>, M4Macro<Self, W>>, W>>,
 }
 
-impl<V: Eq> Eq for CommandWrapper<V> {}
+impl<L: Eq, W: Eq> Eq for AcCommand<L, W> {}
 
-impl<V: PartialEq> PartialEq for CommandWrapper<V> {
+impl<L: PartialEq, W: PartialEq> PartialEq for AcCommand<L, W> {
     fn eq(&self, other: &Self) -> bool {
         self.cmd == other.cmd
     }
 }
 
-impl<V> CommandWrapper<V> {
-    /// Create a new command wrapper without any extra information
-    pub fn new(cmd: Command<V>) -> Self {
-        Self::new_with_comment(cmd, None)
+impl<L, W> AcCommand<L, W> {
+    /// Creates a new assignment command with the given name and word.
+    pub fn new_assign(name: L, word: W) -> Self {
+        Self::new(Command::Assignment(name, word), None)
+    }
+
+    /// Creates a new may m4 compound command from either a compound command or M4 macro.
+    pub fn new_may_m4(cmd: MayM4<CompoundCommand<Self, W>, M4Macro<Self, W>>) -> Self {
+        Self::new(Command::Compound(cmd), None)
+    }
+
+    /// Creates a new compound command
+    pub fn new_compound(cmd: CompoundCommand<Self, W>) -> Self {
+        Self::new(Command::Compound(MayM4::Shell(cmd)), None)
+    }
+
+    /// Creates a new command from an M4 macro.
+    pub fn new_macro(m4_macro: M4Macro<Self, W>) -> Self {
+        Self::new(Command::Compound(MayM4::Macro(m4_macro)), None)
+    }
+
+    /// Creates a new simple command from a vector of words.
+    pub fn new_cmd(cmd_words: Vec<W>) -> Self {
+        Self::new(Command::Cmd(cmd_words), None)
     }
 
     /// Wrap a command with its trailing comments
-    pub fn new_with_comment(cmd: Command<V>, comment: Option<String>) -> Self {
+    pub fn new(
+        cmd: Command<L, MayM4<CompoundCommand<Self, W>, M4Macro<Self, W>>, W>,
+        comment: Option<String>,
+    ) -> Self {
         Self {
             comment,
             range: None,
-            cmd,
+            cmd: Box::new(cmd),
         }
     }
 }
@@ -209,13 +255,13 @@ impl<V> CommandWrapper<V> {
 /// Represents a command, which can be an assignment, compound command, simple command,
 /// or macro command.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Command<V> {
+pub enum Command<L, C, W> {
     /// An assignment command that associates a value with a variable.
-    Assignment(V, Word<V, CommandWrapper<V>>),
+    Assignment(L, W),
     /// A compound command such as loops, conditionals, or case statements.
-    Compound(CompoundCommand<CommandWrapper<V>, Word<V, CommandWrapper<V>>>),
+    Compound(C),
     /// A simple command represented by a sequence of words.
-    Cmd(Vec<Word<V, CommandWrapper<V>>>),
+    Cmd(Vec<W>),
 }
 
 impl<W> fmt::Display for Operator<W>
