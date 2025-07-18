@@ -2,8 +2,8 @@
 #![recursion_limit = "128"]
 
 use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::ParseError;
 use autoconf_parser::parse::autoconf::AutoconfParser;
+use autoconf_parser::parse::ParseError;
 
 mod parse_support;
 use crate::parse_support::*;

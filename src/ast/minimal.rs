@@ -65,6 +65,23 @@ pub type MinimalWordFragment<L> = MayM4<
     M4Macro<MinimalCommand<L>, AcWord<L>>,
 >;
 
+impl<L> From<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>> for MinimalWordFragment<L> {
+    fn from(value: WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>) -> Self {
+        Self::Shell(value)
+    }
+}
+
+impl<L> Into<Option<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>>>
+    for MinimalWordFragment<L>
+{
+    fn into(self) -> Option<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>> {
+        match self {
+            Self::Shell(cmd) => Some(cmd),
+            _ => None,
+        }
+    }
+}
+
 impl<L> From<Word<MinimalWordFragment<L>>> for AcWord<L> {
     fn from(value: Word<MinimalWordFragment<L>>) -> Self {
         Self(value)

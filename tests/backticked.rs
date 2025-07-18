@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
 use autoconf_parser::ast::ComplexWord::*;
-use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::MayM4::*;
+use autoconf_parser::ast::SimpleWord::*;
 use autoconf_parser::ast::*;
 use autoconf_parser::parse::ParseErrorKind::*;
 use autoconf_parser::token::Token;

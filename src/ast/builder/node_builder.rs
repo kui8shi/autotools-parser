@@ -1,6 +1,10 @@
 //! AST builder for node representations
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
+use crate::ast::am::{
+    AmAssignOp, AmAssignment, AmConditional, AmLine, AmRule, AmVar, AmWord, AmWordFragment, MayAm,
+};
 use crate::ast::builder::QuoteWordKind;
 use crate::ast::minimal::{Word, WordFragment};
 use crate::ast::node::{AcCommand, AcWord, AcWordFragment, Node, NodeId, ShellCommand};
@@ -14,58 +18,73 @@ use crate::{
     m4_macro::M4Argument,
 };
 
-use super::minimal_builder::ConditionBuilder;
+use super::minimal_builder::{compress, ConditionBuilder};
 use super::{
     BuilderBase, BuilderError, CaseFragments, CommandGroup, ConcatWordKind, ForFragments,
-    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, Newline, RedirectKind, SeparatorKind,
-    ShellBuilder, WordKind,
+    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, MakeBuilder, Newline, RedirectKind,
+    SeparatorKind, ShellBuilder, WordKind,
 };
 use slab::Slab;
 use ShellCommand::*;
-type AcNode<L, U> = Node<AcCommand<L>, U>;
+
+/// A type alias for NodeBuilder specialized for autoconf parsing.
+pub type AutoconfNodeBuilder<U> = NodeBuilder<AcCommand, AcWord, AcWordFragment, U>;
+/// A type alias for NodeBuilder specialized for automake parsing.
+pub type AutomakeNodeBuilder<U> = NodeBuilder<AmLine, AmWord, AmWordFragment, U>;
+
 /// TODO: add doc comments
-#[derive(Debug, Default, Clone)]
-pub struct AcNodeBuilder<L, U> {
+#[derive(Debug, Clone)]
+pub struct NodeBuilder<C, W, F, U> {
     /// all nodes are put here
-    pub nodes: Slab<AcNode<L, U>>,
+    pub nodes: Slab<Node<C, U>>,
+    _word: PhantomData<W>,
+    _fragment: PhantomData<F>,
 }
 
-impl<L, U: Default> AcNodeBuilder<L, U> {
-    fn new_node(&mut self, cmd: AcCommand<L>) -> NodeId {
+impl<C, W, F, U> Default for NodeBuilder<C, W, F, U> {
+    fn default() -> Self {
+        Self {
+            nodes: Slab::default(),
+            _word: PhantomData,
+            _fragment: PhantomData,
+        }
+    }
+}
+
+impl<C, W, F, U: Default> NodeBuilder<C, W, F, U> {
+    fn new_node(&mut self, cmd: C) -> NodeId {
         self.new_node_with_comment(cmd, None)
     }
 
-    fn new_node_with_comment(&mut self, cmd: AcCommand<L>, comments: Option<String>) -> NodeId {
+    fn new_node_with_comment(&mut self, cmd: C, comments: Option<String>) -> NodeId {
         self.nodes
             .insert(Node::new(comments, None, cmd, Default::default()))
     }
 
-    fn node_mut(&mut self, id: NodeId) -> &mut AcNode<L, U> {
+    fn node_mut(&mut self, id: NodeId) -> &mut Node<C, U> {
         &mut self.nodes[id]
     }
 
-    fn node_pop(&mut self, id: NodeId) -> AcNode<L, U> {
+    fn node_pop(&mut self, id: NodeId) -> Node<C, U> {
         self.nodes.remove(id)
     }
 
-    fn node_push(&mut self, node: AcNode<L, U>) -> usize {
+    fn node_push(&mut self, node: Node<C, U>) -> usize {
         self.nodes.insert(node)
     }
 }
 
-impl<L, U> BuilderBase for AcNodeBuilder<L, U> {
+impl<C, W, F, U> BuilderBase for NodeBuilder<C, W, F, U> {
     type Command = NodeId;
     type CompoundCommand = NodeId;
-    type Word = AcWord<L>;
-    type WordFragment =
-        MayM4<WordFragment<L, Self::Command, Self::Word>, M4Macro<Self::Command, Self::Word>>;
+    type Word = W;
+    type WordFragment = F;
     type Redirect = Redirect<Self::Word>;
     type Error = BuilderError;
 }
 
-impl<L, U> M4Builder for AcNodeBuilder<L, U>
+impl<U> M4Builder for NodeBuilder<AcCommand, AcWord, AcWordFragment, U>
 where
-    L: Into<String> + From<String> + Clone + Debug,
     U: Default,
 {
     type M4Macro = M4Macro<Self::Command, Self::Word>;
@@ -76,9 +95,9 @@ where
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let mut cmd = self.new_node(AcCommand::new_macro(macro_call));
+        let mut cmd = self.new_node(macro_call.into());
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -87,7 +106,7 @@ where
         &mut self,
         macro_call: Self::M4Macro,
     ) -> Result<Self::WordFragment, Self::Error> {
-        Ok(MayM4::Macro(macro_call))
+        Ok(MayM4::Macro(macro_call).into())
     }
 
     fn macro_call(
@@ -106,9 +125,104 @@ where
     }
 }
 
-impl<L, U> ShellBuilder for AcNodeBuilder<L, U>
+impl<C, W, F, U> NodeBuilder<C, W, F, U>
 where
-    L: Into<String> + From<String> + Clone + Debug,
+    C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone,
+    F: From<WordFragment<String, NodeId, W>>
+        + Into<Option<WordFragment<String, NodeId, W>>>
+        + Clone,
+    U: Default,
+{
+    fn map_quote_word(kind: QuoteWordKind<F>) -> Result<Option<F>, <Self as BuilderBase>::Error> {
+        use super::QuoteWordKind::*;
+        let word = match kind {
+            Simple(f) => {
+                if let Some(WordFragment::Literal(s)) = f.clone().into() {
+                    if s.is_empty() {
+                        None // empty string
+                    } else {
+                        Some(f)
+                    }
+                } else {
+                    Some(f)
+                }
+            }
+            SingleQuoted(s) if s.is_empty() => {
+                None // empty string
+            }
+            SingleQuoted(s) => Some(WordFragment::Literal(s.into()).into()),
+            DoubleQuoted(mut v) => match v.len() {
+                0 => None,                   // empty string
+                1 => Some(v.pop().unwrap()), // like "foo", "${foo}"
+                _ => Some(
+                    WordFragment::DoubleQuoted(v.into_iter().filter_map(|m| m.into()).collect())
+                        .into(),
+                ),
+            },
+        };
+        Ok(word)
+    }
+}
+
+impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> {
+    type Statement = NodeId;
+
+    fn rule(
+        &mut self,
+        target: Vec<Self::Word>,
+        dependency: Vec<Self::Word>,
+        recipe: Vec<Self::Statement>,
+    ) -> Result<Self::Statement, Self::Error> {
+        Ok(self.new_node(AmLine::Rule(AmRule {
+            target,
+            dependency,
+            recipe,
+        })))
+    }
+
+    fn conditional(
+        &mut self,
+        guard_var: String,
+        then: Vec<Self::Statement>,
+        otherwise: Vec<Self::Statement>,
+    ) -> Result<Self::Statement, Self::Error> {
+        Ok(self.new_node(AmLine::Conditional(AmConditional {
+            guard_var,
+            then,
+            otherwise,
+        })))
+    }
+
+    fn assignment(
+        &mut self,
+        lhs: String,
+        op: AmAssignOp,
+        rhs: Vec<Self::Word>,
+    ) -> Result<Self::Statement, Self::Error> {
+        Ok(self.new_node(AmLine::Assignment(AmAssignment { lhs, op, rhs })))
+    }
+
+    fn shell_as_recipe(&mut self, cmd: Self::Command) -> Result<Self::Statement, Self::Error> {
+        Ok(cmd)
+    }
+
+    fn include(&mut self, path: Self::Word) -> Result<Self::Statement, Self::Error> {
+        Err(BuilderError::UnsupportedSyntax)
+    }
+
+    fn variable(&mut self, var: AmVar) -> Result<Self::WordFragment, Self::Error> {
+        Ok(MayAm::Automake(var))
+    }
+}
+
+impl<C, W, F, U> ShellBuilder for NodeBuilder<C, W, F, U>
+where
+    C: From<ShellCommand<Self::Word>> + Into<Option<ShellCommand<Self::Word>>> + Clone,
+    W: From<Word<F>> + Into<Word<F>> + Clone + Debug,
+    F: From<WordFragment<String, NodeId, W>>
+        + Into<Option<WordFragment<String, NodeId, W>>>
+        + Into<Option<String>>
+        + Clone,
     U: Default,
 {
     type CommandList = Self::Command;
@@ -159,17 +273,11 @@ where
                 match andor {
                     AndOr::And(next) => {
                         let cond = self.make_condition(cmd)?;
-                        cmd = self.new_node_with_comment(
-                            AcCommand::new_cmd(And(cond, next.into())),
-                            comments,
-                        )
+                        cmd = self.new_node_with_comment(And(cond, next.into()).into(), comments)
                     }
                     AndOr::Or(next) => {
                         let cond = self.make_condition(cmd)?;
-                        cmd = self.new_node_with_comment(
-                            AcCommand::new_cmd(Or(cond, next.into())),
-                            comments,
-                        )
+                        cmd = self.new_node_with_comment(Or(cond, next.into()).into(), comments)
                     }
                 }
             }
@@ -186,13 +294,10 @@ where
     ) -> Result<Self::ListableCommand, Self::Error> {
         debug_assert!(!cmds.is_empty());
         if cmds.len() > 1 {
-            Ok(self.new_node(AcCommand::new_cmd(Pipe(
-                bang,
-                cmds.into_iter().map(|(_, c)| c).collect(),
-            ))))
+            Ok(self.new_node(Pipe(bang, cmds.into_iter().map(|(_, c)| c).collect()).into()))
         } else if bang {
             // FIXME Suppport bang in the case of single command with other than fake Pipe.
-            Ok(self.new_node(AcCommand::new_cmd(Pipe(bang, vec![cmds.pop().unwrap().1]))))
+            Ok(self.new_node(Pipe(bang, vec![cmds.pop().unwrap().1]).into()))
         } else {
             Ok(cmds.pop().unwrap().1)
         }
@@ -213,9 +318,9 @@ where
                     // to disallow redirections before any command word appears
                     Err(BuilderError::UnsupportedSyntax)
                 }
-                RedirectOrEnvVar::EnvVar(k, v) => Ok(self.new_node(AcCommand::new_cmd(
-                    Assignment(k.into(), v.unwrap_or(Word::Empty.into())),
-                ))),
+                RedirectOrEnvVar::EnvVar(k, v) => {
+                    Ok(self.new_node(Assignment(k.into(), v.unwrap_or(Word::Empty.into())).into()))
+                }
             })
             .collect::<Result<Vec<Self::Command>, _>>()?;
 
@@ -232,18 +337,18 @@ where
             if assignments.len() == 1 {
                 Ok(assignments.pop().unwrap())
             } else {
-                Ok(self.new_node(AcCommand::new_cmd(Brace(assignments))))
+                Ok(self.new_node(Brace(assignments).into()))
             }
         } else {
-            let mut cmd = self.new_node(AcCommand::new_cmd(Cmd(cmd_words)));
+            let mut cmd = self.new_node(Cmd(cmd_words).into());
             if !redirects.is_empty() {
-                cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)));
+                cmd = self.new_node(Redirect(cmd, redirects).into());
             }
             if assignments.is_empty() {
                 Ok(cmd)
             } else {
                 assignments.push(cmd);
-                Ok(self.new_node(AcCommand::new_cmd(Subshell(assignments))))
+                Ok(self.new_node(Subshell(assignments).into()))
             }
         }
     }
@@ -257,9 +362,9 @@ where
         let mut cmds = cmd_group.commands;
         cmds.shrink_to_fit();
         redirects.shrink_to_fit();
-        let mut cmd = self.new_node(AcCommand::new_cmd(Brace(cmds)));
+        let mut cmd = self.new_node(Brace(cmds).into());
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -273,9 +378,9 @@ where
         let mut cmds = cmd_group.commands;
         cmds.shrink_to_fit();
         redirects.shrink_to_fit();
-        let mut cmd = self.new_node(AcCommand::new_cmd(Subshell(cmds)));
+        let mut cmd = self.new_node(Subshell(cmds).into());
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -300,11 +405,11 @@ where
         };
 
         let mut cmd = match kind {
-            LoopKind::While => self.new_node(AcCommand::new_cmd(While(guard_body_pair))),
-            LoopKind::Until => self.new_node(AcCommand::new_cmd(Until(guard_body_pair))),
+            LoopKind::While => self.new_node(While(guard_body_pair).into()),
+            LoopKind::Until => self.new_node(Until(guard_body_pair).into()),
         };
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -349,12 +454,15 @@ where
 
         redirects.shrink_to_fit();
 
-        let mut cmd = self.new_node(AcCommand::new_cmd(If {
-            conditionals,
-            else_branch,
-        }));
+        let mut cmd = self.new_node(
+            If {
+                conditionals,
+                else_branch,
+            }
+            .into(),
+        );
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -377,13 +485,16 @@ where
         body.shrink_to_fit();
         redirects.shrink_to_fit();
 
-        let mut cmd = self.new_node(AcCommand::new_cmd(For {
-            var: fragments.var,
-            words,
-            body,
-        }));
+        let mut cmd = self.new_node(
+            For {
+                var: fragments.var,
+                words,
+                body,
+            }
+            .into(),
+        );
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -410,12 +521,15 @@ where
 
         redirects.shrink_to_fit();
 
-        let mut cmd = self.new_node(AcCommand::new_cmd(Case {
-            word: fragments.word,
-            arms,
-        }));
+        let mut cmd = self.new_node(
+            Case {
+                word: fragments.word,
+                arms,
+            }
+            .into(),
+        );
         if !redirects.is_empty() {
-            cmd = self.new_node(AcCommand::new_cmd(Redirect(cmd, redirects)))
+            cmd = self.new_node(Redirect(cmd, redirects).into())
         }
         Ok(cmd)
     }
@@ -435,7 +549,7 @@ where
         _post_name_comments: Vec<Newline>,
         body: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(self.new_node(AcCommand::new_cmd(FunctionDef { name, body })))
+        Ok(self.new_node(FunctionDef { name, body }.into()))
     }
 
     /// Ignored by the builder.
@@ -503,7 +617,7 @@ where
                 WordFragment::Subst(Box::new(subst))
             }
         };
-        Ok(MayM4::Shell(simple))
+        Ok(simple.into())
     }
 
     /// Constructs a `ast::Word` from the provided input.
@@ -511,45 +625,14 @@ where
         &mut self,
         kind: ConcatWordKind<Self::WordFragment>,
     ) -> Result<Self::Word, Self::Error> {
-        let map_quote_word = |kind: QuoteWordKind<MayM4<WordFragment<L, _, _>, _>>| {
-            use super::super::MayM4::*;
-            use super::QuoteWordKind::*;
-            let word = match kind {
-                Simple(Shell(WordFragment::Literal(s))) if s.clone().into().is_empty() => {
-                    None // empty string
-                }
-                SingleQuoted(s) if s.is_empty() => {
-                    None // empty string
-                }
-                Simple(s) => Some(s),
-                SingleQuoted(s) => Some(Shell(WordFragment::Literal(s.into()))),
-                DoubleQuoted(mut v) => match v.len() {
-                    0 => None,                   // empty string
-                    1 => Some(v.pop().unwrap()), // like "foo", "${foo}"
-                    _ => Some(Shell(WordFragment::DoubleQuoted(
-                        v.into_iter()
-                            .filter_map(|m| match m {
-                                // @kui8shi
-                                // To simplify the data structure, we ignore double quoted macro
-                                // words for now.
-                                Macro(_) => None,
-                                Shell(w) => Some(w),
-                            })
-                            .collect(),
-                    ))),
-                },
-            };
-            Ok(word)
-        };
-
-        let word = match kind {
+        let word = match compress(kind) {
             ConcatWordKind::Single(s) => {
-                map_quote_word(s)?.map_or(Word::Empty, |w| Word::Single(w))
+                Self::map_quote_word(s)?.map_or(Word::Empty, |w| Word::Single(w))
             }
             ConcatWordKind::Concat(words) => Word::Concat(
                 words
                     .into_iter()
-                    .map(map_quote_word)
+                    .map(Self::map_quote_word)
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
@@ -577,51 +660,48 @@ where
     }
 }
 
-impl<L, U> ConditionBuilder<NodeId, AcWord<L>, AcWordFragment<L>> for AcNodeBuilder<L, U>
+impl<C, W, F, U> ConditionBuilder<NodeId, W, F> for NodeBuilder<C, W, F, U>
 where
-    L: Into<String> + Clone + Debug,
+    C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone,
+    W: From<Word<F>> + Into<Word<F>> + Clone + Debug,
+    F: From<WordFragment<String, NodeId, W>>
+        + Into<Option<WordFragment<String, NodeId, W>>>
+        + Into<Option<String>>
+        + Clone,
     U: Default,
 {
-    fn make_condition(
-        &mut self,
-        cmd: NodeId,
-    ) -> Result<Condition<<Self as BuilderBase>::Command, <Self as BuilderBase>::Word>, BuilderError>
-    {
+    fn make_condition(&mut self, cmd: NodeId) -> Result<Condition<NodeId, W>, BuilderError> {
         let node = self.node_pop(cmd);
-        match &node.cmd.0 {
-            MayM4::Shell(Cmd(words)) => {
+        match node.cmd.clone().into() {
+            Some(Cmd(words)) => {
                 let first_word = words.first().unwrap();
-                if let Word::Single(may_word) = &first_word.0 {
-                    if let MayM4::Shell(w) = may_word {
-                        match w {
-                            WordFragment::Literal(v) if v.clone().into() == "test" => {
-                                Some(Condition::Cond(self.parse_condition(&words[1..])?))
-                            }
-                            WordFragment::Literal(v) if v.clone().into() == "eval" => {
-                                Some(Condition::Eval(vec![
-                                    self.new_node(AcCommand::new_cmd(Cmd(words[1..].to_owned())))
-                                ]))
-                            }
-                            WordFragment::Subst(s) => match s.as_ref() {
-                                ParameterSubstitution::Command(cmds) => {
-                                    Some(Condition::Eval(cmds.clone()))
-                                }
-                                _ => None,
-                            },
-                            _ => None,
+                if let Word::Single(f) = first_word.clone().into() {
+                    match f.into() {
+                        Some(WordFragment::Literal(v)) if v.clone() == "test" => {
+                            Some(Condition::Cond(self.parse_condition(&words[1..])?))
                         }
-                    } else {
-                        None
+                        Some(WordFragment::Literal(v)) if v.clone() == "eval" => {
+                            Some(Condition::Eval(vec![
+                                self.new_node(Cmd(words[1..].to_owned()).into())
+                            ]))
+                        }
+                        Some(WordFragment::Subst(s)) => match s.as_ref() {
+                            ParameterSubstitution::Command(cmds) => {
+                                Some(Condition::Eval(cmds.clone()))
+                            }
+                            _ => None,
+                        },
+                        _ => None,
                     }
                 } else {
                     None
                 }
             }
-            MayM4::Shell(And(first, second)) => Some(Condition::And(
+            Some(And(first, second)) => Some(Condition::And(
                 Box::new(first.clone()),
                 Box::new(self.make_condition(second.clone())?),
             )),
-            MayM4::Shell(Or(first, second)) => Some(Condition::Or(
+            Some(Or(first, second)) => Some(Condition::Or(
                 Box::new(first.clone()),
                 Box::new(self.make_condition(second.clone())?),
             )),

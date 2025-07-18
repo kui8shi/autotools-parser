@@ -1,12 +1,11 @@
 //! Defines node representations of the shell source.
 use crate::m4_macro;
 use slab::Slab;
-use std::fmt;
 
 /// Represents a unique node id
 pub type NodeId = usize;
 /// Wraps minimal word fragment with fixing generics
-pub type WordFragment<L, W> = super::minimal::WordFragment<L, NodeId, W>;
+pub type WordFragment<W> = super::minimal::WordFragment<String, NodeId, W>;
 /// Wraps minimal condition with fixing generics
 pub type Condition<W> = super::minimal::Condition<NodeId, W>;
 /// Wraps minimal operator with fixing generics
@@ -18,54 +17,83 @@ pub type PatternBodyPair<W> = super::PatternBodyPair<NodeId, W>;
 /// Wraps redirect with fixing generics
 pub type Redirect<W> = super::Redirect<W>;
 /// Wraps parameter substitution with fixing generics
-pub type ParameterSubstitution<L, W> =
-    super::ParameterSubstitution<super::Parameter<L>, NodeId, W, super::Arithmetic<L>>;
+pub type ParameterSubstitution<W> =
+    super::ParameterSubstitution<super::Parameter<String>, NodeId, W, super::Arithmetic<String>>;
 /// Wraps m4 macro with fixing generics
-pub type M4Macro<L> = m4_macro::M4Macro<NodeId, AcWord<L>>;
+pub type M4Macro = m4_macro::M4Macro<NodeId, AcWord>;
 /// Wraps m4 argument with fixing generics
-pub type M4Argument<L> = m4_macro::M4Argument<NodeId, AcWord<L>>;
+pub type M4Argument = m4_macro::M4Argument<NodeId, AcWord>;
 /// Wraps minimal word fragment with fixing generics
-pub type AcWordFragment<L> = super::MayM4<WordFragment<L, AcWord<L>>, M4Macro<L>>;
+pub type AcWordFragment = super::MayM4<WordFragment<AcWord>, M4Macro>;
 
 /// Wraps minimal Word with fixing generics
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AcWord<L>(pub super::minimal::Word<AcWordFragment<L>>);
+pub struct AcWord(pub super::minimal::Word<AcWordFragment>);
 
-impl<L> From<super::minimal::Word<AcWordFragment<L>>> for AcWord<L> {
-    fn from(value: super::minimal::Word<AcWordFragment<L>>) -> Self {
+impl From<WordFragment<AcWord>> for AcWordFragment {
+    fn from(value: WordFragment<AcWord>) -> Self {
+        super::MayM4::Shell(value)
+    }
+}
+
+impl From<super::minimal::Word<AcWordFragment>> for AcWord {
+    fn from(value: super::minimal::Word<AcWordFragment>) -> Self {
         Self(value)
     }
 }
 
-impl<L> From<&super::minimal::Word<AcWordFragment<L>>> for AcWord<L>
-where
-    L: Clone,
-{
-    fn from(value: &super::minimal::Word<AcWordFragment<L>>) -> Self {
+impl From<&super::minimal::Word<AcWordFragment>> for AcWord {
+    fn from(value: &super::minimal::Word<AcWordFragment>) -> Self {
         Self(value.clone())
     }
 }
 
-impl<L> From<AcWord<L>> for super::minimal::Word<AcWordFragment<L>> {
-    fn from(value: AcWord<L>) -> Self {
+impl From<AcWord> for super::minimal::Word<AcWordFragment> {
+    fn from(value: AcWord) -> Self {
         value.0
     }
 }
 
+impl Into<Option<WordFragment<AcWord>>> for AcWordFragment {
+    fn into(self) -> Option<WordFragment<AcWord>> {
+        use super::MayM4::*;
+        match self {
+            Shell(word) => Some(word),
+            Macro(_) => None,
+        }
+    }
+}
 
 /// Wraps command with fixing generics
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AcCommand<L>(pub super::MayM4<ShellCommand<L, AcWord<L>>, M4Macro<L>>);
+pub struct AcCommand(pub super::MayM4<ShellCommand<AcWord>, M4Macro>);
 
-impl<L> AcCommand<L> {
+impl AcCommand {
     /// Creates a new command from a shell command.
-    pub fn new_cmd(cmd: ShellCommand<L, AcWord<L>>) -> Self {
+    pub fn new_cmd(cmd: ShellCommand<AcWord>) -> Self {
         Self(super::MayM4::Shell(cmd))
     }
+}
 
-    /// Creates a new command from an M4 macro.
-    pub fn new_macro(m4_macro: M4Macro<L>) -> Self {
-        Self(super::MayM4::Macro(m4_macro))
+impl From<ShellCommand<AcWord>> for AcCommand {
+    /// Creates a new autoconf command from a shell command.
+    fn from(value: ShellCommand<AcWord>) -> Self {
+        Self(super::MayM4::Shell(value))
+    }
+}
+
+impl Into<Option<ShellCommand<AcWord>>> for AcCommand {
+    fn into(self) -> Option<ShellCommand<AcWord>> {
+        match self.0 {
+            super::MayM4::Shell(cmd) => Some(cmd),
+            super::MayM4::Macro(_) => None,
+        }
+    }
+}
+
+impl From<m4_macro::M4Macro<NodeId, AcWord>> for AcCommand {
+    fn from(value: M4Macro) -> Self {
+        Self(super::MayM4::Macro(value))
     }
 }
 
@@ -96,9 +124,9 @@ impl<C, U> Node<C, U> {
 
 /// represents any kinds of commands
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellCommand<L, W> {
+pub enum ShellCommand<W> {
     /// An assignment command that associates a value with a variable.
-    Assignment(L, W),
+    Assignment(String, W),
     /// A simple command represented by a sequence of words.
     Cmd(Vec<W>),
     /// A group of commands that should be executed in the current environment.
@@ -165,12 +193,12 @@ pub trait DisplayNode {
 
 #[derive(Debug, Clone)]
 /// A pool of autoconf commands stored as nodes.
-pub struct AutoconfPool<L, U = ()> {
+pub struct AutoconfPool<U = ()> {
     /// Contains all nodes. `NodeId` represents indexes of nodes in this slab.
-    pub nodes: Slab<Node<AcCommand<L>, U>>,
+    pub nodes: Slab<Node<AcCommand, U>>,
 }
 
-impl<L, U> AutoconfPool<L, U> {
+impl<U> AutoconfPool<U> {
     /// Construct a new pool of autoconf commands
     pub fn new() -> Self {
         Self {
@@ -179,7 +207,7 @@ impl<L, U> AutoconfPool<L, U> {
     }
 
     /// Construct a new pool from a given vector of autoconf commands
-    pub fn from_vec(nodes: Vec<Node<AcCommand<L>, U>>) -> Self {
+    pub fn from_vec(nodes: Vec<Node<AcCommand, U>>) -> Self {
         let nodes = {
             let mut tmp = Slab::with_capacity(nodes.len());
             for node in nodes {
@@ -196,16 +224,13 @@ impl<L, U> AutoconfPool<L, U> {
     }
 
     /// Get a node by its ID.
-    pub fn get(&self, id: NodeId) -> Option<&Node<AcCommand<L>, U>> {
+    pub fn get(&self, id: NodeId) -> Option<&Node<AcCommand, U>> {
         self.nodes.get(id)
     }
 }
 
-impl<L, U> DisplayNode for AutoconfPool<L, U>
-where
-    L: fmt::Display + fmt::Debug,
-{
-    type Word = AcWord<L>;
+impl<U> DisplayNode for AutoconfPool<U> {
+    type Word = AcWord;
 
     fn display_node(&self, node_id: NodeId, indent_level: usize) -> String {
         use super::MayM4::*;
@@ -217,7 +242,7 @@ where
             })
     }
 
-    fn display_word(&self, word: &AcWord<L>, should_quote: bool) -> String {
+    fn display_word(&self, word: &AcWord, should_quote: bool) -> String {
         use super::minimal::Word::*;
         use super::minimal::WordFragment::DoubleQuoted;
         match &word.0 {
@@ -244,11 +269,8 @@ where
     }
 }
 
-impl<L, U> AutoconfPool<L, U>
-where
-    L: fmt::Display + fmt::Debug,
-{
-    fn may_m4_word_to_string(&self, frag: &AcWordFragment<L>) -> String {
+impl<U> AutoconfPool<U> {
+    fn may_m4_word_to_string(&self, frag: &AcWordFragment) -> String {
         use super::MayM4::*;
         match frag {
             Macro(macro_word) => format!(
@@ -266,7 +288,7 @@ where
     }
 
     /// Format an M4 macro call (`M4Macro`) into a string
-    fn m4_macro_to_string(&self, m4_macro: &M4Macro<L>, indent_level: usize) -> String {
+    fn m4_macro_to_string(&self, m4_macro: &M4Macro, indent_level: usize) -> String {
         const TAB_WIDTH: usize = 2;
         let tab = " ".repeat(indent_level * TAB_WIDTH);
         format!(
@@ -283,7 +305,7 @@ where
 
     /// Format an M4 macro argument (`M4Argument`) into a string, applying `indent_level`
     /// spaces for multiline argument formatting.
-    fn m4_argument_to_string(&self, arg: &M4Argument<L>, indent_level: usize) -> String {
+    fn m4_argument_to_string(&self, arg: &M4Argument, indent_level: usize) -> String {
         use crate::m4_macro::M4Argument::*;
         let newline = format!("\n{}", " ".repeat(indent_level));
         match arg {
@@ -310,25 +332,22 @@ where
     }
 }
 
-impl<L, U> NodePool<L, AcWord<L>> for AutoconfPool<L, U> where L: fmt::Display + fmt::Debug {}
+impl<U> NodePool<AcWord> for AutoconfPool<U> {}
 
 /// A macro call utilizing M4 macros.
-//Macro(M4Macro<L>),
+//Macro(M4Macro),
 
 /// Trait providing access to a pool of AST nodes and methods to convert AST nodes
 /// and components to their shell script string representations.
 ///
 /// The type parameter `L` represents the literal type used in words and must implement
 /// `fmt::Display` for formatting.
-pub trait NodePool<L, W>: DisplayNode<Word = W>
-where
-    L: fmt::Display + fmt::Debug,
-{
+pub trait NodePool<W>: DisplayNode<Word = W> {
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
     fn command_to_string(
         &self,
-        cmd: &ShellCommand<L, W>,
+        cmd: &ShellCommand<W>,
         comment: Option<String>,
         indent_level: usize,
     ) -> String {
@@ -554,7 +573,7 @@ where
 
     /// Recursively format a `WordFragment` into its literal string form, handling quoting
     /// and parameter substitutions.
-    fn shell_word_to_string(&self, shell_word: &WordFragment<L, W>) -> String {
+    fn shell_word_to_string(&self, shell_word: &WordFragment<W>) -> String {
         use crate::ast::minimal::WordFragment::*;
         match &shell_word {
             Literal(lit) => lit.to_string(),
@@ -567,7 +586,7 @@ where
                     .concat()
             ),
             Escaped(lit) => format!("\\{}", lit),
-            Param(param) => format!("${{{}}}", param_raw(param)),
+            Param(param) => format!("${{{}}}", param_raw(&param)),
             Subst(param_subst) => self.parameter_substitution_to_string(&param_subst),
             Star => "*".to_string(),
             Question => "?".to_string(),
@@ -579,10 +598,7 @@ where
     }
 
     /// Format a parameter substitution AST (`ParameterSubstitution`) into its shell script string representation.
-    fn parameter_substitution_to_string(
-        &self,
-        param_subst: &ParameterSubstitution<L, W>,
-    ) -> String {
+    fn parameter_substitution_to_string(&self, param_subst: &ParameterSubstitution<W>) -> String {
         use super::ParameterSubstitution::*;
         match param_subst {
             Command(cmds) => format!(
@@ -696,7 +712,7 @@ where
     }
 }
 
-fn param_raw<L: fmt::Display>(param: &super::Parameter<L>) -> String {
+fn param_raw(param: &super::Parameter<String>) -> String {
     use super::Parameter::*;
     match param {
         At => "@".to_string(),
@@ -727,7 +743,7 @@ mod tests {
     use crate::ast::Parameter;
     use crate::m4_macro::{M4Argument, M4Macro};
 
-    type C = ShellCommand<String, AcWord<String>>;
+    type C = ShellCommand<AcWord>;
 
     #[test]
     fn test_get_node_kind() {
@@ -738,15 +754,20 @@ mod tests {
 
     #[test]
     fn test_node_to_string_assignment_and_cmd() {
-        let word: AcWord<_> = Word::Single(Shell(Literal("value".to_string()))).into();
+        let word: AcWord = Word::Single(Shell(Literal("value".to_string()))).into();
         let assign_node = Node::new(
             None,
             None,
             AcCommand::new_cmd(C::Assignment("var".to_string(), word.clone().into())),
             (),
         );
-        let echo: AcWord<_> = Word::Single(Shell(Literal("echo".to_string()))).into();
-        let cmd_node = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![echo.clone(), word.clone()])), ());
+        let echo: AcWord = Word::Single(Shell(Literal("echo".to_string()))).into();
+        let cmd_node = Node::new(
+            None,
+            None,
+            AcCommand::new_cmd(C::Cmd(vec![echo.clone(), word.clone()])),
+            (),
+        );
         let pool = AutoconfPool::from_vec(vec![assign_node, cmd_node]);
         assert_eq!(pool.display_node(0, 0), "var=\"value\"");
         assert_eq!(pool.display_node(1, 1), "  echo value");
@@ -754,7 +775,7 @@ mod tests {
 
     #[test]
     fn test_operator_to_string() {
-        let pool: AutoconfPool::<_, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let op = Operator::Eq(
             Word::Single(Shell(Literal("a".to_string()))).into(),
             Word::Single(Shell(Literal("b".to_string()))).into(),
@@ -764,19 +785,20 @@ mod tests {
 
     #[test]
     fn test_word_and_fragment_to_string() {
-        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let frag = DoubleQuoted(vec![Literal("hi".to_string())]);
         assert_eq!(pool.shell_word_to_string(&frag), "\"hi\"");
         let word = Word::Concat(vec![
             Shell(Literal("a".to_string())),
             Shell(Literal("b".to_string())),
-        ]).into();
+        ])
+        .into();
         assert_eq!(pool.display_word(&word, false), "ab");
     }
 
     #[test]
     fn test_condition_to_string() {
-        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let cond = Condition::Cond(Operator::Neq(
             Word::Single(Shell(Literal("x".to_string()))).into(),
             Word::Single(Shell(Literal("y".to_string()))).into(),
@@ -786,7 +808,7 @@ mod tests {
 
     #[test]
     fn test_redirect_to_string() {
-        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let word = Word::Single(Shell(Literal("out".to_string()))).into();
         let redir = crate::ast::Redirect::Write(None, word);
         assert_eq!(pool.redirect_to_string(&redir), "> out");
@@ -794,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_parameter_substitution_to_string_default() {
-        let pool: AutoconfPool<_, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let subst = ParameterSubstitution::Default(
             false,
             Parameter::Var("v".to_string()),
@@ -805,16 +827,21 @@ mod tests {
 
     #[test]
     fn test_m4_argument_to_string_literal() {
-        let pool: AutoconfPool<String, ()> = AutoconfPool::from_vec(vec![]);
+        let pool: AutoconfPool<()> = AutoconfPool::from_vec(vec![]);
         let arg = M4Argument::Literal("lit".to_string());
         assert_eq!(pool.m4_argument_to_string(&arg, 0), "[lit]");
     }
 
     #[test]
     fn test_node_to_string_brace_and_subshell() {
-        let echo: AcWord<_> = Word::Single(Shell(Literal("echo".to_string()))).into();
-        let hi: AcWord<_> = Word::Single(Shell(Literal("hi".to_string()))).into();
-        let cmd = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![echo.clone(), hi.clone()])), ());
+        let echo: AcWord = Word::Single(Shell(Literal("echo".to_string()))).into();
+        let hi: AcWord = Word::Single(Shell(Literal("hi".to_string()))).into();
+        let cmd = Node::new(
+            None,
+            None,
+            AcCommand::new_cmd(C::Cmd(vec![echo.clone(), hi.clone()])),
+            (),
+        );
         let brace = Node::new(None, None, AcCommand::new_cmd(C::Brace(vec![0])), ());
         let subshell = Node::new(None, None, AcCommand::new_cmd(C::Subshell(vec![0])), ());
         let pool = AutoconfPool::from_vec(vec![cmd, brace, subshell]);
@@ -824,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_node_to_string_while_until() {
-        let w: AcWord<_> = Word::Single(Shell(Literal("f".to_string()))).into();
+        let w: AcWord = Word::Single(Shell(Literal("f".to_string()))).into();
         let cond = Condition::Cond(Operator::Empty(w.clone()));
         let body = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![w.clone()])), ());
         let gbp = GuardBodyPair {
@@ -841,19 +868,23 @@ mod tests {
 
     #[test]
     fn test_node_to_string_if_else() {
-        let w: AcWord<_> = Word::Single(Shell(Literal("t".to_string()))).into();
+        let w: AcWord = Word::Single(Shell(Literal("t".to_string()))).into();
         let cond = Condition::Cond(Operator::Empty(w.clone()));
         let cmd_true = Node::new(None, None, AcCommand::new_cmd(C::Cmd(vec![w.clone()])), ());
         let cmd_false = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("f".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("f".to_string()))).into()
+            ])),
             (),
         );
         let cmd_else = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("e".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("e".to_string()))).into()
+            ])),
             (),
         );
         let gbp1 = GuardBodyPair {
@@ -901,7 +932,9 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("x".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("x".to_string()))).into()
+            ])),
             (),
         );
         let words = vec![
@@ -930,11 +963,13 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("c".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("c".to_string()))).into()
+            ])),
             (),
         );
-        let pat1: AcWord<_> = Word::Single(Shell(Literal("a".to_string()))).into();
-        let pat2: AcWord<_> = Word::Single(Shell(Literal("b".to_string()))).into();
+        let pat1: AcWord = Word::Single(Shell(Literal("a".to_string()))).into();
+        let pat2: AcWord = Word::Single(Shell(Literal("b".to_string()))).into();
         let arm = PatternBodyPair {
             patterns: vec![pat1.clone(), pat2.clone()],
             body: vec![0],
@@ -960,7 +995,9 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("c".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("c".to_string()))).into()
+            ])),
             (),
         );
         let eq = Operator::Eq(
@@ -970,8 +1007,18 @@ mod tests {
         let cond = Condition::Cond(eq.clone());
         let and_node = Node::new(None, None, AcCommand::new_cmd(C::And(cond.clone(), 0)), ());
         let or_node = Node::new(None, None, AcCommand::new_cmd(C::Or(cond.clone(), 0)), ());
-        let pipe_node = Node::new(None, None, AcCommand::new_cmd(C::Pipe(false, vec![0, 0])), ());
-        let bang_pipe = Node::new(None, None, AcCommand::new_cmd(C::Pipe(true, vec![0, 0])), ());
+        let pipe_node = Node::new(
+            None,
+            None,
+            AcCommand::new_cmd(C::Pipe(false, vec![0, 0])),
+            (),
+        );
+        let bang_pipe = Node::new(
+            None,
+            None,
+            AcCommand::new_cmd(C::Pipe(true, vec![0, 0])),
+            (),
+        );
         let pool = AutoconfPool::from_vec(vec![
             cmd.clone(),
             and_node.clone(),
@@ -990,12 +1037,23 @@ mod tests {
         let cmd = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("cmd".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal(
+                "cmd".to_string(),
+            )))
+            .into()])),
             (),
         );
         let r1 = Redirect::Read(None, Word::Single(Shell(Literal("in".to_string()))).into());
-        let r2 = Redirect::Write(Some(1), Word::Single(Shell(Literal("out".to_string()))).into());
-        let rd_node = Node::new(None, None, AcCommand::new_cmd(C::Redirect(0, vec![r1, r2])), ());
+        let r2 = Redirect::Write(
+            Some(1),
+            Word::Single(Shell(Literal("out".to_string()))).into(),
+        );
+        let rd_node = Node::new(
+            None,
+            None,
+            AcCommand::new_cmd(C::Redirect(0, vec![r1, r2])),
+            (),
+        );
         let bg_node = Node::new(None, None, AcCommand::new_cmd(C::Background(0)), ());
         let pool = AutoconfPool::from_vec(vec![cmd.clone(), rd_node.clone(), bg_node.clone()]);
         assert_eq!(pool.display_node(1, 0), "cmd < in 1> out");
@@ -1007,7 +1065,9 @@ mod tests {
         let body = Node::new(
             None,
             None,
-            AcCommand::new_cmd(C::Cmd(vec![Word::Single(Shell(Literal("b".to_string()))).into()])),
+            AcCommand::new_cmd(C::Cmd(vec![
+                Word::Single(Shell(Literal("b".to_string()))).into()
+            ])),
             (),
         );
         let func = Node::new(
@@ -1026,7 +1086,7 @@ mod tests {
                 M4Argument::Word(Word::Single(Shell(Literal("w".to_string()))).into()),
             ],
         );
-        let mac = Node::new(None, None, AcCommand::new_macro(m4.clone()), ());
+        let mac = Node::new(None, None, m4.clone().into(), ());
         let pool = AutoconfPool::from_vec(vec![body.clone(), func.clone(), mac.clone()]);
         assert_eq!(pool.display_node(1, 0), "function f () b");
         assert_eq!(pool.display_node(2, 0), "m([a],\n  w)");

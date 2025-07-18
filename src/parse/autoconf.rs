@@ -3,8 +3,6 @@
 // FIXME: consider parsing out array index syntax? (e.g. ${array[some index]}
 // FIXME: arithmetic substitutions don't currently support param/comand substitutions
 
-use std::convert::From;
-use std::fmt;
 use std::iter::empty as empty_iter;
 use std::mem;
 use std::ops::{AddAssign, Not, SubAssign};
@@ -19,8 +17,8 @@ use super::{
 };
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, M4Builder, ShellBuilder, WordKind};
-use crate::ast::node::{Node, NodeId};
+use crate::ast::builder::{self, AutoconfNodeBuilder, M4Builder, ShellBuilder, WordKind};
+use crate::ast::node::{AcCommand, AcWord, Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
 use crate::token::Token;
@@ -33,7 +31,7 @@ pub type DefaultParser<I> = AutoconfParser<I, builder::StringBuilder>;
 pub type MinimalParser<I> = AutoconfParser<I, builder::MinimalBuilder<String>>;
 
 /// A parser which will use a node-based AST builder implementation.
-pub type NodeParser<I, U> = AutoconfParser<I, builder::AcNodeBuilder<String, U>>;
+pub type NodeParser<I, U> = AutoconfParser<I, AutoconfNodeBuilder<U>>;
 
 use ParseErrorKind::*;
 use Token::*;
@@ -59,7 +57,7 @@ where
 {
     type TopLevel = B::Command;
     type Error = B::Error;
-    fn parse(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
+    fn entry(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
         self.complete_command()
     }
 }
@@ -185,17 +183,18 @@ where
     }
 }
 
-impl<I, L, U> AutoconfParser<I, builder::AcNodeBuilder<L, U>>
+impl<I, U> AutoconfParser<I, AutoconfNodeBuilder<U>>
 where
     I: Iterator<Item = Token>,
-    L: Into<String> + From<String> + Clone + fmt::Debug,
+    <AutoconfNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AcWord>>
+        + Into<Option<ast::node::WordFragment<AcWord>>>
+        + Into<Option<String>>
+        + Clone,
     U: Default,
-    <builder::AcNodeBuilder<L, U> as builder::BuilderBase>::WordFragment:
-        Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
-    pub fn parse_all(mut self) -> (slab::Slab<Node<ast::node::AcCommand<L>, U>>, Vec<NodeId>) {
+    pub fn parse_all(mut self) -> (slab::Slab<Node<AcCommand, U>>, Vec<NodeId>) {
         let mut top_ids = Vec::new();
         // Parse all complete commands
         let mut take = || match self.complete_command() {

@@ -22,7 +22,10 @@ mod node_builder;
 
 pub use self::default_builder::*;
 pub use self::minimal_builder::MinimalBuilder;
-pub use self::node_builder::AcNodeBuilder;
+pub use self::node_builder::AutoconfNodeBuilder;
+pub use self::node_builder::AutomakeNodeBuilder;
+
+use super::am::{AmAssignOp, AmVar};
 
 /// An indicator to the builder of how complete commands are separated.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -522,26 +525,41 @@ pub trait M4Builder: BuilderBase {
 /// A trait which defines an interface which the parser defined in the `parse` module
 /// uses to delegate Abstract Syntax Tree creation, especially makefile parts.
 pub trait MakeBuilder: BuilderBase {
-    /// The type which represents a toplevel makefile element.
-    type TopLevel;
-    /// The type which represents a makefile rule.
-    type Rule;
-    /// The type which represents a makefile directive.
-    type Directive;
-    /// The type which represents a makefile assignment.
-    type Assignment;
+    /// The type which represents a top-level automake statement
+    type Statement;
 
-    /// doc
-    fn top_level(&mut self) -> Result<Self::TopLevel, Self::Error>;
+    /// Constructs an automake rule.
+    fn rule(
+        &mut self,
+        target: Vec<Self::Word>,
+        dependency: Vec<Self::Word>,
+        recipe: Vec<Self::Statement>,
+    ) -> Result<Self::Statement, Self::Error>;
 
-    /// doc
-    fn recipe(&mut self) -> Result<Self::Rule, Self::Error>;
+    /// Constructs an automake conditional.
+    fn conditional(
+        &mut self,
+        guard_var: String,
+        then: Vec<Self::Statement>,
+        otherwise: Vec<Self::Statement>,
+    ) -> Result<Self::Statement, Self::Error>;
 
-    /// doc
-    fn directive(&mut self) -> Result<Self::Directive, Self::Error>;
+    /// Constructs an automake assignment.
+    fn assignment(
+        &mut self,
+        lhs: String,
+        op: AmAssignOp,
+        rhs: Vec<Self::Word>,
+    ) -> Result<Self::Statement, Self::Error>;
 
-    /// doc
-    fn assignment(&mut self) -> Result<Self::Assignment, Self::Error>;
+    /// Interpret a shell command as a part of automake recipe.
+    fn shell_as_recipe(&mut self, cmd: Self::Command) -> Result<Self::Statement, Self::Error>;
+
+    /// Construct an automake include statement.
+    fn include(&mut self, path: Self::Word) -> Result<Self::Statement, Self::Error>;
+
+    /// Construct an automake styled variable.
+    fn variable(&mut self, var: AmVar) -> Result<Self::WordFragment, Self::Error>;
 }
 
 macro_rules! impl_builder_body {
@@ -716,31 +734,6 @@ macro_rules! impl_m4_builder_body {
             original_name: Option<String>,
         ) -> Result<Self::M4Macro, Self::Error> {
             (**self).macro_call(name, args, effects, original_name)
-        }
-    };
-}
-
-macro_rules! impl_make_builder_body {
-    ($T:ident) => {
-        type TopLevel = $T::TopLevel;
-        type Rule = $T::Rule;
-        type Directive = $T::Directive;
-        type Assignment = $T::Assignment;
-
-        fn top_level(&mut self) -> Result<Self::TopLevel, Self::Error> {
-            (**self).top_level()
-        }
-
-        fn recipe(&mut self) -> Result<Self::Rule, Self::Error>{
-            (**self).top_level()
-        }
-
-        fn directive(&mut self) -> Result<Self::Directive, Self::Error>{
-            (**self).top_level()
-        }
-
-        fn assignment(&mut self) -> Result<Self::Assignment, Self::Error>{
-            (**self).assignment()
         }
     };
 }

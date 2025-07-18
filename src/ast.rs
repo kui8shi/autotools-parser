@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt, ops};
 
+pub mod am;
 pub mod builder;
 pub mod minimal;
 pub mod node;
@@ -36,7 +37,7 @@ pub enum Parameter<T> {
     Var(T),
 }
 
-pub(crate) fn map_param<T: From<String>>(kind: DefaultParameter) -> Parameter<T> {
+pub(crate) fn map_param<V, T: From<V>>(kind: Parameter<V>) -> Parameter<T> {
     use crate::ast::Parameter::*;
     match kind {
         At => At,

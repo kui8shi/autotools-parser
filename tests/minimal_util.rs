@@ -44,9 +44,7 @@ pub fn subst(s: MinimalParameterSubstitution) -> MinimalWordFragment {
     Subst(Box::new(s))
 }
 
-pub fn double_quoted(
-    v: &[WordFragment<String, MinimalCommand, MinimalWord>],
-) -> MinimalMayM4Word {
+pub fn double_quoted(v: &[WordFragment<String, MinimalCommand, MinimalWord>]) -> MinimalMayM4Word {
     Shell(DoubleQuoted(v.to_owned()))
 }
 

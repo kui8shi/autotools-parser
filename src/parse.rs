@@ -11,9 +11,9 @@ use std::fmt;
 use crate::token::Token;
 use crate::token::Token::*;
 
-pub(crate) mod iter;
 pub mod autoconf;
 pub mod automake;
+pub(crate) mod iter;
 
 const CASE: &str = "case";
 const DO: &str = "do";
@@ -252,7 +252,7 @@ pub trait Parser {
     /// AST builder's error type
     type Error;
     /// Entrypoint of parsing Top-Level AST node
-    fn parse(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error>;
+    fn entry(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error>;
 }
 
 /// An `Iterator` adapter around a `Parser`.
@@ -281,16 +281,13 @@ impl<P> ParserIterator<P> {
     }
 }
 
-impl<P: Parser> std::iter::FusedIterator for ParserIterator<P>
-{
-}
+impl<P: Parser> std::iter::FusedIterator for ParserIterator<P> {}
 
-impl<P: Parser> Iterator for ParserIterator<P>
-{
+impl<P: Parser> Iterator for ParserIterator<P> {
     type Item = ParseResult<P::TopLevel, P::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.parser.as_mut().map(P::parse) {
+        match self.parser.as_mut().map(P::entry) {
             None => None,
             Some(ret) => match ret {
                 Ok(Some(c)) => Some(Ok(c)),

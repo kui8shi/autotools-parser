@@ -1,33 +1,29 @@
 //! The definition of a parser (and related methods) for the automake language.
-use std::convert::From;
-use std::fmt;
+use std::fmt::Debug;
 use std::iter::empty as empty_iter;
 use std::mem;
 use std::str::FromStr;
 
 use super::iter::{
-    PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator, UnmatchedError,
+    Multipeek, PeekableIterator, PositionIterator, TokenIter, TokenIterWrapper, TokenIterator,
+    UnmatchedError,
 };
 use super::{
     CommandGroupDelimiters, ParseError, ParseErrorKind, ParseResult, Parser, ParserIterator,
     SourcePos, CASE, DO, DONE, ELIF, ELSE, ESAC, FI, FOR, FUNCTION, IF, IN, THEN, UNTIL, WHILE,
 };
+use crate::ast::am::{AmAssignOp, AmLine, AmVar, MakeDF, MakeParameter};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, ShellBuilder, WordKind};
-use crate::ast::node::{Node, NodeId};
+use crate::ast::builder::{
+    self, AutoconfNodeBuilder, AutomakeNodeBuilder, MakeBuilder, ShellBuilder, WordKind,
+};
+use crate::ast::node::{AcWord, Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::token::Token;
 
-/// A parser which will use a default AST builder implementation,
-/// yielding results in terms of types defined in the `ast` module.
-pub type DefaultParser<I> = AutomakeParser<I, builder::StringBuilder>;
-
-/// A parser which will use a minimal set of AST builder implementation.
-pub type MinimalParser<I> = AutomakeParser<I, builder::MinimalBuilder<String>>;
-
 /// A parser which will use a node-based AST builder implementation.
-pub type NodeParser<I, U> = AutomakeParser<I, builder::AcNodeBuilder<String, U>>;
+pub type AutomakeNodeParser<I> = AutomakeParser<I, AutomakeNodeBuilder<()>>;
 
 use ParseErrorKind::*;
 use Token::*;
@@ -47,21 +43,21 @@ enum CompoundCmdKeyword {
 impl<I, B> Parser for AutomakeParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B: ShellBuilder + MakeBuilder,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
-    type TopLevel = B::Command;
+    type TopLevel = B::Statement;
     type Error = B::Error;
-    fn parse(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
-        self.complete_command()
+    fn entry(&mut self) -> ParseResult<Option<Self::TopLevel>, Self::Error> {
+        self.automake_statement()
     }
 }
 
 impl<I, B> IntoIterator for AutomakeParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B: ShellBuilder + MakeBuilder,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     type IntoIter = ParserIterator<Self>;
     type Item = <Self::IntoIter as Iterator>::Item;
@@ -77,11 +73,12 @@ where
 pub struct AutomakeParser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
+    in_recipe: bool,
 }
 
-impl<I: Iterator<Item = Token>, B: ShellBuilder + Default> AutomakeParser<I, B>
+impl<I: Iterator<Item = Token>, B: ShellBuilder + MakeBuilder + Default> AutomakeParser<I, B>
 where
-    B::WordFragment: Into<Option<String>> + Clone,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     /// Creates a new Parser from a Token iterator or collection.
     pub fn new<T>(iter: T) -> AutomakeParser<I, B>
@@ -92,7 +89,7 @@ where
     }
 
     /// Creates a new Parser with options
-    pub fn new_with_config<T>(iter: T, detect_macro: bool) -> AutomakeParser<I, B>
+    pub fn new_with_config<T>(iter: T) -> AutomakeParser<I, B>
     where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
@@ -100,20 +97,21 @@ where
     }
 }
 
-impl<I, L, U> AutomakeParser<I, builder::AcNodeBuilder<L, U>>
+impl<I, U> AutomakeParser<I, AutomakeNodeBuilder<U>>
 where
     I: Iterator<Item = Token>,
-    L: Into<String> + From<String> + Clone + fmt::Debug,
+    <AutoconfNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AcWord>>
+        + Into<Option<ast::node::WordFragment<AcWord>>>
+        + Into<Option<String>>
+        + Clone,
     U: Default,
-    <builder::AcNodeBuilder<L, U> as builder::BuilderBase>::WordFragment:
-        Into<Option<String>> + Clone,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
-    pub fn parse_all(mut self) -> (slab::Slab<Node<ast::node::AcCommand<L>, U>>, Vec<NodeId>) {
+    pub fn parse_all(mut self) -> (slab::Slab<Node<AmLine, U>>, Vec<NodeId>) {
         let mut top_ids = Vec::new();
         // Parse all complete commands
-        let mut take = || match self.complete_command() {
+        let mut take = || match self.automake_statement() {
             Ok(Some(c)) => Some(Ok(c)),
             Ok(None) => None,
             Err(e) => Some(Err(e)),
@@ -197,8 +195,8 @@ macro_rules! arith_parse {
 impl<I, B> AutomakeParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B: ShellBuilder + MakeBuilder,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
     /// token in the iterator will be used (or `UnexpectedEOF` if none left).
@@ -217,12 +215,184 @@ where
         AutomakeParser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
+            in_recipe: false,
         }
     }
 
     /// Returns the parser's current position in the source.
     pub fn pos(&self) -> SourcePos {
         self.iter.pos()
+    }
+
+    /// Parses a single automake top-level statement.
+    pub fn automake_conditional(&mut self) -> ParseResult<B::Statement, B::Error> {
+        const ENDIF: &str = "endif";
+        self.skip_whitespace();
+        let guard_var = if let Some(Name(name)) = self.iter.next() {
+            name.to_owned()
+        } else {
+            return Err(self.make_unexpected_err());
+        };
+        self.linebreak_preserve_line_head_whitespace();
+        let mut after_else_keyword = false;
+        let mut then = Vec::new();
+        let mut otherwise = Vec::new();
+        loop {
+            if let Some(directive) = self.peek_reserved_word(&[ELSE, ENDIF]) {
+                if directive == ELSE {
+                    after_else_keyword = true;
+                    self.newline();
+                } else if directive == ENDIF {
+                    self.word()?;
+                    self.newline();
+                    break;
+                }
+            }
+            let stmt = if self.in_recipe {
+                self.automake_recipe()?.unwrap()
+            } else {
+                self.automake_statement()?.unwrap()
+            };
+            match after_else_keyword {
+                true => then.push(stmt),
+                false => otherwise.push(stmt),
+            }
+        }
+        Ok(self.builder.conditional(guard_var, then, otherwise)?)
+    }
+
+    /// Parses a single automake rule statement.
+    pub fn automake_rule(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        let target = self.words_with_delim(&[Colon])?;
+        eat!(self, { Colon => {} });
+        self.skip_whitespace();
+        let dependency = self.words_with_delim(&[Newline])?;
+        eat!(self, { Newline => {} });
+        let mut recipes = Vec::new();
+        while let Some(recipe) = self.automake_recipe()? {
+            recipes.push(recipe);
+        }
+        Ok(Some(self.builder.rule(target, dependency, recipes)?))
+    }
+
+    /// Parses a single automake assignment statement.
+    pub fn automake_assignment(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        if let Some((name, op)) = self.automake_assign_op()? {
+            // assignment statement
+            self.skip_whitespace();
+            let words = self.words_with_delim(&[Newline])?;
+            eat!(self, { Newline => {} });
+            Ok(Some(self.builder.assignment(name, op, words)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Parses a single automake shell command statement.
+    pub fn automake_command(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        eat_maybe!(self, { At => {} });
+        if let Some(cmd) = self.complete_command()? {
+            Ok(Some(self.builder.shell_as_recipe(cmd)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Parses a single automake recipe command.
+    pub fn automake_recipe(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        let start_pos = self.iter.pos();
+        let pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
+
+        match self.iter.peek() {
+            Some(Name(s)) => {
+                if s == IF {
+                    Ok(Some(self.automake_conditional()?))
+                } else {
+                    // now we are out of recipe.
+                    Ok(None)
+                }
+            }
+            Some(Whitespace(s)) => {
+                if s.starts_with("\t") {
+                    let c = self.automake_command();
+                    c
+                } else {
+                    Err(self.make_unexpected_err())
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Parses a single automake top-level statement.
+    pub fn automake_statement(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        const INCLUDE: &str = "include";
+        let start_pos = self.iter.pos();
+        let pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
+
+        match self.iter.peek().cloned() {
+            Some(Name(s)) => {
+                if s == IF {
+                    // conditional statement
+                    eat!(self, { Name(_) => {} });
+                    Ok(Some(self.automake_conditional()?))
+                } else if s == INCLUDE {
+                    // include statement
+                    eat!(self, { Name(_) => {} });
+                    let path = self.word()?.unwrap();
+                    Ok(Some(self.builder.include(path)?))
+                } else {
+                    if let Some(assignment) = self.automake_assignment()? {
+                        Ok(Some(assignment))
+                    } else {
+                        Ok(self.automake_rule()?)
+                    }
+                }
+            }
+            Some(Dollar | Percent | Dot) => Ok(self.automake_rule()?),
+            Some(Whitespace(s)) => Err(self.make_unexpected_err()),
+            None => Ok(None),
+            _ => Err(self.make_unexpected_err()),
+        }
+    }
+
+    /// Parse an automake assignment operator without consuming tokens until confirmed.
+    pub fn automake_assign_op(&mut self) -> ParseResult<Option<(String, AmAssignOp)>, B::Error> {
+        use AmAssignOp::*;
+        let may_op = {
+            let mut peeked = self.iter.multipeek();
+            peeked.peek_next(); // eat identifier
+            let first_token_after_whitespaces = Self::multipeek_skip_whitespace(&mut peeked);
+            match first_token_after_whitespaces {
+                Some(Equals) => Some(Lazy),
+                Some(Colon) if peeked.peek_next() == Some(&Equals) => Some(Instant),
+                Some(Plus) if peeked.peek_next() == Some(&Equals) => Some(Append),
+                _ => None,
+            }
+        };
+        if let Some(op) = may_op {
+            if let Some(Name(ref name)) = self.iter.next() {
+                self.skip_whitespace();
+                match &op {
+                    Lazy => {
+                        eat!(self, { Equals => {} });
+                    }
+                    Instant => {
+                        eat!(self, { Colon => {} });
+                        eat!(self, { Equals => {} });
+                    }
+                    Append => {
+                        eat!(self, { Plus => {} });
+                        eat!(self, { Equals => {} });
+                    }
+                };
+                Ok(Some((name.to_owned(), op)))
+            } else {
+                Err(self.make_unexpected_err())
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     /// Parses a single complete command.
@@ -237,6 +407,7 @@ where
             Ok(Some(self.complete_command_with_leading_comments(
                 pre_cmd_comments,
                 start_pos,
+                true,
             )?))
         } else {
             if !pre_cmd_comments.is_empty() {
@@ -254,18 +425,19 @@ where
         &mut self,
         pre_cmd_comments: Vec<builder::Newline>,
         start_pos: SourcePos,
+        preserve_line_head: bool,
     ) -> ParseResult<B::Command, B::Error> {
         let cmd = self.and_or_list()?;
 
         let (sep, cmd_comment) = eat_maybe!(self, {
             Semi => {
-                (builder::SeparatorKind::Semi, self.newline())
+                (builder::SeparatorKind::Semi, if preserve_line_head { self.newline_dumb() } else {self.newline() } )
             },
             Amp  => {
-                (builder::SeparatorKind::Amp , self.newline())
+                (builder::SeparatorKind::Amp , if preserve_line_head { self.newline_dumb() } else {self.newline() } )
             };
             _ => {
-                match self.newline() {
+                match if preserve_line_head { self.newline_dumb() } else { self.newline() } {
                     n@Some(_) => (builder::SeparatorKind::Newline, n),
                     None => (builder::SeparatorKind::Other, None),
                 }
@@ -901,6 +1073,22 @@ where
         self.word_preserve_trailing_whitespace_raw_with_delim(None)
     }
 
+    /// Parses words until a specified word delimiter hits
+    fn words_with_delim(&mut self, delims: &[Token]) -> ParseResult<Vec<B::Word>, B::Error> {
+        let mut ret = Vec::new();
+        while let Some(w) = self.word_preserve_trailing_whitespace_raw_with_delim(Some(delims))? {
+            let word = self.builder.word(w)?;
+            ret.push(word);
+            if let Some(tok) = self.iter.peek() {
+                if delims.iter().any(|t| t == tok) {
+                    break;
+                }
+            }
+            self.skip_whitespace();
+        }
+        Ok(ret)
+    }
+
     /// Identical to `Parser::word_preserve_trailing_whitespace_raw()` but
     /// allows for specifying an arbitrary token as a word delimiter.
     fn word_preserve_trailing_whitespace_raw_with_delim(
@@ -930,8 +1118,8 @@ where
                 | Some(&SingleQuote) | Some(&DoubleQuote) | Some(&Pound) | Some(&Star)
                 | Some(&Question) | Some(&Tilde) | Some(&Bang) | Some(&Backslash)
                 | Some(&Percent) | Some(&Dash) | Some(&Equals) | Some(&Plus) | Some(&Colon)
-                | Some(&At) | Some(&Caret) | Some(&Slash) | Some(&Comma) | Some(&Dot)
-                | Some(&Name(_)) | Some(&Literal(_)) => {}
+                | Some(&Caret) | Some(&Slash) | Some(&Comma) | Some(&Dot) | Some(&Name(_))
+                | Some(&Literal(_)) => {}
 
                 Some(&Backtick) => {
                     let backtick = self.backticked_raw()?;
@@ -939,9 +1127,15 @@ where
                     continue;
                 }
 
+                Some(&At) => {
+                    let template = self.automake_template()?;
+                    words.push(Simple(template));
+                    continue;
+                }
+
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    let param = self.parameter_raw()?;
-                    words.push(Simple(self.builder.word_fragment(param)?));
+                    let param = self.parameter()?;
+                    words.push(Simple(param));
                     continue;
                 }
 
@@ -1090,8 +1284,8 @@ where
             // we find since the `parameter` method expects to consume them.
             match self.iter.peek() {
                 Some(&Dollar) | Some(&ParamPositional(_)) => {
-                    let param = self.parameter_raw()?;
-                    store!(self.builder.word_fragment(param)?);
+                    let param = self.parameter()?;
+                    store!(param);
                     continue;
                 }
 
@@ -1181,38 +1375,53 @@ where
         Ok(WordKind::CommandSubst(cmd_subst?))
     }
 
-    /// Parses a parameters such as `$$`, `$1`, `$foo`, etc, or
+    /// Parses parameters such as `$$`, `$1`, `$foo`, etc, or
     /// parameter substitutions such as `$(cmd)`, `${param-word}`, etc.
     ///
     /// Since it is possible that a leading `$` is not followed by a valid
     /// parameter, the `$` should be treated as a literal. Thus this method
     /// returns an `Word`, which will capture both cases where a literal or
     /// parameter is parsed.
-    pub fn parameter(&mut self) -> ParseResult<B::Word, B::Error> {
-        let param = self.parameter_raw()?;
-        let word_fragment = self.builder.word_fragment(param)?;
-        Ok(self.builder.word(Single(Simple(word_fragment)))?)
+    pub fn parameter(&mut self) -> ParseResult<B::WordFragment, B::Error> {
+        eat!(self, { Dollar => {} });
+        let ret = match self.iter.peek() {
+            Some(Dollar) => {
+                // shell parameter
+                let p = self.shell_parameter()?;
+                self.builder.word_fragment(p)?
+            }
+            Some(&ParenOpen) => {
+                // automake variable
+                eat!(self, { ParenOpen => {} });
+                let p = self.automake_parameter()?;
+                eat!(self, { ParenClose => {} });
+                self.builder.variable(AmVar::Param(p))?
+            }
+            Some(_) => {
+                let p = self.automake_parameter()?;
+                self.builder.variable(AmVar::Param(p))?
+            }
+            _ => return Err(self.make_unexpected_err()),
+        };
+        Ok(ret)
     }
 
-    /// Identical to `Parser::parameter()` but does not pass the result to the AST builder.
-    fn parameter_raw(&mut self) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
+    /// Parses escaped shell parameters e.g. $$var, $$(subst).
+    fn shell_parameter(&mut self) -> ParseResult<WordKind<B::Command, B::WordFragment>, B::Error> {
         use crate::ast::Parameter;
 
         let start_pos = self.iter.pos();
         let ret = match self.iter.next() {
             Some(ParamPositional(p)) => Ok(WordKind::Param(Parameter::Positional(p as u32))),
-
             Some(Dollar) => {
-                // an empty quote might be inserted (e.g. $[]var)
-                eat_maybe!(self, { EmptyQuotes => {} });
                 // parameter body might be quoted (e.g. $[var])
                 let p = match self.iter.peek() {
                     Some(&Star) | Some(&Pound) | Some(&Question) | Some(&Dollar) | Some(&Bang)
                     | Some(&Dash) | Some(&At) | Some(&Name(_)) => {
-                        Ok(WordKind::Param(self.parameter_inner()?))
+                        Ok(WordKind::Param(self.shell_parameter_inner()?))
                     }
 
-                    Some(&ParenOpen) | Some(&CurlyOpen) => self.parameter_substitution_raw(),
+                    Some(&CurlyOpen) => self.parameter_substitution_raw(),
 
                     Some(Literal(s)) if s.len() == 1 && s.chars().last().unwrap().is_numeric() => {
                         // quoted positional parameter (e.g. $[1])
@@ -1225,7 +1434,6 @@ where
                 };
                 p
             }
-
             Some(t) => Err(ParseError::new(Unexpected(t, start_pos))),
             None => Err(ParseError::new(UnexpectedEOF)),
         };
@@ -1453,7 +1661,7 @@ where
                 let curly_open_pos = start_pos;
                 self.iter.next();
 
-                let param = self.parameter_inner()?;
+                let param = self.shell_parameter_inner()?;
                 let subst = match self.iter.peek() {
                     Some(&Percent) => {
                         self.iter.next();
@@ -1496,7 +1704,7 @@ where
 
                     // Otherwise we must have ${#param}
                     _ if Parameter::Pound == param => {
-                        let param = self.parameter_inner()?;
+                        let param = self.shell_parameter_inner()?;
                         eat!(self, { CurlyClose => { Len(param) } })
                     }
 
@@ -1510,8 +1718,73 @@ where
         }
     }
 
+    fn make_parameter_extension(&mut self) -> Option<MakeDF> {
+        let df = if let Some(&Name(ref s)) = self.iter.peek() {
+            if s == "D" {
+                Some(MakeDF::Dir)
+            } else if s == "F" {
+                Some(MakeDF::File)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if df.is_some() {
+            self.iter.next();
+        }
+        df
+    }
+
+    fn automake_parameter(&mut self) -> ParseResult<MakeParameter, B::Error> {
+        use MakeParameter::*;
+        let start_pos = self.iter.pos();
+
+        let param = match self.iter.next() {
+            Some(At) => Target(self.make_parameter_extension()),
+            Some(Star) => Match(self.make_parameter_extension()),
+            Some(Less) => FirstDependency(self.make_parameter_extension()),
+            Some(Caret) => AllDependency(self.make_parameter_extension()),
+            Some(Plus) => AllDependencyAllowingDuplicate(self.make_parameter_extension()),
+            Some(Question) => NewerDependency(self.make_parameter_extension()),
+            Some(Name(n)) => Var(n),
+            Some(t) => return Err(ParseError::new(BadSubst(t, start_pos))),
+            None => return Err(ParseError::new(UnexpectedEOF)),
+        };
+
+        Ok(param)
+    }
+
+    fn automake_template(&mut self) -> ParseResult<B::WordFragment, B::Error> {
+        let is_template = {
+            let mut peeked = self.iter.multipeek();
+            if !matches!(peeked.peek_next(), Some(Name(_) | Literal(_))) {
+                false
+            } else if !matches!(peeked.peek_next(), Some(At)) {
+                false
+            } else {
+                true
+            }
+        };
+
+        if is_template {
+            let name = match self.iter.next() {
+                Some(Name(s)) => s.to_owned(),
+                Some(Literal(s)) => s.to_owned(),
+                _ => unreachable!(),
+            };
+            eat!(self, { At => { }});
+            Ok(self.builder.variable(AmVar::Template(name))?)
+        } else {
+            eat!(self, { At => { }});
+            Ok(self
+                .builder
+                .word_fragment(WordKind::Literal("@".to_owned()))?)
+        }
+    }
+
     /// Parses a valid parameter that can appear inside a set of curly braces.
-    fn parameter_inner(&mut self) -> ParseResult<DefaultParameter, B::Error> {
+    fn shell_parameter_inner(&mut self) -> ParseResult<DefaultParameter, B::Error> {
         use crate::ast::Parameter;
         let start_pos = self.iter.pos();
         let param = match self.iter.next() {
@@ -2138,6 +2411,19 @@ where
         }
     }
 
+    /// Parses zero or more `Token::Newline`s, skipping trailing whitespace but capturing comments.
+    /// @kui8shi
+    /// Since automake's syntax really cares about the first token in a line, we duplicated
+    /// `linebreak` to ensure that callers of this always start parsing from the head of line.
+    #[inline]
+    pub fn linebreak_preserve_line_head_whitespace(&mut self) -> Vec<builder::Newline> {
+        let mut lines = Vec::new();
+        while self.is_newline() {
+            lines.push(self.newline().unwrap());
+        }
+        lines
+    }
+
     /// Parses zero or more `Token::Newline`s, skipping whitespace but capturing comments.
     #[inline]
     pub fn linebreak(&mut self) -> Vec<builder::Newline> {
@@ -2146,6 +2432,34 @@ where
             lines.push(n);
         }
         lines
+    }
+
+    /// Dumb version of `newline`
+    pub fn newline_dumb(&mut self) -> Option<builder::Newline> {
+        loop {
+            match self.iter.peek() {
+                Some(&Pound) => {
+                    let comment = self
+                        .iter
+                        .by_ref()
+                        .take_while(|t| t != &Newline)
+                        .collect::<Vec<_>>();
+                    break Some(builder::Newline(Some(concat_tokens(&comment))));
+                }
+
+                Some(&Newline) => {
+                    self.iter.next();
+                    break Some(builder::Newline(None));
+                }
+
+                Some(_) => {
+                    self.iter.next();
+                    continue;
+                }
+
+                None => break None,
+            }
+        }
     }
 
     /// Tries to parse a `Token::Newline` (or a comment) after skipping whitespace.
@@ -2168,6 +2482,34 @@ where
             }
 
             _ => None,
+        }
+    }
+
+    /// Check if a newline is coming without consuming tokens.
+    pub fn is_newline(&mut self) -> bool {
+        let mut peeked = self.iter.multipeek();
+        let first_token_after_whitespaces = Self::multipeek_skip_whitespace(&mut peeked);
+        match first_token_after_whitespaces {
+            Some(Pound) | Some(Newline) => true,
+            _ => false,
+        }
+    }
+
+    fn multipeek_skip_whitespace(peeked: &mut Multipeek<'_>) -> Option<Token> {
+        let mut backslash = false;
+        loop {
+            match peeked.peek_next() {
+                Some(Whitespace(_)) => continue,
+                Some(Backslash) => backslash = true,
+                Some(Newline) if backslash => continue,
+                s => {
+                    if backslash {
+                        break None;
+                    } else {
+                        break s.cloned();
+                    }
+                }
+            }
         }
     }
 
@@ -2363,7 +2705,11 @@ where
                 break;
             }
 
-            cmds.push(self.complete_command_with_leading_comments(leading_comments, start_pos)?);
+            cmds.push(self.complete_command_with_leading_comments(
+                leading_comments,
+                start_pos,
+                false,
+            )?);
         }
 
         Ok(builder::CommandGroup {

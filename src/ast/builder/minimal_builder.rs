@@ -8,7 +8,9 @@ use super::{
 };
 
 use crate::ast::builder::{Coalesce, CoalesceResult};
-use crate::ast::minimal::{AcWord, Command::*, MinimalCommand, MinimalCompoundCommand, MinimalWordFragment};
+use crate::ast::minimal::{
+    AcWord, Command::*, MinimalCommand, MinimalCompoundCommand, MinimalWordFragment,
+};
 use crate::ast::{map_arith, map_param, MayM4};
 use crate::{
     ast::{
@@ -207,17 +209,12 @@ where
             if assignments.len() == 1 {
                 Ok(assignments.pop().unwrap())
             } else {
-                Ok(AcCommand::new_compound(CompoundCommand::Brace(
-                    assignments,
-                )))
+                Ok(AcCommand::new_compound(CompoundCommand::Brace(assignments)))
             }
         } else {
             let mut cmd = AcCommand::new_cmd(cmd_words);
             if !redirects.is_empty() {
-                cmd = AcCommand::new_compound(CompoundCommand::Redirect(
-                    Box::new(cmd),
-                    redirects,
-                ));
+                cmd = AcCommand::new_compound(CompoundCommand::Redirect(Box::new(cmd), redirects));
             }
             if assignments.is_empty() {
                 Ok(cmd)
@@ -241,8 +238,7 @@ where
         redirects.shrink_to_fit();
         let mut cmd = CompoundCommand::Brace(cmds);
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -258,8 +254,7 @@ where
         redirects.shrink_to_fit();
         let mut cmd = CompoundCommand::Subshell(cmds);
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -288,8 +283,7 @@ where
             LoopKind::Until => CompoundCommand::Until(guard_body_pair),
         };
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -339,8 +333,7 @@ where
             else_branch,
         };
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -369,8 +362,7 @@ where
             body,
         };
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -402,8 +394,7 @@ where
             arms,
         };
         if !redirects.is_empty() {
-            cmd =
-                CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
+            cmd = CompoundCommand::Redirect(Box::new(AcCommand::new_compound(cmd)), redirects)
         }
         Ok(Shell(cmd))
     }
@@ -423,12 +414,10 @@ where
         _post_name_comments: Vec<Newline>,
         body: Self::CompoundCommand,
     ) -> Result<Self::PipeableCommand, Self::Error> {
-        Ok(AcCommand::new_compound(
-            CompoundCommand::FunctionDef {
-                name,
-                body: Box::new(AcCommand::new_may_m4(body)),
-            },
-        ))
+        Ok(AcCommand::new_compound(CompoundCommand::FunctionDef {
+            name,
+            body: Box::new(AcCommand::new_may_m4(body)),
+        }))
     }
 
     /// Ignored by the builder.
@@ -572,8 +561,7 @@ where
 
 pub(crate) trait ConditionBuilder<C, W, F>
 where
-    W: From<Word<F>> + Clone + Debug,
-    W: Into<Word<F>>,
+    W: From<Word<F>> + Into<Word<F>> + Clone,
     F: Into<Option<String>>,
 {
     fn make_condition(&mut self, cmd: C) -> Result<Condition<C, W>, BuilderError>;
@@ -598,7 +586,6 @@ where
         let mut rhs = Word::Empty.into();
         let mut operator_kind = None;
         let mut flipped = false;
-        dbg!(&words);
         for word in words {
             if operator_kind.is_none() {
                 if let Word::Single(fragment) = word.clone().into() {
@@ -700,87 +687,38 @@ where
     }
 }
 
-impl<L> MinimalBuilder<L>
+pub(crate) fn compress<L, C, W, F>(word: ConcatWordKind<F>) -> ConcatWordKind<F>
 where
-    L: Into<String> + Clone + Debug,
-{
-    fn make_condition(
-        &self,
-        cmd: MinimalCommand<L>,
-    ) -> Result<Condition<AcCommand<L, AcWord<L>>, AcWord<L>>, BuilderError> {
-        match cmd.cmd.as_ref() {
-            Cmd(words) => {
-                let first_word = words.first().unwrap();
-                if let Word::Single(w) = &first_word.0 {
-                    match w {
-                        Shell(WordFragment::Literal(v)) if v.clone().into() == "test" => {
-                            Some(Condition::Cond(self.parse_condition(&words[1..])?))
-                        }
-                        Shell(WordFragment::Literal(v)) if v.clone().into() == "eval" => Some(
-                            Condition::Eval(vec![AcCommand::new_cmd(words[1..].to_owned())]),
-                        ),
-                        Shell(WordFragment::Subst(s)) => match s.as_ref() {
-                            ParameterSubstitution::Command(cmds) => {
-                                Some(Condition::Eval(cmds.clone()))
-                            }
-                            _ => None,
-                        },
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
-            Compound(Shell(CompoundCommand::And(first, second))) => Some(Condition::And(
-                Box::new(first.clone()),
-                Box::new(self.make_condition(*second.clone())?),
-            )),
-            Compound(Shell(CompoundCommand::Or(first, second))) => Some(Condition::Or(
-                Box::new(first.clone()),
-                Box::new(self.make_condition(*second.clone())?),
-            )),
-            _ => None,
-        }
-        .map_or(Ok(Condition::ReturnZero(Box::new(cmd))), Ok)
-    }
-}
-
-fn compress<L, C, W>(
-    word: ConcatWordKind<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>,
-) -> ConcatWordKind<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>
-where
+    F: From<WordFragment<L, C, W>> + Into<Option<WordFragment<L, C, W>>> + Clone,
     L: Into<String> + From<String>,
 {
-    use MayM4::*;
-
-    fn coalesce_m4_word<L, C, W>(
-        a: MayM4<WordFragment<L, C, W>, M4Macro<C, W>>,
-        b: MayM4<WordFragment<L, C, W>, M4Macro<C, W>>,
-    ) -> CoalesceResult<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>
+    fn coalesce_word<L, C, W, F>(a: F, b: F) -> CoalesceResult<F>
     where
+        F: From<WordFragment<L, C, W>> + Into<Option<WordFragment<L, C, W>>> + Clone,
         L: Into<String> + From<String>,
     {
         use crate::ast::minimal::WordFragment::Literal;
-        match (a, b) {
-            (Shell(Literal(a)), Shell(Literal(b))) => {
+        match (a.clone().into(), b.clone().into()) {
+            (Some(Literal(a)), Some(Literal(b))) => {
                 let (mut a, b) = (a.into(), b.into());
                 a.push_str(&b);
-                Ok(Shell(Literal(a.into())))
+                Ok(Literal(a.into()).into())
             }
-            (a, b) => Err((a, b)),
+            _ => Err((a, b)),
         }
     }
 
-    fn coalesce_quote_word<L, C, W>(
-        a: QuoteWordKind<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>,
-        b: QuoteWordKind<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>,
-    ) -> CoalesceResult<QuoteWordKind<MayM4<WordFragment<L, C, W>, M4Macro<C, W>>>>
+    fn coalesce_quote_word<L, C, W, F>(
+        a: QuoteWordKind<F>,
+        b: QuoteWordKind<F>,
+    ) -> CoalesceResult<QuoteWordKind<F>>
     where
+        F: From<WordFragment<L, C, W>> + Into<Option<WordFragment<L, C, W>>> + Clone,
         L: Into<String> + From<String>,
     {
         use QuoteWordKind::*;
         match (a, b) {
-            (Simple(a), Simple(b)) => coalesce_m4_word(a, b)
+            (Simple(a), Simple(b)) => coalesce_word(a, b)
                 .map(|s| Simple(s))
                 .map_err(|(a, b)| (Simple(a), Simple(b))),
             (SingleQuoted(mut a), SingleQuoted(b)) => {
@@ -789,7 +727,7 @@ where
             }
             (DoubleQuoted(a), DoubleQuoted(b)) => {
                 let quoted =
-                    Coalesce::new(a.into_iter().chain(b), |a, b| coalesce_m4_word(a, b)).collect();
+                    Coalesce::new(a.into_iter().chain(b), |a, b| coalesce_word(a, b)).collect();
                 Ok(DoubleQuoted(quoted))
             }
             (a, b) => Err((a, b)),
@@ -799,9 +737,9 @@ where
     use crate::ast::builder::ConcatWordKind::*;
     use QuoteWordKind::*;
     match word {
-        Single(s) => Single(match s {
-            s @ Simple(Shell(_)) => s,
-            DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_m4_word).collect()),
+        Single(quote_kind) => Single(match quote_kind {
+            s @ Simple(_) => s,
+            DoubleQuoted(v) => DoubleQuoted(Coalesce::new(v, coalesce_word).collect()),
             s => s,
         }),
         Concat(v) => {

@@ -588,9 +588,9 @@ fn test_parameter_substitution_command_close_paren_need_not_be_followed_by_word_
         redirects_or_env_vars: vec![],
         redirects_or_cmd_words: vec![
             RedirectOrCmdWord::CmdWord(word("foo")),
-            RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::DoubleQuoted(vec![
-                Shell(SimpleWord::Subst(Box::new(Command(vec![cmd("bar")])))),
-            ])))),
+            RedirectOrCmdWord::CmdWord(TopLevelWord(Single(Word::DoubleQuoted(vec![Shell(
+                SimpleWord::Subst(Box::new(Command(vec![cmd("bar")]))),
+            )])))),
         ],
     }));
 
