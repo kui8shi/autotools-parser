@@ -103,7 +103,7 @@ pub struct Node<C, U> {
     /// trailing comments
     pub comment: Option<String>,
     /// range of line numbers in the original script.
-    pub range: Option<(usize, usize)>,
+    pub range: Vec<(usize, usize)>,
     /// the command parsed
     pub cmd: C,
     /// extra information (put user-defined struct here)
@@ -115,10 +115,20 @@ impl<C, U> Node<C, U> {
     pub fn new(comment: Option<String>, range: Option<(usize, usize)>, cmd: C, info: U) -> Self {
         Self {
             comment,
-            range,
+            range: range.map_or(Vec::new(), |r| vec![r]),
             cmd,
             info,
         }
+    }
+
+    /// Get the minimum line number in `range`
+    pub fn range_start(&self) -> Option<usize> {
+        self.range.first().map(|(start, _)| start).copied()
+    }
+
+    /// Get the maximum line number in `range`
+    pub fn range_end(&self) -> Option<usize> {
+        self.range.last().map(|(_, end)| end).copied()
     }
 }
 
@@ -200,10 +210,8 @@ pub struct AutoconfPool<U = ()> {
 
 impl<U> AutoconfPool<U> {
     /// Construct a new pool of autoconf commands
-    pub fn new() -> Self {
-        Self {
-            nodes: Default::default(),
-        }
+    pub fn new(nodes: Slab<Node<AcCommand, U>>) -> Self {
+        Self { nodes }
     }
 
     /// Construct a new pool from a given vector of autoconf commands

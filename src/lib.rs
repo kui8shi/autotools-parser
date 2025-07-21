@@ -28,7 +28,7 @@
 //!  * Variable expansion
 //!  * **Not yet implemented**: Other inner abitrary parameter/substitution expansion
 
-#![doc(html_root_url = "https://docs.rs/autoconf-parser/0.1")]
+#![doc(html_root_url = "https://docs.rs/autotools-parser/0.1")]
 #![cfg_attr(not(test), deny(clippy::print_stdout))]
 #![deny(clippy::wrong_self_convention)]
 #![deny(missing_copy_implementations)]

@@ -1,17 +1,17 @@
 [package]
-name = "autoconf-parser"
+name = "autotools-parser"
 version = "0.1.1"
 edition = "2021"
 authors = ["Ivan Petkov <ivanppetkov@gmail.com>", "kui8shi <gbiifvrc517@gmail.com>"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/kui8shi/autoconf-parser"
-homepage = "https://github.com/kui8shi/autoconf-parser"
-documentation = "https://docs.rs/autoconf-parser/"
-keywords = ["shell", "parser", "parsing", "autoconf"]
+repository = "https://github.com/kui8shi/autotools-parser"
+homepage = "https://github.com/kui8shi/autotools-parser"
+documentation = "https://docs.rs/autotools-parser/"
+keywords = ["shell", "parser", "parsing", "autotools"]
 categories = ["parser-implementations"]
 description = """
-A library for parsing configure.ac written in autoconf language (shell + m4).
+A library for parsing files configure.ac (shell + m4) and Makefile.am.
 """
 
 [features]
@@ -27,8 +27,8 @@ slab = "0.4.9"
 void = "1"
 
 [badges]
-travis-ci = { repository = "kui8shi/autoconf-parser" }
-appveyor = { repository = "kui8shi/autoconf-parser" }
-is-it-maintained-issue-resolution = { repository = "kui8shi/autoconf-parser" }
-is-it-maintained-open-issues = { repository = "kui8shi/autoconf-parser" }
-codecov = { repository = "kui8shi/autoconf-parser" }
+travis-ci = { repository = "kui8shi/autotools-parser" }
+appveyor = { repository = "kui8shi/autotools-parser" }
+is-it-maintained-issue-resolution = { repository = "kui8shi/autotools-parser" }
+is-it-maintained-open-issues = { repository = "kui8shi/autotools-parser" }
+codecov = { repository = "kui8shi/autotools-parser" }

@@ -41,7 +41,7 @@ impl Default for QuoteRewriteConfig {
                 ("AC_BEFORE".into(), "dnl AC_BEFORE".into()),
                 // m4sugar somehow evaluates AC_REQUIRE.
                 ("AC_REQUIRE".into(), "dnl AC_REQUIRE".into()),
-                // Current autoconf-parser cannot recognize it.
+                // Current impl cannot recognize it.
                 ("AC_FD_CC".into(), "5".into()),
                 // Currently m4_foreach cannot not be processed under an environment with quotes changed
                 ("m4_foreach".into(), "M4_FOREACH".into()),

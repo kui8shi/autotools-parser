@@ -251,7 +251,7 @@ where
             .filter(|c: &String| !c.is_empty());
         let complete_cmd = {
             raw_cmd.comment = comments;
-            raw_cmd.range = Some(range);
+            raw_cmd.range = vec![range];
             list
         };
         Ok(complete_cmd)
