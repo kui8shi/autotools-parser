@@ -637,6 +637,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // by default, CONFIG_SITE="$ac_default_prefix/share/config.site
                         // $ac_default_prefix/etc/config.site"
                         Var::define_env("CONFIG_SITE"),
+                        // by general.m4
+                        "as_unset".into(),
+                        "as_echo".into(),
+                        "as_ln_s".into(),
+                        "as_dir".into(),
                     ]),
                     cpp_symbols: Some(vec![
                         // by _AC_INIT_PREPARE
@@ -3105,6 +3110,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_precious("LDFLAGS"),
                         Var::define_precious("LIBS"),
                         Var::define_precious("OBJC"),
+                        Var::define_output("OBJEXT"),
                         Var::define_output("ac_prog_cc_stdc"), // c11/c99/c89/no
                         "GCC".into(), // set to 'yes' if the selected compiler is GNU C
                         Var::reference("ac_tool_prefix"),
@@ -6641,6 +6647,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [actio-if-given]
                         Cmds, // [action-if-not-given]
                     ],
+                    shell_vars: Some(vec!["withval".into()]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -6662,6 +6669,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-given]
                         Cmds, // [action-if-not-given]
                     ],
+                    shell_vars: Some(vec!["enableval".into()]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -7157,8 +7165,70 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     shell_vars: Some(vec![
                         Var::define_precious("LT_SYS_LIBRARY_PATH"),
                         Var::define_input("with_gnu_ld"),
-                        Var::define_input("with_gnu_ld"),
+                        Var::define_input("enable_static"),
+                        Var::define_input("enable_shared"),
                         Var::define_precious("sysroot"),
+                        "library_names_spec".into(),
+                        // by _LT_COMPILER_PIC
+                        "lt_prog_compiler_wl".into(),
+                        "lt_prog_compiler_pic".into(),
+                        "lt_prog_compiler_static".into(),
+                        "lt_prog_compiler_can_build_shared".into(),
+                        "lt_prog_compiler_no_builtin_flag".into(),
+                        // by _LT_LANG_C_CONFIG
+                        "objext".into(),
+                        "ac_ext".into(),
+                        "allow_undefined_flag".into(),
+                        // by _LT_TAGVAR
+                        "always_export_symbols".into(),
+                        "archive_cmds".into(),
+                        "archive_cmds_need_lc".into(),
+                        "archive_expsym_cmds".into(),
+                        "compiler".into(),
+                        "compiler_lib_search_dirs".into(),
+                        "compiler_lib_search_path".into(),
+                        "compiler_needs_object".into(),
+                        "enable_shared_with_static_runtimes".into(),
+                        "exclude_expsyms".into(),
+                        "export_dynamic_flag_spec".into(),
+                        "export_symbols_cmds".into(),
+                        "file_list_spec".into(),
+                        "hardcode_action".into(),
+                        "hardcode_automatic".into(),
+                        "hardcode_direct_absolute".into(),
+                        "hardcode_direct".into(),
+                        "hardcode_libdir_flag_spec".into(),
+                        "hardcode_libdir_separator".into(),
+                        "hardcode_minus_L".into(),
+                        "hardcode_shlibpath_var".into(),
+                        "include_expsyms".into(),
+                        "inherit_rpath".into(),
+                        "ld_shlibs".into(),
+                        "link_all_deplibs".into(),
+                        "lt_cv_prog_compiler__b".into(),
+                        "lt_cv_prog_compiler_c_o".into(),
+                        "lt_cv_prog_compiler_pic".into(),
+                        "lt_cv_prog_compiler_pic_works".into(),
+                        "lt_cv_prog_compiler_static_works".into(),
+                        "module_cmds".into(),
+                        "module_expsym_cmds".into(),
+                        "no_undefined_flag".into(),
+                        "objext".into(),
+                        "old_archive_cmds".into(),
+                        "old_archive_from_expsyms_cmds".into(),
+                        "old_archive_from_new_cmds".into(),
+                        "old_postinstall_cmds".into(),
+                        "postdep_objects".into(),
+                        "postdeps".into(),
+                        "postlink_cmds".into(),
+                        "predep_objects".into(),
+                        "predeps".into(),
+                        "prelink_cmds".into(),
+                        "reload_cmds".into(),
+                        "reload_flag".into(),
+                        "runpath_var".into(),
+                        "thread_safe_flag_spec".into(),
+                        "whole_archive_flag_spec".into(),
                     ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
