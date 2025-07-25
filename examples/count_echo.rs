@@ -2,9 +2,9 @@
 //! we traverse the parsed AST and count up how many times an "echo"
 //! command appears in the source.
 
-use autoconf_parser::ast;
-use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::autoconf::DefaultParser;
+use autotools_parser::ast;
+use autotools_parser::lexer::Lexer;
+use autotools_parser::parse::autoconf::DefaultParser;
 
 use std::io::{stdin, Read};
 

@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::lexer::Lexer;
-use autoconf_parser::token::Token::*;
-use autoconf_parser::token::{Positional, Token};
+use autotools_parser::lexer::Lexer;
+use autotools_parser::token::Token::*;
+use autotools_parser::token::{Positional, Token};
 
 macro_rules! check_tok {
     ($fn_name:ident, $tok:expr) => {

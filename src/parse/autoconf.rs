@@ -91,9 +91,9 @@ where
 /// library provides both a default `Token` lexer, as well as an AST `Builder`.
 ///
 /// ```
-/// use autoconf_parser::ast::builder::StringBuilder;
-/// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::autoconf::AutoconfParser;
+/// use autotools_parser::ast::builder::StringBuilder;
+/// use autotools_parser::lexer::Lexer;
+/// use autotools_parser::parse::autoconf::AutoconfParser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());
@@ -105,8 +105,8 @@ where
 /// you can also use the `DefaultParser` type alias for a simpler setup.
 ///
 /// ```
-/// use autoconf_parser::lexer::Lexer;
-/// use autoconf_parser::parse::autoconf::DefaultParser;
+/// use autotools_parser::lexer::Lexer;
+/// use autotools_parser::parse::autoconf::DefaultParser;
 ///
 /// let source = "echo hello world";
 /// let lexer = Lexer::new(source.chars());

@@ -1,9 +1,9 @@
 #![deny(rust_2018_idioms)]
 #![recursion_limit = "128"]
 
-use autoconf_parser::ast::builder::*;
-use autoconf_parser::parse::autoconf::AutoconfParser;
-use autoconf_parser::parse::ParseError;
+use autotools_parser::ast::builder::*;
+use autotools_parser::parse::autoconf::AutoconfParser;
+use autotools_parser::parse::ParseError;
 
 mod parse_support;
 use crate::parse_support::*;
@@ -163,7 +163,7 @@ fn ensure_parse_errors_are_send_and_sync() {
 
 #[test]
 fn ensure_parser_could_be_send_and_sync() {
-    use autoconf_parser::token::Token;
+    use autotools_parser::token::Token;
 
     fn send_and_sync<T: Send + Sync>() {}
     send_and_sync::<AutoconfParser<std::vec::IntoIter<Token>, ArcBuilder>>();

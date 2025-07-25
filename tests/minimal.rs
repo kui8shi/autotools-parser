@@ -1,20 +1,20 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::minimal::AcCommand;
-use autoconf_parser::ast::minimal::Command;
-use autoconf_parser::ast::minimal::Command::*;
-use autoconf_parser::ast::minimal::CompoundCommand;
-use autoconf_parser::ast::minimal::Condition;
-use autoconf_parser::ast::minimal::Operator;
-use autoconf_parser::ast::minimal::Word;
-use autoconf_parser::ast::minimal::WordFragment;
-use autoconf_parser::ast::MayM4;
-use autoconf_parser::ast::MayM4::*;
-use autoconf_parser::ast::Redirect;
-use autoconf_parser::lexer::Lexer;
-use autoconf_parser::m4_macro::M4Argument;
-use autoconf_parser::m4_macro::SideEffect;
-use autoconf_parser::m4_macro::Var;
-use autoconf_parser::parse::autoconf::MinimalParser;
+use autotools_parser::ast::minimal::AcCommand;
+use autotools_parser::ast::minimal::Command;
+use autotools_parser::ast::minimal::Command::*;
+use autotools_parser::ast::minimal::CompoundCommand;
+use autotools_parser::ast::minimal::Condition;
+use autotools_parser::ast::minimal::Operator;
+use autotools_parser::ast::minimal::Word;
+use autotools_parser::ast::minimal::WordFragment;
+use autotools_parser::ast::MayM4;
+use autotools_parser::ast::MayM4::*;
+use autotools_parser::ast::Redirect;
+use autotools_parser::lexer::Lexer;
+use autotools_parser::m4_macro::M4Argument;
+use autotools_parser::m4_macro::SideEffect;
+use autotools_parser::m4_macro::Var;
+use autotools_parser::parse::autoconf::MinimalParser;
 mod minimal_util;
 use minimal_util::*;
 
@@ -317,7 +317,11 @@ ENABLE_OPTION=default)"#;
     );
     // supplement side effects of AC_ARG_ENABLE
     ac_arg_enable.effects = Some(SideEffect {
-        shell_vars: Some(vec!["option".into(), Var::define_input("enable_option")]),
+        shell_vars: Some(vec![
+            "enableval".into(),
+            "option".into(),
+            Var::define_input("enable_option"),
+        ]),
         ..Default::default()
     });
     let expected = cmd_macro(ac_arg_enable);

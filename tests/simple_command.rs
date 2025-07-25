@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::PipeableCommand::*;
-use autoconf_parser::ast::Redirect::*;
-use autoconf_parser::ast::*;
+use autotools_parser::ast::PipeableCommand::*;
+use autotools_parser::ast::Redirect::*;
+use autotools_parser::ast::*;
 
 mod parse_support;
 use crate::parse_support::*;

@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::Parameter::*;
-use autoconf_parser::ast::ParameterSubstitution::*;
-use autoconf_parser::parse::ParseErrorKind::*;
+use autotools_parser::ast::Parameter::*;
+use autotools_parser::ast::ParameterSubstitution::*;
+use autotools_parser::parse::ParseErrorKind::*;
 
 mod parse_support;
 use crate::parse_support::*;

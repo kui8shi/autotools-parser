@@ -1,4 +1,4 @@
-use autoconf_parser::preprocess::partial_expansion;
+use autotools_parser::preprocess::partial_expansion;
 use std::env;
 use std::io::{self, Write};
 use std::path::Path;

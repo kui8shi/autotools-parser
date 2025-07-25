@@ -1,11 +1,11 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::ComplexWord::*;
-use autoconf_parser::ast::MayM4::*;
-use autoconf_parser::ast::Parameter::*;
-use autoconf_parser::ast::ParameterSubstitution::*;
-use autoconf_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
-use autoconf_parser::parse::ParseErrorKind::*;
-use autoconf_parser::token::Token;
+use autotools_parser::ast::ComplexWord::*;
+use autotools_parser::ast::MayM4::*;
+use autotools_parser::ast::Parameter::*;
+use autotools_parser::ast::ParameterSubstitution::*;
+use autotools_parser::ast::{RedirectOrCmdWord, SimpleCommand, SimpleWord, TopLevelWord, Word};
+use autotools_parser::parse::ParseErrorKind::*;
+use autotools_parser::token::Token;
 
 mod parse_support;
 use crate::parse_support::*;

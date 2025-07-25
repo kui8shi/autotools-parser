@@ -1,4 +1,6 @@
 //! Defines node representations of the shell source.
+use std::cell::Cell;
+
 use crate::m4_macro;
 use slab::Slab;
 
@@ -201,17 +203,39 @@ pub trait DisplayNode {
     fn display_word(&self, word: &Self::Word, should_quote: bool) -> String;
 }
 
-#[derive(Debug, Clone)]
 /// A pool of autoconf commands stored as nodes.
 pub struct AutoconfPool<U = ()> {
     /// Contains all nodes. `NodeId` represents indexes of nodes in this slab.
     pub nodes: Slab<Node<AcCommand, U>>,
+    /// Assigned the id of top-most node while formatting a tree of nodes.
+    forcus: Cell<Option<NodeId>>,
+    /// A user-defined function which tell the node should be displayed
+    should_display: Option<Box<dyn Fn(NodeId) -> bool>>,
 }
 
+impl std::fmt::Debug for AutoconfPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AutoconfPool")
+            .field("nodes", &self.nodes)
+            .finish()
+    }
+}
+
+// let is_child = self.focus.get().unwrap() != node_id;
+//         self.nodes
+//             .get(node_id)
+//             .filter(|n| !(n.is_top_node() && is_child))
 impl<U> AutoconfPool<U> {
     /// Construct a new pool of autoconf commands
-    pub fn new(nodes: Slab<Node<AcCommand, U>>) -> Self {
-        Self { nodes }
+    pub fn new(
+        nodes: Slab<Node<AcCommand, U>>,
+        on_boundary: Option<Box<dyn Fn(NodeId) -> bool>>,
+    ) -> Self {
+        Self {
+            nodes,
+            forcus: Cell::new(None),
+            should_display: on_boundary,
+        }
     }
 
     /// Construct a new pool from a given vector of autoconf commands
@@ -223,7 +247,11 @@ impl<U> AutoconfPool<U> {
             }
             tmp
         };
-        Self { nodes }
+        Self {
+            nodes,
+            forcus: Cell::new(None),
+            should_display: None,
+        }
     }
 
     /// Get the number of nodes (commands)
@@ -241,13 +269,26 @@ impl<U> DisplayNode for AutoconfPool<U> {
     type Word = AcWord;
 
     fn display_node(&self, node_id: NodeId, indent_level: usize) -> String {
+        let is_top = self.forcus.get().is_none();
+        if is_top {
+            self.forcus.replace(Some(node_id));
+        } else if let Some(should_display) = &self.should_display {
+            if !should_display(node_id) {
+                return String::new();
+            }
+        }
         use super::MayM4::*;
-        self.nodes
+        let ret = self
+            .nodes
             .get(node_id)
             .map_or(String::new(), |node| match &node.cmd.0 {
                 Macro(m4_macro) => self.m4_macro_to_string(m4_macro, indent_level),
                 Shell(cmd) => self.command_to_string(cmd, node.comment.clone(), indent_level),
-            })
+            });
+        if is_top {
+            self.forcus.replace(None);
+        }
+        ret
     }
 
     fn display_word(&self, word: &AcWord, should_quote: bool) -> String {

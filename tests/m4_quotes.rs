@@ -1,7 +1,7 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::builder::*;
-use autoconf_parser::ast::Parameter;
-use autoconf_parser::ast::TopLevelCommand;
+use autotools_parser::ast::builder::*;
+use autotools_parser::ast::Parameter;
+use autotools_parser::ast::TopLevelCommand;
 
 mod parse_support;
 use crate::parse_support::*;

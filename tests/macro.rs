@@ -1,9 +1,9 @@
 #![deny(rust_2018_idioms)]
-use autoconf_parser::ast::Command::*;
-use autoconf_parser::ast::PipeableCommand::*;
-use autoconf_parser::ast::*;
-use autoconf_parser::m4_macro::M4Argument::*;
-use autoconf_parser::m4_macro::M4Macro;
+use autotools_parser::ast::Command::*;
+use autotools_parser::ast::PipeableCommand::*;
+use autotools_parser::ast::*;
+use autotools_parser::m4_macro::M4Argument::*;
+use autotools_parser::m4_macro::M4Macro;
 
 mod parse_support;
 use crate::parse_support::*;

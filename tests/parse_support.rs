@@ -3,16 +3,16 @@
 // see our intent
 #![allow(dead_code)]
 
-use autoconf_parser::ast::Command::*;
-use autoconf_parser::ast::ComplexWord::*;
-use autoconf_parser::ast::MayM4::*;
-use autoconf_parser::ast::PipeableCommand::*;
-use autoconf_parser::ast::SimpleWord::*;
-use autoconf_parser::ast::*;
-use autoconf_parser::lexer::Lexer;
-use autoconf_parser::parse::autoconf::DefaultParser;
-use autoconf_parser::parse::SourcePos;
-use autoconf_parser::token::Token;
+use autotools_parser::ast::Command::*;
+use autotools_parser::ast::ComplexWord::*;
+use autotools_parser::ast::MayM4::*;
+use autotools_parser::ast::PipeableCommand::*;
+use autotools_parser::ast::SimpleWord::*;
+use autotools_parser::ast::*;
+use autotools_parser::lexer::Lexer;
+use autotools_parser::parse::autoconf::DefaultParser;
+use autotools_parser::parse::SourcePos;
+use autotools_parser::token::Token;
 
 pub fn lit(s: &str) -> DefaultWord {
     Word::Simple(Shell(Literal(String::from(s))))
