@@ -111,6 +111,7 @@ pub fn cmd_case(
         arms: patterns
             .iter()
             .map(|(p, c)| PatternBodyPair {
+                comments: vec![],
                 patterns: p.to_vec(),
                 body: c.to_vec(),
             })

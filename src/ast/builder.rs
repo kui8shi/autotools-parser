@@ -24,6 +24,7 @@ pub use self::default_builder::*;
 pub use self::minimal_builder::MinimalBuilder;
 pub use self::node_builder::AutoconfNodeBuilder;
 pub use self::node_builder::AutomakeNodeBuilder;
+pub use self::node_builder::ShellNodeBuilder;
 
 use super::am::{AmAssignOp, AmVar};
 

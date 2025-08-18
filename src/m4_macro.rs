@@ -126,7 +126,7 @@ pub enum M4Argument<C, W> {
 /// However, we only support 2 places:
 /// 1. CompoundCommand
 /// 2. SimpleWord
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct M4Macro<C, W> {
     /// m4 macro name
     pub name: String,
@@ -136,6 +136,8 @@ pub struct M4Macro<C, W> {
     pub effects: Option<SideEffect>,
     /// original m4 macro name if an alternative macro was adopted
     pub original_name: Option<String>,
+    /// additional information about this macro
+    pub signature: M4MacroSignature,
 }
 
 impl<C, W> M4Macro<C, W> {
@@ -151,11 +153,13 @@ impl<C, W> M4Macro<C, W> {
         effects: Option<SideEffect>,
         original_name: Option<String>,
     ) -> Self {
+        let signature = MACROS[&name].clone();
         Self {
             name,
             args,
             effects,
             original_name,
+            signature,
         }
     }
 }
@@ -260,6 +264,27 @@ pub struct M4MacroSignature {
     pub require: Option<Vec<String>>,
     /// List of paths referenced in the macro
     pub paths: Option<Vec<String>>,
+}
+
+impl PartialEq for M4MacroSignature {
+    fn eq(&self, other: &Self) -> bool {
+        for (a, b) in self.arg_types.iter().zip(other.arg_types.iter()) {
+            if a != b {
+                return false;
+            }
+        }
+        self.num_args_required == other.num_args_required
+            && self.ret_type == other.ret_type
+            && self.repeat == other.repeat
+            && self.shell_vars == other.shell_vars
+            && self.cpp_symbols == other.cpp_symbols
+            && self.replaced_by == other.replaced_by
+            && self.require == other.require
+            && self.paths == other.paths
+    }
+}
+
+impl Eq for M4MacroSignature {
 }
 
 impl M4MacroSignature {
@@ -588,7 +613,6 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_input("ac_init_version"), // --version
                         Var::define_input("silent"),     // --silent
                         Var::define_input("site"),       // --silent
-                        Var::define_input("srcdir"),     // --srcdir
                         Var::define_input("verbose"),    // --verbose
                         Var::define_input("x_includes"), // --x-includes
                         Var::define_input("x_libraries"), // --x-libraries
@@ -597,6 +621,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_input("program_suffix"), // --program-suffix
                         Var::define_input("program_transform_name"), // --program-transform-name
                         Var::define_input("program_suffix"), // --program-suffix
+                        Var::define_precious("srcdir"),  // --srcdir
                         Var::define_precious("bindir"),  // ${exec_prefix}/bin
                         Var::define_precious("sbindir"), // ${exec_prefix}/sbin
                         Var::define_precious("libexecdir"), // ${exec_prefix}/libexec
@@ -642,6 +667,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "as_echo".into(),
                         "as_ln_s".into(),
                         "as_dir".into(),
+                        Var::define_output("top_srcdir"),
+                        Var::define_output("abs_top_srcdir"),
                     ]),
                     cpp_symbols: Some(vec![
                         // by _AC_INIT_PREPARE

@@ -377,13 +377,24 @@ where
             .arms
             .into_iter()
             .map(|arm| {
+                let comments = arm
+                    .patterns
+                    .pre_pattern_comments
+                    .into_iter()
+                    .flat_map(|newline| newline.0)
+                    .collect();
+
                 let mut patterns = arm.patterns.pattern_alternatives;
                 patterns.shrink_to_fit();
 
                 let mut body = arm.body.commands;
                 body.shrink_to_fit();
 
-                PatternBodyPair { patterns, body }
+                PatternBodyPair {
+                    comments,
+                    patterns,
+                    body,
+                }
             })
             .collect();
 
@@ -625,18 +636,22 @@ where
                 rhs = word.clone();
             }
         }
-        let operator = match operator_kind.unwrap() {
-            Neq => Operator::Neq(lhs, rhs),
-            Eq => Operator::Eq(lhs, rhs),
-            Ge => Operator::Ge(lhs, rhs),
-            Gt => Operator::Gt(lhs, rhs),
-            Le => Operator::Le(lhs, rhs),
-            Lt => Operator::Lt(lhs, rhs),
-            Empty => Operator::Empty(rhs),
-            NonEmpty => Operator::NonEmpty(rhs),
-            Dir => Operator::Dir(rhs),
-            File => Operator::File(rhs),
-            NoExists => Operator::NoExists(rhs),
+        let operator = if let Some(kind) = operator_kind {
+            match kind {
+                Neq => Operator::Neq(lhs, rhs),
+                Eq => Operator::Eq(lhs, rhs),
+                Ge => Operator::Ge(lhs, rhs),
+                Gt => Operator::Gt(lhs, rhs),
+                Le => Operator::Le(lhs, rhs),
+                Lt => Operator::Lt(lhs, rhs),
+                Empty => Operator::Empty(rhs),
+                NonEmpty => Operator::NonEmpty(rhs),
+                Dir => Operator::Dir(rhs),
+                File => Operator::File(rhs),
+                NoExists => Operator::NoExists(rhs),
+            }
+        } else {
+            Operator::NonEmpty(lhs)
         };
         Ok(operator)
     }

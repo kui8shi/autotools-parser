@@ -13,6 +13,7 @@ use crate::token::Token::*;
 
 pub mod autoconf;
 pub mod automake;
+pub mod shell;
 pub(crate) mod iter;
 
 const CASE: &str = "case";

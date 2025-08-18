@@ -8,6 +8,7 @@ use crate::ast::am::{
 use crate::ast::builder::QuoteWordKind;
 use crate::ast::minimal::{Word, WordFragment};
 use crate::ast::node::{AcCommand, AcWord, AcWordFragment, Node, NodeId, ShellCommand};
+use crate::ast::sh::{ShWord, ShWordFragment};
 use crate::ast::{map_arith, map_param, MayM4, ParameterSubstitution};
 use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
@@ -31,6 +32,8 @@ use ShellCommand::*;
 pub type AutoconfNodeBuilder<U> = NodeBuilder<AcCommand, AcWord, AcWordFragment, U>;
 /// A type alias for NodeBuilder specialized for automake parsing.
 pub type AutomakeNodeBuilder<U> = NodeBuilder<AmLine, AmWord, AmWordFragment, U>;
+/// A type alias for NodeBuilder specialized for shell parsing.
+pub type ShellNodeBuilder<U> = NodeBuilder<ShellCommand<ShWord>, ShWord, ShWordFragment, U>;
 
 /// TODO: add doc comments
 #[derive(Debug, Clone)]
@@ -509,13 +512,24 @@ where
             .arms
             .into_iter()
             .map(|arm| {
+                let comments = arm
+                    .patterns
+                    .pre_pattern_comments
+                    .into_iter()
+                    .flat_map(|newline| newline.0)
+                    .collect();
+
                 let mut patterns = arm.patterns.pattern_alternatives;
                 patterns.shrink_to_fit();
 
                 let mut body = arm.body.commands;
                 body.shrink_to_fit();
 
-                PatternBodyPair { patterns, body }
+                PatternBodyPair {
+                    comments,
+                    patterns,
+                    body,
+                }
             })
             .collect();
 

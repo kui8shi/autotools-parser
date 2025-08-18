@@ -603,13 +603,20 @@ where
             .arms
             .into_iter()
             .map(|arm| {
+                let comments = arm
+                    .patterns
+                    .pre_pattern_comments
+                    .into_iter()
+                    .flat_map(|newline| newline.0)
+                    .collect();
+
                 let mut patterns = arm.patterns.pattern_alternatives;
                 patterns.shrink_to_fit();
 
                 let mut body = arm.body.commands;
                 body.shrink_to_fit();
 
-                PatternBodyPair { patterns, body }
+                PatternBodyPair { comments, patterns, body }
             })
             .collect();
 

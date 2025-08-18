@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::{fmt, ops};
 
 pub mod am;
+pub mod sh;
 pub mod builder;
 pub mod minimal;
 pub mod node;
@@ -218,6 +219,8 @@ pub struct GuardBodyPair<C> {
 /// A grouping of patterns and body commands.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PatternBodyPair<C, W> {
+    /// Comments appearing right before the pattern declaration.
+    pub comments: Vec<String>,
     /// Pattern alternatives to match against.
     pub patterns: Vec<W>,
     /// The body commands to execute if the pattern matches.

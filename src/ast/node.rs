@@ -208,7 +208,7 @@ pub struct AutoconfPool<U = ()> {
     /// Contains all nodes. `NodeId` represents indexes of nodes in this slab.
     pub nodes: Slab<Node<AcCommand, U>>,
     /// Assigned the id of top-most node while formatting a tree of nodes.
-    forcus: Cell<Option<NodeId>>,
+    focus: Cell<Option<NodeId>>,
     /// A user-defined function which tell the node should be displayed
     beyond_boundary: Option<Box<dyn Fn(&Node<AcCommand, U>) -> bool>>,
 }
@@ -217,7 +217,7 @@ impl<U: std::fmt::Debug> std::fmt::Debug for AutoconfPool<U> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AutoconfPool")
             .field("nodes", &self.nodes)
-            .field("forcus", &self.forcus)
+            .field("forcus", &self.focus)
             .finish()
     }
 }
@@ -230,7 +230,7 @@ impl<U> AutoconfPool<U> {
     ) -> Self {
         Self {
             nodes,
-            forcus: Cell::new(None),
+            focus: Cell::new(None),
             beyond_boundary,
         }
     }
@@ -246,7 +246,7 @@ impl<U> AutoconfPool<U> {
         };
         Self {
             nodes,
-            forcus: Cell::new(None),
+            focus: Cell::new(None),
             beyond_boundary: None,
         }
     }
@@ -267,9 +267,9 @@ impl<U> DisplayNode for AutoconfPool<U> {
 
     fn display_node(&self, node_id: NodeId, indent_level: usize) -> String {
         if let Some(node) = self.get(node_id) {
-            let is_top = self.forcus.get().is_none();
+            let is_top = self.focus.get().is_none();
             if is_top {
-                self.forcus.replace(Some(node_id));
+                self.focus.replace(Some(node_id));
             } else {
                 if let Some(beyond_boundary) = &self.beyond_boundary {
                     if beyond_boundary(node) {
@@ -284,7 +284,7 @@ impl<U> DisplayNode for AutoconfPool<U> {
                 Shell(cmd) => self.command_to_string(cmd, node.comment.clone(), indent_level),
             };
             if is_top {
-                self.forcus.replace(None);
+                self.focus.replace(None);
             }
             result
         } else {
@@ -1021,6 +1021,7 @@ mod tests {
         let pat1: AcWord = Word::Single(Shell(Literal("a".to_string()))).into();
         let pat2: AcWord = Word::Single(Shell(Literal("b".to_string()))).into();
         let arm = PatternBodyPair {
+            comments: vec![],
             patterns: vec![pat1.clone(), pat2.clone()],
             body: vec![0],
         };

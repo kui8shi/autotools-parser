@@ -15,9 +15,7 @@ use super::{
 use crate::ast::am::{AmAssignOp, AmLine, AmVar, MakeDF, MakeParameter};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{
-    self, AutoconfNodeBuilder, AutomakeNodeBuilder, MakeBuilder, ShellBuilder, WordKind,
-};
+use crate::ast::builder::{self, AutomakeNodeBuilder, MakeBuilder, ShellBuilder, WordKind};
 use crate::ast::node::{AcWord, Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::token::Token;
@@ -100,7 +98,7 @@ where
 impl<I, U> AutomakeParser<I, AutomakeNodeBuilder<U>>
 where
     I: Iterator<Item = Token>,
-    <AutoconfNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AcWord>>
+    <AutomakeNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AcWord>>
         + Into<Option<ast::node::WordFragment<AcWord>>>
         + Into<Option<String>>
         + Clone,
@@ -1414,7 +1412,6 @@ where
         let ret = match self.iter.next() {
             Some(ParamPositional(p)) => Ok(WordKind::Param(Parameter::Positional(p as u32))),
             Some(Dollar) => {
-                // parameter body might be quoted (e.g. $[var])
                 let p = match self.iter.peek() {
                     Some(&Star) | Some(&Pound) | Some(&Question) | Some(&Dollar) | Some(&Bang)
                     | Some(&Dash) | Some(&At) | Some(&Name(_)) => {
