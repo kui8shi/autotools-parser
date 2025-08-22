@@ -284,8 +284,7 @@ impl PartialEq for M4MacroSignature {
     }
 }
 
-impl Eq for M4MacroSignature {
-}
+impl Eq for M4MacroSignature {}
 
 impl M4MacroSignature {
     /// Return whether the signature has any explicit side effects.
@@ -4207,10 +4206,17 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ..Default::default()
                 },
             ),
-            // TODO: restart from here
             // Setting output variables
             (
                 "AC_SUBST",
+                M4MacroSignature {
+                    arg_types: vec![VarName(Some(VarAttrs::new(Output, Referenced)), None), Word],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AM_SUBST_NOTMAKE",
                 M4MacroSignature {
                     arg_types: vec![VarName(Some(VarAttrs::new(Output, Referenced)), None), Word],
                     ret_type: Some(Cmds),
@@ -7563,6 +7569,18 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             ),
             // autoconf archive
             (
+                "AX_PREFIX_CONFIG_H",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Path(None), // output-header
+                        Lit,        // prefix
+                        Path(None), // orig-header
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
                 "AX_COMPILER_FLAGS",
                 M4MacroSignature {
                     arg_types: vec![
@@ -7865,6 +7883,41 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Word,                                     // value
                         VarName(Some(VarAttrs::default()), None), // result
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_APPEND_FLAG",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit,                                      // flag
+                        VarName(Some(VarAttrs::default()), None), // [flag-variable] or LDFLAGS
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_CHECK_LINK_FLAG",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit,  // flag
+                        Cmds, // [action-success]
+                        Cmds, // [action-failure]
+                        Lit,  // [extra-flags]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_APPEND_LINK_FLAGS",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit,                                      // flag
+                        VarName(Some(VarAttrs::default()), None), // flag-variable
                     ],
                     ret_type: Some(Cmds),
                     ..Default::default()

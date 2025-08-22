@@ -562,13 +562,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 self.condition_to_string(lhs),
                 self.condition_to_string(rhs)
             ),
-            Eval(cmds) => format!(
-                "eval \"{}\"",
-                cmds.iter()
-                    .map(|c| self.display_node(*c, 0))
-                    .collect::<Vec<String>>()
-                    .join("; ")
-            ),
+            Eval(cmd) => format!("eval \"{}\"", cmd.to_string()),
             ReturnZero(cmd) => format!("{}", self.display_node(**cmd, 0)),
         }
     }

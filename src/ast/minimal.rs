@@ -143,7 +143,7 @@ pub enum Condition<C, W> {
     /// Logical OR of two conditions.
     Or(Box<Self>, Box<Self>),
     /// Evaluates the commands first, then treat the result output as a condition.
-    Eval(Vec<C>),
+    Eval(Box<C>),
     /// Evaluates the commands, then take the return code as a boolean condition.
     ReturnZero(Box<C>),
 }
@@ -314,14 +314,7 @@ where
             Cond(op) => write!(fmt, "test {}", op),
             And(lhs, rhs) => write!(fmt, "{} && {}", lhs, rhs),
             Or(lhs, rhs) => write!(fmt, "{} || {}", lhs, rhs),
-            Eval(cmds) => write!(
-                fmt,
-                "eval \"{}\"",
-                cmds.iter()
-                    .map(|c| c.to_string())
-                    .collect::<Vec<String>>()
-                    .join(";")
-            ),
+            Eval(cmd) => write!(fmt, "eval \"{}\"", cmd.to_string()),
             ReturnZero(cmd) => write!(fmt, "{}", cmd),
         }
     }

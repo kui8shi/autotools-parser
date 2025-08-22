@@ -695,13 +695,13 @@ where
                             Some(Condition::Cond(self.parse_condition(&words[1..])?))
                         }
                         Some(WordFragment::Literal(v)) if v.clone() == "eval" => {
-                            Some(Condition::Eval(vec![
-                                self.new_node(Cmd(words[1..].to_owned()).into())
-                            ]))
+                            Some(Condition::Eval(Box::new(
+                                self.new_node(Cmd(words[1..].to_owned()).into()),
+                            )))
                         }
                         Some(WordFragment::Subst(s)) => match s.as_ref() {
                             ParameterSubstitution::Command(cmds) => {
-                                Some(Condition::Eval(cmds.clone()))
+                                Some(Condition::Eval(Box::new(cmds.first().unwrap().to_owned())))
                             }
                             _ => None,
                         },

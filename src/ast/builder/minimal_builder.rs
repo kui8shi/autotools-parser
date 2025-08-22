@@ -602,10 +602,6 @@ where
                 if let Word::Single(fragment) = word.clone().into() {
                     if let Some(literal) = fragment.into() {
                         operator_kind = match literal.as_str() {
-                            "!" => {
-                                flipped = true;
-                                continue;
-                            }
                             "!=" | "-ne" => Some(Neq),
                             "=" | "-eq" => Some(Eq),
                             "-ge" => Some(Ge),
@@ -619,6 +615,10 @@ where
                             // TODO: More precision for file existance + extra operators
                             "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
                             | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(File),
+                            "!" => {
+                                flipped = true;
+                                continue;
+                            }
                             _ => {
                                 // return Err(BuilderError::UnsupportedSyntax);
                                 None
@@ -674,11 +674,11 @@ where
                             Some(Condition::Cond(self.parse_condition(&words[1..])?))
                         }
                         Shell(WordFragment::Literal(v)) if v.clone().into() == "eval" => Some(
-                            Condition::Eval(vec![AcCommand::new_cmd(words[1..].to_owned())]),
+                            Condition::Eval(Box::new(AcCommand::new_cmd(words[1..].to_owned()))),
                         ),
                         Shell(WordFragment::Subst(s)) => match s.as_ref() {
                             ParameterSubstitution::Command(cmds) => {
-                                Some(Condition::Eval(cmds.clone()))
+                                Some(Condition::Eval(Box::new(cmds.first().unwrap().to_owned())))
                             }
                             _ => None,
                         },
