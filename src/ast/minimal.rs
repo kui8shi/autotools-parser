@@ -34,7 +34,30 @@ pub enum WordFragment<L, C, W> {
     Colon,
 }
 
-impl<L, C, W> Into<Option<String>> for MayM4<WordFragment<L, C, W>, M4Macro<C, W>>
+#[derive(Debug, PartialEq, Eq, Clone)]
+/// Wraps minimal Word with fixing generics
+pub struct AcWord<L>(pub Word<MinimalWordFragment<L>>);
+
+/// Wraps command with fixing generics
+pub type MinimalCommand<L> = AcCommand<L, AcWord<L>>;
+
+/// Wraps compound command with fixing generics
+pub type MinimalCompoundCommand<L> =
+    MayM4<CompoundCommand<MinimalCommand<L>, AcWord<L>>, M4Macro<MinimalCommand<L>, AcWord<L>>>;
+
+/// Alias word fragment with generics
+pub type MayM4WordFragment<L, C, W> = MayM4<WordFragment<L, C, W>, M4Macro<C, W>>;
+
+/// Wraps word fragment with fixing generics
+pub type MinimalWordFragment<L> = MayM4WordFragment<L, MinimalCommand<L>, AcWord<L>>;
+
+impl<L> From<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>> for MinimalWordFragment<L> {
+    fn from(value: WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>) -> Self {
+        Self::Shell(value)
+    }
+}
+
+impl<L, C, W> Into<Option<String>> for MayM4WordFragment<L, C, W>
 where
     L: Into<String>,
 {
@@ -48,28 +71,6 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-/// Wraps minimal Word with fixing generics
-pub struct AcWord<L>(pub Word<MinimalWordFragment<L>>);
-
-/// Wraps command with fixing generics
-pub type MinimalCommand<L> = AcCommand<L, AcWord<L>>;
-
-/// Wraps compound command with fixing generics
-pub type MinimalCompoundCommand<L> =
-    MayM4<CompoundCommand<MinimalCommand<L>, AcWord<L>>, M4Macro<MinimalCommand<L>, AcWord<L>>>;
-
-/// Wraps word fragment with fixing generics
-pub type MinimalWordFragment<L> = MayM4<
-    WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>,
-    M4Macro<MinimalCommand<L>, AcWord<L>>,
->;
-
-impl<L> From<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>> for MinimalWordFragment<L> {
-    fn from(value: WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>) -> Self {
-        Self::Shell(value)
-    }
-}
 
 impl<L> Into<Option<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>>>
     for MinimalWordFragment<L>

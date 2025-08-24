@@ -167,7 +167,7 @@ pub fn cond_or(cond1: MinimalCondition, cond2: MinimalCondition) -> MinimalCondi
     Condition::Or(Box::new(cond1), Box::new(cond2))
 }
 pub fn cond_eval(cmd: MinimalCommand) -> MinimalCondition {
-    Condition::Eval(Box::New(cmd.to_owned()))
+    Condition::Eval(Box::new(cmd.to_owned()))
 }
 pub fn cond_return_zero(cmd: MinimalCommand) -> MinimalCondition {
     Condition::ReturnZero(Box::new(cmd))

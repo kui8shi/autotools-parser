@@ -12,11 +12,11 @@ use super::{
     CommandGroupDelimiters, ParseError, ParseErrorKind, ParseResult, Parser, ParserIterator,
     SourcePos, CASE, DO, DONE, ELIF, ELSE, ESAC, FI, FOR, FUNCTION, IF, IN, THEN, UNTIL, WHILE,
 };
-use crate::ast::am::{AmAssignOp, AmLine, AmVar, MakeDF, MakeParameter};
+use crate::ast::am::{AmAssignOp, AmLine, AmVar, AmWord, MakeDF, MakeParameter};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, AutomakeNodeBuilder, MakeBuilder, ShellBuilder, WordKind};
-use crate::ast::node::{AcWord, Node, NodeId};
+use crate::ast::node::{Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::token::Token;
 
@@ -98,8 +98,8 @@ where
 impl<I, U> AutomakeParser<I, AutomakeNodeBuilder<U>>
 where
     I: Iterator<Item = Token>,
-    <AutomakeNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AcWord>>
-        + Into<Option<ast::node::WordFragment<AcWord>>>
+    <AutomakeNodeBuilder<U> as builder::BuilderBase>::WordFragment: From<ast::node::WordFragment<AmWord>>
+        + Into<Option<ast::node::WordFragment<AmWord>>>
         + Into<Option<String>>
         + Clone,
     U: Default,

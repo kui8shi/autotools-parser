@@ -19,7 +19,7 @@ use crate::{
     m4_macro::M4Argument,
 };
 
-use super::minimal_builder::{compress, ConditionBuilder};
+use super::minimal_builder::{compress, ConditionBuilder, M4Simplifier};
 use super::{
     BuilderBase, BuilderError, CaseFragments, CommandGroup, ConcatWordKind, ForFragments,
     GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, MakeBuilder, Newline, RedirectKind,
@@ -98,7 +98,9 @@ where
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let mut cmd = self.new_node(macro_call.into());
+        let mut cmd = self
+            .simplify_m4_macro(&macro_call)
+            .unwrap_or(self.new_node(macro_call.into()));
         if !redirects.is_empty() {
             cmd = self.new_node(Redirect(cmd, redirects).into())
         }
@@ -730,3 +732,5 @@ where
         )
     }
 }
+
+impl<U> M4Simplifier for NodeBuilder<AcCommand, AcWord, AcWordFragment, U> where U: Default {}

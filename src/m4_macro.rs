@@ -164,6 +164,24 @@ impl<C, W> M4Macro<C, W> {
     }
 }
 
+impl<C: Clone, W: Clone> M4Macro<C, W> {
+    /// Take the scpeficied argument as a command
+    pub fn get_arg_as_cmd(&self, index: usize) -> Option<Vec<C>> {
+        match self.args.get(index) {
+            Some(M4Argument::Commands(cmds)) => Some(cmds.to_vec()),
+            _ => None,
+        }
+    }
+
+    /// Take the scpeficied argument as a word
+    pub fn get_arg_as_word(&self, index: usize) -> Option<W> {
+        match self.args.get(index) {
+            Some(M4Argument::Word(word)) => Some(word.clone()),
+            _ => None,
+        }
+    }
+}
+
 /// Represent side effects that an operation (e.g. macro call) could produce.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SideEffect {

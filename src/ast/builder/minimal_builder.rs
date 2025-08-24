@@ -2,9 +2,9 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use super::{
-    BuilderBase, BuilderError, CaseFragments, CommandGroup, ConcatWordKind, ForFragments,
-    GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, Newline, QuoteWordKind, RedirectKind,
-    SeparatorKind, ShellBuilder, WordKind,
+    BuilderBase, BuilderError, CaseArm, CaseFragments, CasePatternFragments, CommandGroup,
+    ConcatWordKind, ForFragments, GuardBodyPairGroup, IfFragments, LoopKind, M4Builder, Newline,
+    QuoteWordKind, RedirectKind, SeparatorKind, ShellBuilder, WordKind,
 };
 
 use crate::ast::builder::{Coalesce, CoalesceResult};
@@ -40,7 +40,10 @@ impl<L> BuilderBase for MinimalBuilder<L> {
     type Error = BuilderError;
 }
 
-impl<L> M4Builder for MinimalBuilder<L> {
+impl<L> M4Builder for MinimalBuilder<L>
+where
+    L: Into<String> + From<String> + Clone + Debug,
+{
     type M4Macro = M4Macro<Self::Command, Self::Word>;
     type M4Argument = M4Argument<Self::Command, Self::Word>;
     fn macro_into_compound_command(
@@ -48,15 +51,16 @@ impl<L> M4Builder for MinimalBuilder<L> {
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let cmd = if !redirects.is_empty() {
+        let cmd = self.simplify_m4_macro(&macro_call).unwrap_or(Macro(macro_call));
+        let compound_cmd = if !redirects.is_empty() {
             Shell(CompoundCommand::Redirect(
-                Box::new(AcCommand::new_macro(macro_call)),
+                Box::new(AcCommand::new_may_m4(cmd)),
                 redirects,
             ))
         } else {
-            Macro(macro_call)
+            cmd
         };
-        Ok(cmd)
+        Ok(compound_cmd)
     }
 
     fn macro_into_word(
@@ -767,3 +771,100 @@ where
         }
     }
 }
+
+pub(super) trait M4Simplifier: ShellBuilder
+where
+    Self::Command: Clone,
+    Self::Word: Clone,
+{
+    fn simplify_m4_macro(
+        &mut self,
+        macro_call: &M4Macro<Self::Command, Self::Word>,
+    ) -> Option<Self::CompoundCommand> {
+        match macro_call.name.as_str() {
+            "AS_IF" if macro_call.args.len() > 0 => {
+                let guard = CommandGroup {
+                    commands: macro_call.get_arg_as_cmd(0).unwrap_or_default(),
+                    trailing_comments: Default::default(),
+                };
+                let body = CommandGroup {
+                    commands: macro_call.get_arg_as_cmd(1).unwrap_or_default(),
+                    trailing_comments: Default::default(),
+                };
+                let conditionals = vec![GuardBodyPairGroup { guard, body }];
+                let else_branch = macro_call.get_arg_as_cmd(2).map(|commands| CommandGroup {
+                    commands,
+                    trailing_comments: Default::default(),
+                });
+                self.if_command(
+                    IfFragments {
+                        conditionals,
+                        else_branch,
+                    },
+                    vec![],
+                )
+                .ok()
+            }
+            "AS_CASE" if macro_call.args.len() > 0 => {
+                let word = macro_call
+                    .get_arg_as_word(0)
+                    .expect("Invalid AS_CASE syntax detected.");
+                let mut pattern_iter = macro_call.args.iter().skip(1);
+                let mut action_iter = macro_call.args.iter().skip(2);
+                let mut arms = Vec::new();
+                loop {
+                    match (pattern_iter.next(), action_iter.next()) {
+                        (Some(M4Argument::Word(pattern)), Some(M4Argument::Commands(action))) => {
+                            arms.push(CaseArm {
+                                patterns: CasePatternFragments {
+                                    pre_pattern_comments: Default::default(),
+                                    pattern_alternatives: vec![pattern.clone()],
+                                    pattern_comment: Default::default(),
+                                },
+                                body: CommandGroup {
+                                    commands: action.clone(),
+                                    trailing_comments: Default::default(),
+                                },
+                                arm_comment: Default::default(),
+                            });
+                        }
+                        (Some(M4Argument::Commands(default_action)), None) => {
+                            let kind = self.word_fragment(WordKind::Star).ok()?;
+                            let star = self
+                                .word(ConcatWordKind::Single(QuoteWordKind::Simple(kind)))
+                                .ok()?;
+                            arms.push(CaseArm {
+                                patterns: CasePatternFragments {
+                                    pre_pattern_comments: Default::default(),
+                                    pattern_alternatives: vec![star],
+                                    pattern_comment: Default::default(),
+                                },
+                                body: CommandGroup {
+                                    commands: default_action.clone(),
+                                    trailing_comments: Default::default(),
+                                },
+                                arm_comment: Default::default(),
+                            });
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                self.case_command(
+                    CaseFragments {
+                        word,
+                        post_word_comments: Default::default(),
+                        in_comment: Default::default(),
+                        arms,
+                        post_arms_comments: Default::default(),
+                    },
+                    Default::default(),
+                )
+                .ok()
+            }
+            _ => None,
+        }
+    }
+}
+
+impl<L> M4Simplifier for MinimalBuilder<L> where L: Into<String> + From<String> + Clone + Debug {}
