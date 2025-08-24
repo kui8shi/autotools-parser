@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::{fmt, ops};
 
 pub mod am;
-pub mod sh;
 pub mod builder;
+pub mod condition;
 pub mod minimal;
 pub mod node;
+pub mod sh;
 
 /// Type alias for the default `Parameter` representation.
 pub type DefaultParameter = Parameter<String>;
@@ -932,16 +933,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::{ast::minimal::AcWord, parse::autoconf::MinimalParser};
+
     #[test]
     fn test_display_parameter() {
-        use super::ComplexWord::Single;
+        use super::minimal::Word::Single;
         use super::MayM4::*;
         use super::Parameter::*;
-        use super::SimpleWord::Param;
-        use super::TopLevelWord;
-        use super::Word::Simple;
+        use super::minimal::WordFragment::Param;
         use crate::lexer::Lexer;
-        use crate::parse::autoconf::DefaultParser;
 
         let params = vec![
             At,
@@ -959,9 +959,9 @@ mod tests {
 
         for p in params {
             let src = p.to_string();
-            let correct = TopLevelWord(Single(Simple(Shell(Param(p)))));
+            let correct = AcWord(Single(Shell(Param(p))));
 
-            let parsed = match DefaultParser::new(Lexer::new(src.chars())).word() {
+            let parsed = match MinimalParser::new(Lexer::new(src.chars())).word() {
                 Ok(Some(w)) => w,
                 Ok(None) => panic!("The source \"{}\" generated from the command `{:#?}` failed to parse as anything", src, correct),
                 Err(e) => panic!("The source \"{}\" generated from the command `{:#?}` failed to parse: {}", src, correct, e),

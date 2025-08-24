@@ -1,4 +1,5 @@
 //! Provide data structures related to m4 macros.
+use crate::ast::condition::Condition;
 use std::collections::HashMap;
 use ArrayDelim::*;
 use M4ExportType::*;
@@ -45,7 +46,7 @@ pub enum M4Type {
     Symbol(Option<M4ExportFunc>),
     /// array of C symbols, separated by whitespace.
     Symbols(ArrayDelim, Option<M4ExportFunc>),
-    /// Automake conditional name.
+    /// condition to define Automake conditional variable
     AMCond,
 }
 
@@ -62,7 +63,7 @@ pub enum M4ExportType {
     /// Reference to a path
     ExPath,
     /// Export to automake via AM_CONDITIONAL
-    ExAMCond,
+    ExCond,
 }
 
 impl PartialEq for M4Type {
@@ -131,6 +132,8 @@ pub enum M4Argument<C, W> {
     Program(String),
     /// list of commands.
     Commands(Vec<C>),
+    /// condition (e.g test command).
+    Condition(Condition<C, W>),
     /// unknown argument type when the macro is user-defined
     Unknown(String),
 }
@@ -277,7 +280,7 @@ impl SideEffect {
             ExVar(attrs) => self.add_shell_var(val, attrs),
             ExCPP => self.add_cpp_symbol(val),
             ExPath => self.add_path(val),
-            ExAMCond => self.add_am_cond(val),
+            ExCond => self.add_am_cond(val),
         }
     }
 }
@@ -1303,7 +1306,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AM_CONDITIONAL",
                 M4MacroSignature {
-                    arg_types: vec![AMCond, Cmds],
+                    arg_types: vec![
+                        Lit,    // conditional (definition of AM var)
+                        AMCond, // condition
+                    ],
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -1312,9 +1318,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AM_COND_IF",
                 M4MacroSignature {
                     arg_types: vec![
-                        AMCond, // conditional
-                        Cmds,   // [if-true]
-                        Cmds,   // [if-false]
+                        Lit,  // conditional (reference to AM var)
+                        Cmds, // [if-true]
+                        Cmds, // [if-false]
                     ],
                     ret_type: Some(Cmds),
                     ..Default::default()
@@ -7176,7 +7182,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     (ExVar(VarAttrs::output()), format!("{}_LIBS", s)),
                                     // argument & conditional
                                     (ExVar(VarAttrs::input()), format!("with_{}", s)),
-                                    (ExAMCond, s.into()),
+                                    (ExCond, s.into()),
                                 ]
                             }),
                         ),
@@ -7205,7 +7211,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     (ExVar(VarAttrs::output()), format!("{}_LIBS", s)),
                                     // argument & conditional & cpp symbol
                                     (ExVar(VarAttrs::input()), format!("with_{}", s)),
-                                    (ExAMCond, s.into()),
+                                    (ExCond, s.into()),
                                     (ExCPP, s.into()),
                                 ]
                             }),

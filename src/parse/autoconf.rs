@@ -17,15 +17,13 @@ use super::{
 };
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
-use crate::ast::builder::{self, AutoconfNodeBuilder, M4Builder, ShellBuilder, WordKind};
+use crate::ast::builder::{
+    self, AutoconfNodeBuilder, ConditionBuilder, M4Builder, ShellBuilder, WordKind,
+};
 use crate::ast::node::{AcCommand, AcWord, Node, NodeId};
 use crate::ast::{self, DefaultArithmetic, DefaultParameter};
 use crate::m4_macro::{self, ArrayDelim, M4Argument, M4ExportFunc, SideEffect};
 use crate::token::Token;
-
-/// A parser which will use a default AST builder implementation,
-/// yielding results in terms of types defined in the `ast` module.
-pub type DefaultParser<I> = AutoconfParser<I, builder::StringBuilder>;
 
 /// A parser which will use a minimal set of AST builder implementation.
 pub type MinimalParser<I> = AutoconfParser<I, builder::MinimalBuilder<String>>;
@@ -52,7 +50,8 @@ enum CompoundCmdKeyword {
 impl<I, B> Parser for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
+    B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Word: From<String> + Into<Option<String>> + Clone,
     B::WordFragment: Into<Option<String>> + Clone,
 {
     type TopLevel = B::Command;
@@ -65,7 +64,8 @@ where
 impl<I, B> IntoIterator for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
-    B: ShellBuilder + M4Builder,
+    B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Word: From<String> + Into<Option<String>> + Clone,
     B::WordFragment: Into<Option<String>> + Clone,
 {
     type IntoIter = ParserIterator<Self>;
@@ -162,10 +162,7 @@ struct QuoteContext {
     quote_level: usize,
 }
 
-impl<I: Iterator<Item = Token>, B: ShellBuilder + M4Builder + Default> AutoconfParser<I, B>
-where
-    B::WordFragment: Into<Option<String>> + Clone,
-{
+impl<I: Iterator<Item = Token>, B: Default> AutoconfParser<I, B> {
     /// Creates a new Parser from a Token iterator or collection.
     pub fn new<T>(iter: T) -> AutoconfParser<I, B>
     where
@@ -180,6 +177,21 @@ where
         T: IntoIterator<Item = Token, IntoIter = I>,
     {
         AutoconfParser::with_builder(iter.into_iter(), Default::default(), detect_macro)
+    }
+
+    /// Creates a new Parser from a Token iterator and provided AST builder.
+    pub fn with_builder(iter: I, builder: B, detect_user_macro: bool) -> Self {
+        AutoconfParser {
+            iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
+            builder,
+            quotes: (SquareOpen, SquareClose),
+            quote_stack: vec![QuoteContext {
+                kind: QuoteContextKind::Root,
+                quote_level: 0,
+            }],
+            last_quote_pos: None,
+            detect_user_macro,
+        }
     }
 }
 
@@ -282,6 +294,8 @@ impl<I, B> AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
+    B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Word: From<String> + Into<Option<String>> + Clone,
     B::WordFragment: Into<Option<String>> + Clone,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
@@ -294,21 +308,6 @@ where
             .map_or(ParseError::new(UnexpectedEOF), |t| {
                 ParseError::new(Unexpected(t, pos))
             })
-    }
-
-    /// Creates a new Parser from a Token iterator and provided AST builder.
-    pub fn with_builder(iter: I, builder: B, detect_user_macro: bool) -> Self {
-        AutoconfParser {
-            iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
-            builder,
-            quotes: (SquareOpen, SquareClose),
-            quote_stack: vec![QuoteContext {
-                kind: QuoteContextKind::Root,
-                quote_level: 0,
-            }],
-            last_quote_pos: None,
-            detect_user_macro,
-        }
     }
 
     /// Returns the parser's current position in the source.
@@ -2605,7 +2604,7 @@ where
                     self.linebreak();
                 }
                 let arg = match arg_type {
-                    M4Type::Lit | M4Type::AMCond => {
+                    M4Type::Lit => {
                         self.skip_macro_arg()?;
                         M4Argument::Literal(peeked_arg.clone())
                     }
@@ -2749,6 +2748,7 @@ where
                         };
                         self.macro_arg_array(delim, end, &mut effects, *f)?
                     }
+                    M4Type::AMCond => self.macro_arg_condition()?,
                     M4Type::Cmds => {
                         self.may_close_quote(None, false);
                         if let Some(&Comma | &ParenClose) = self.iter.peek() {
@@ -2917,6 +2917,26 @@ where
         }
         self.may_close_quote(None, false);
         Ok(M4Argument::Array(arr))
+    }
+
+    fn macro_arg_condition(&mut self) -> ParseResult<M4Argument<B::Command, B::Word>, B::Error> {
+        let (_, quote_close) = self.get_quotes();
+        self.may_close_quote(None, false);
+        let cmd = if let Some(&Comma | &ParenClose) = self.iter.peek() {
+            // an empty command which is invalid to be a condition
+            M4Argument::Unknown(String::new())
+        } else {
+            // argument should end with ')'
+            let delims = &[ParenClose, quote_close.clone()];
+            let cmd = self
+                .command_group(CommandGroupDelimiters {
+                    exact_tokens: delims,
+                    ..Default::default()
+                })?
+                .commands.pop().unwrap();
+            M4Argument::Condition(self.builder.make_condition(cmd)?)
+        };
+        Ok(cmd)
     }
 
     /// Parse arbitrary arguments of m4 macro call as raw literals,
@@ -3760,14 +3780,15 @@ fn concat_tokens(tokens: &[Token]) -> String {
 mod tests {
     use super::*;
     use crate::ast::builder::Newline;
+    use crate::ast::minimal::MinimalCommand;
     use crate::ast::Command::*;
     use crate::ast::CompoundCommandKind::*;
     use crate::ast::*;
     use crate::lexer::Lexer;
     use crate::m4_macro::*;
 
-    fn make_parser(src: &str) -> DefaultParser<Lexer<std::str::Chars<'_>>> {
-        DefaultParser::new(Lexer::new(src.chars()))
+    fn make_parser(src: &str) -> MinimalParser<Lexer<std::str::Chars<'_>>> {
+        MinimalParser::new(Lexer::new(src.chars()))
     }
 
     fn word(s: &str) -> TopLevelWord<String> {
@@ -3791,7 +3812,7 @@ mod tests {
         cmd_args(cmd, &[])
     }
 
-    fn cmd_args(cmd: &str, args: &[&str]) -> TopLevelCommand<String> {
+    fn cmd_args(cmd: &str, args: &[&str]) -> MinimalCommand<String> {
         TopLevelCommand(List(CommandList {
             first: ListableCommand::Single(PipeableCommand::Simple(cmd_args_simple(cmd, args))),
             rest: vec![],

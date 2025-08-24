@@ -55,6 +55,28 @@ impl Into<Option<String>> for AmWordFragment {
     }
 }
 
+impl Into<Option<String>> for AmWord {
+    fn into(self) -> Option<String> {
+        match self.0 {
+            Word::Empty => Some(String::new()),
+            Word::Concat(_) => None,
+            Word::Single(word) => word.into(),
+        }
+    }
+}
+
+impl From<String> for AmWord {
+    fn from(value: String) -> Self {
+        value
+            .is_empty()
+            .then_some(Word::Empty)
+            .unwrap_or(Word::Single(MayAm::Shell(WordFragment::Literal(
+                value.into(),
+            ))))
+            .into()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 /// Represents different types of automake statements.
 pub enum AmLine {

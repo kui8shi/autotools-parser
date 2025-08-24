@@ -1,4 +1,5 @@
 //! Defines minimal representations of the shell source.
+use super::condition::{Condition, Operator};
 use super::{Arithmetic, MayM4, Parameter, ParameterSubstitution, PatternBodyPair, Redirect};
 use crate::m4_macro::M4Macro;
 use std::fmt;
@@ -71,6 +72,18 @@ where
     }
 }
 
+impl<L> Into<Option<String>> for AcWord<L>
+where
+    L: Into<String>,
+{
+    fn into(self) -> Option<String> {
+        match self.0 {
+            Word::Empty => Some(String::new()),
+            Word::Concat(_) => None,
+            Word::Single(word) => word.into(),
+        }
+    }
+}
 
 impl<L> Into<Option<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>>>
     for MinimalWordFragment<L>
@@ -80,6 +93,21 @@ impl<L> Into<Option<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>>>
             Self::Shell(cmd) => Some(cmd),
             _ => None,
         }
+    }
+}
+
+impl<L> From<String> for AcWord<L>
+where
+    L: From<String>,
+{
+    fn from(value: String) -> Self {
+        value
+            .is_empty()
+            .then_some(Word::Empty)
+            .unwrap_or(Word::Single(MayM4::Shell(WordFragment::Literal(
+                value.into(),
+            ))))
+            .into()
     }
 }
 
@@ -104,49 +132,6 @@ pub enum Word<X> {
     Single(X),
     /// A word which is equivalent to an empty strng, such as '', "".
     Empty,
-}
-
-/// Operators used to compare words or check file properties.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Operator<W> {
-    /// Equality operator (==) between two words.
-    Eq(W, W),
-    /// Inequality operator (!=) between two words.
-    Neq(W, W),
-    /// Greater than or equal operator (>=) between two words.
-    Ge(W, W),
-    /// Greater than operator (>) between two words.
-    Gt(W, W),
-    /// Less than or equal operator (<=) between two words.
-    Le(W, W),
-    /// Less than operator (<) between two words.
-    Lt(W, W),
-    /// Checks if the given word is empty.
-    Empty(W),
-    /// Checks if the given word is non-empty.
-    NonEmpty(W),
-    /// Checks if the given word represents an existing directory.
-    Dir(W),
-    /// Checks if the given word represents an existing file.
-    File(W),
-    /// Checks if the given word represents a non-existing path.
-    NoExists(W),
-}
-
-/// Represents a condition for control flow, which can be a single operator-based
-/// condition, a logical combination of conditions, or an evaluated word.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Condition<C, W> {
-    /// A single condition based on an operator.
-    Cond(Operator<W>),
-    /// Logical AND of two conditions.
-    And(Box<Self>, Box<Self>),
-    /// Logical OR of two conditions.
-    Or(Box<Self>, Box<Self>),
-    /// Evaluates the commands first, then treat the result output as a condition.
-    Eval(Box<C>),
-    /// Evaluates the commands, then take the return code as a boolean condition.
-    ReturnZero(Box<C>),
 }
 
 /// A pairing of a condition (guard) with a block of commands (body).

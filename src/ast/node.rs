@@ -4,14 +4,16 @@ use std::cell::Cell;
 use crate::m4_macro;
 use slab::Slab;
 
+use super::minimal::Word;
+
 /// Represents a unique node id
 pub type NodeId = usize;
 /// Wraps minimal word fragment with fixing generics
 pub type WordFragment<W> = super::minimal::WordFragment<String, NodeId, W>;
 /// Wraps minimal condition with fixing generics
-pub type Condition<W> = super::minimal::Condition<NodeId, W>;
+pub type Condition<W> = super::condition::Condition<NodeId, W>;
 /// Wraps minimal operator with fixing generics
-pub type Operator<W> = super::minimal::Operator<W>;
+pub type Operator<W> = super::condition::Operator<W>;
 /// Wraps minimal guard body pair with fixing generics
 pub type GuardBodyPair<W> = super::minimal::GuardBodyPair<NodeId, W>;
 /// Wraps pattern body pair with fixing generics
@@ -30,7 +32,7 @@ pub type AcWordFragment = super::MayM4<WordFragment<AcWord>, M4Macro>;
 
 /// Wraps minimal Word with fixing generics
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AcWord(pub super::minimal::Word<AcWordFragment>);
+pub struct AcWord(pub Word<AcWordFragment>);
 
 impl From<WordFragment<AcWord>> for AcWordFragment {
     fn from(value: WordFragment<AcWord>) -> Self {
@@ -38,19 +40,19 @@ impl From<WordFragment<AcWord>> for AcWordFragment {
     }
 }
 
-impl From<super::minimal::Word<AcWordFragment>> for AcWord {
-    fn from(value: super::minimal::Word<AcWordFragment>) -> Self {
+impl From<Word<AcWordFragment>> for AcWord {
+    fn from(value: Word<AcWordFragment>) -> Self {
         Self(value)
     }
 }
 
-impl From<&super::minimal::Word<AcWordFragment>> for AcWord {
-    fn from(value: &super::minimal::Word<AcWordFragment>) -> Self {
+impl From<&Word<AcWordFragment>> for AcWord {
+    fn from(value: &Word<AcWordFragment>) -> Self {
         Self(value.clone())
     }
 }
 
-impl From<AcWord> for super::minimal::Word<AcWordFragment> {
+impl From<AcWord> for Word<AcWordFragment> {
     fn from(value: AcWord) -> Self {
         value.0
     }
@@ -63,6 +65,28 @@ impl Into<Option<WordFragment<AcWord>>> for AcWordFragment {
             Shell(word) => Some(word),
             Macro(_) => None,
         }
+    }
+}
+
+impl Into<Option<String>> for AcWord {
+    fn into(self) -> Option<String> {
+        match self.0 {
+            Word::Empty => Some(String::new()),
+            Word::Concat(_) => None,
+            Word::Single(word) => word.into(),
+        }
+    }
+}
+
+impl From<String> for AcWord {
+    fn from(value: String) -> Self {
+        value
+            .is_empty()
+            .then_some(Word::Empty)
+            .unwrap_or(Word::Single(super::MayM4::Shell(WordFragment::Literal(
+                value.into(),
+            ))))
+            .into()
     }
 }
 
@@ -293,8 +317,8 @@ impl<U> DisplayNode for AutoconfPool<U> {
     }
 
     fn display_word(&self, word: &AcWord, should_quote: bool) -> String {
-        use super::minimal::Word::*;
         use super::minimal::WordFragment::DoubleQuoted;
+        use Word::*;
         match &word.0 {
             Empty => "\"\"".to_string(),
             Concat(frags) => {
@@ -376,14 +400,15 @@ impl<U> AutoconfPool<U> {
                     format!(
                         "[\n{}{newline}]",
                         cmds.iter()
-                    .map(|c| self.display_node(*c, indent_level + 2))
-                    .collect::<Vec<String>>()
-                    .join("\n")
+                            .map(|c| self.display_node(*c, indent_level + 2))
+                            .collect::<Vec<String>>()
+                            .join("\n")
                     )
                 } else {
                     "[]".to_owned()
                 }
             }
+            Condition(cond) => format!("[{}]", self.condition_to_string(cond)),
             Unknown(unknown) => format!("[{}]", unknown),
         }
     }
@@ -556,7 +581,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
 
     /// Format a `Condition` AST into its shell script string representation.
     fn condition_to_string(&self, cond: &Condition<W>) -> String {
-        use super::minimal::Condition::*;
+        use super::condition::Condition::*;
         match cond {
             Cond(op) => format!("test {}", self.operator_to_string(op)),
             And(lhs, rhs) => format!(
@@ -722,7 +747,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
     /// Format an operator AST (`Operator`) into its shell test string representation
     /// (e.g., equality tests, file tests, and unary operators).
     fn operator_to_string(&self, op: &Operator<W>) -> String {
-        use super::minimal::Operator::*;
+        use super::condition::Operator::*;
         match op {
             Eq(lhs, rhs) => format!(
                 "{} = {}",

@@ -16,11 +16,10 @@ use crate::ast::{
 };
 use crate::m4_macro::SideEffect;
 
-mod default_builder;
 mod minimal_builder;
 mod node_builder;
 
-pub use self::default_builder::*;
+pub use self::minimal_builder::ConditionBuilder;
 pub use self::minimal_builder::MinimalBuilder;
 pub use self::node_builder::AutoconfNodeBuilder;
 pub use self::node_builder::AutomakeNodeBuilder;

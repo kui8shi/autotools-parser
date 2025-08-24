@@ -1,10 +1,10 @@
 #![deny(rust_2018_idioms)]
+use autotools_parser::ast::condition::Condition;
+use autotools_parser::ast::condition::Operator;
 use autotools_parser::ast::minimal::AcCommand;
 use autotools_parser::ast::minimal::Command;
 use autotools_parser::ast::minimal::Command::*;
 use autotools_parser::ast::minimal::CompoundCommand;
-use autotools_parser::ast::minimal::Condition;
-use autotools_parser::ast::minimal::Operator;
 use autotools_parser::ast::minimal::Word;
 use autotools_parser::ast::minimal::WordFragment;
 use autotools_parser::ast::MayM4;
@@ -373,7 +373,10 @@ fn test_condition_concat_via_and() {
 fi]"#;
 
     let expected = cmd_if(
-        cond_and(cond(eq(word_var("foo"), word_lit("1"))), cond(eq(word_var("bar"), word_lit("0")))),
+        cond_and(
+            cond(eq(word_var("foo"), word_lit("1"))),
+            cond(eq(word_var("bar"), word_lit("0"))),
+        ),
         &[assign("var", word_lit("yes"))],
     );
 
@@ -389,7 +392,10 @@ fn test_condition_concat_via_or() {
 fi]"#;
 
     let expected = cmd_if(
-        cond_or(cond(eq(word_var("foo"), word_lit("1"))), cond(eq(word_var("bar"), word_lit("0")))),
+        cond_or(
+            cond(eq(word_var("foo"), word_lit("1"))),
+            cond(eq(word_var("bar"), word_lit("0"))),
+        ),
         &[assign("var", word_lit("yes"))],
     );
 

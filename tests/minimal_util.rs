@@ -1,8 +1,8 @@
+use autotools_parser::ast::condition::Condition;
+use autotools_parser::ast::condition::Operator;
 use autotools_parser::ast::minimal::AcWord;
 use autotools_parser::ast::minimal::CompoundCommand::*;
-use autotools_parser::ast::minimal::Condition;
 use autotools_parser::ast::minimal::GuardBodyPair;
-use autotools_parser::ast::minimal::Operator;
 use autotools_parser::ast::minimal::Word;
 use autotools_parser::ast::minimal::WordFragment::*;
 use autotools_parser::ast::minimal::{AcCommand, WordFragment};

@@ -14,9 +14,8 @@ use crate::ast::minimal::{
 use crate::ast::{map_arith, map_param, MayM4};
 use crate::{
     ast::{
-        minimal::{
-            AcCommand, CompoundCommand, Condition, GuardBodyPair, Operator, Word, WordFragment,
-        },
+        condition::{Condition, Operator},
+        minimal::{AcCommand, CompoundCommand, GuardBodyPair, Word, WordFragment},
         AndOr, ParameterSubstitution, PatternBodyPair, Redirect, RedirectOrCmdWord,
         RedirectOrEnvVar,
     },
@@ -576,14 +575,22 @@ where
     }
 }
 
-pub(crate) trait ConditionBuilder<C, W, F>
+/// A trait which provides ability to parse test commands in detail
+pub trait ConditionBuilder: BuilderBase
 where
-    W: From<Word<F>> + Into<Word<F>> + Clone,
-    F: Into<Option<String>>,
+    Self::Word: From<String> + Into<Option<String>> + Clone,
 {
-    fn make_condition(&mut self, cmd: C) -> Result<Condition<C, W>, BuilderError>;
+    /// construct Condition
+    fn make_condition(
+        &mut self,
+        cmd: Self::Command,
+    ) -> Result<Condition<Self::Command, Self::Word>, Self::Error>;
 
-    fn parse_test_command(&self, words: &[W]) -> Result<Condition<C, W>, BuilderError> {
+    /// parses test command
+    fn parse_test_command(
+        &self,
+        words: &[Self::Word],
+    ) -> Result<Condition<Self::Command, Self::Word>, Self::Error> {
         #[derive(Debug)]
         enum OperatorKind {
             Eq,
@@ -633,110 +640,107 @@ where
             }
         }
 
+        let empty: Self::Word = "".to_owned().into();
         let mut state = ExpressionState {
             flipped: false,
             operator: None,
-            lhs: Word::Empty.into(),
-            rhs: Word::Empty.into(),
+            lhs: empty.clone(),
+            rhs: empty.clone(),
         };
 
-        let mut conditions: Vec<Condition<C, W>> = Vec::new();
+        let mut conditions: Vec<Condition<_, _>> = Vec::new();
         let mut concat_kinds: Vec<ConcatKind> = Vec::new();
         for word in words {
             if state.operator.is_none() {
-                if let Word::Single(fragment) = word.clone().into() {
-                    if let Some(literal) = fragment.into() {
-                        match literal.as_str() {
-                            "!=" | "-ne" => {
-                                state.operator.replace(Neq);
-                                continue;
-                            }
-                            "=" | "-eq" => {
-                                state.operator.replace(Eq);
-                                continue;
-                            }
-                            "-ge" => {
-                                state.operator.replace(Ge);
-                                continue;
-                            }
-                            "-gt" => {
-                                state.operator.replace(Gt);
-                                continue;
-                            }
-                            "-le" => {
-                                state.operator.replace(Le);
-                                continue;
-                            }
-                            "-lt" => {
-                                state.operator.replace(Lt);
-                                continue;
-                            }
-                            "-z" => {
-                                state.operator.replace(Empty);
-                                continue;
-                            }
-                            "-n" => {
-                                state.operator.replace(NonEmpty);
-                                continue;
-                            }
-                            "-d" | "-f" if state.flipped => {
-                                state.operator.replace(NoExists);
-                                continue;
-                            }
-                            "-d" => {
-                                state.operator.replace(Dir);
-                                continue;
-                            }
-                            // TODO: More precision for file existance + extra operators
-                            "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
-                            | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => {
-                                state.operator.replace(File);
-                                continue;
-                            }
-                            "!" => {
-                                state.flipped = true;
-                                continue;
-                            }
-                            _ => {
-                                // return Err(BuilderError::UnsupportedSyntax);
-                            }
-                        };
+                if let Some(literal) = word.clone().into() {
+                    match literal.as_str() {
+                        "!=" | "-ne" => {
+                            state.operator.replace(Neq);
+                            continue;
+                        }
+                        "=" | "-eq" => {
+                            state.operator.replace(Eq);
+                            continue;
+                        }
+                        "-ge" => {
+                            state.operator.replace(Ge);
+                            continue;
+                        }
+                        "-gt" => {
+                            state.operator.replace(Gt);
+                            continue;
+                        }
+                        "-le" => {
+                            state.operator.replace(Le);
+                            continue;
+                        }
+                        "-lt" => {
+                            state.operator.replace(Lt);
+                            continue;
+                        }
+                        "-z" => {
+                            state.operator.replace(Empty);
+                            continue;
+                        }
+                        "-n" => {
+                            state.operator.replace(NonEmpty);
+                            continue;
+                        }
+                        "-d" | "-f" if state.flipped => {
+                            state.operator.replace(NoExists);
+                            continue;
+                        }
+                        "-d" => {
+                            state.operator.replace(Dir);
+                            continue;
+                        }
+                        // TODO: More precision for file existance + extra operators
+                        "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
+                        | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => {
+                            state.operator.replace(File);
+                            continue;
+                        }
+                        "!" => {
+                            state.flipped = true;
+                            continue;
+                        }
+                        _ => {
+                            // return Err(BuilderError::UnsupportedSyntax);
+                        }
                     }
                     // before encountering an operator
                     // and the word is not an operator
                     state.lhs = word.clone();
                 }
             } else {
-                if let Word::Single(fragment) = word.clone().into() {
-                    if let Some(literal) = fragment.into() {
-                        match literal.as_str() {
-                            "-a" => {
-                                conditions.push(Condition::Cond(make_operator(state)));
-                                concat_kinds.push(And);
-                                state = ExpressionState {
-                                    flipped: false,
-                                    operator: None,
-                                    lhs: Word::Empty.into(),
-                                    rhs: Word::Empty.into(),
-                                };
-                                continue;
-                            }
-                            "-o" => {
-                                conditions.push(Condition::Cond(make_operator(state)));
-                                concat_kinds.push(Or);
-                                state = ExpressionState {
-                                    operator: None,
-                                    lhs: Word::Empty.into(),
-                                    rhs: Word::Empty.into(),
-                                    flipped: false,
-                                };
-                                continue;
-                            }
-                            _ => {}
+                if let Some(literal) = word.clone().into() {
+                    match literal.as_str() {
+                        "-a" => {
+                            conditions.push(Condition::Cond(make_operator(state)));
+                            concat_kinds.push(And);
+                            state = ExpressionState {
+                                flipped: false,
+                                operator: None,
+                                lhs: empty.clone(),
+                                rhs: empty.clone(),
+                            };
+                            continue;
                         }
+                        "-o" => {
+                            conditions.push(Condition::Cond(make_operator(state)));
+                            concat_kinds.push(Or);
+                            state = ExpressionState {
+                                operator: None,
+                                lhs: empty.clone(),
+                                rhs: empty.clone(),
+                                flipped: false,
+                            };
+                            continue;
+                        }
+                        _ => {}
                     }
-                    state.rhs = word.clone();
                 }
+                state.rhs = word.clone();
             }
         }
         conditions.push(Condition::Cond(make_operator(state)));
@@ -752,9 +756,9 @@ where
     }
 }
 
-impl<L> ConditionBuilder<MinimalCommand<L>, AcWord<L>, MinimalWordFragment<L>> for MinimalBuilder<L>
+impl<L> ConditionBuilder for MinimalBuilder<L>
 where
-    L: Into<String> + Clone + Debug,
+    L: From<String> + Into<String> + Clone + Debug,
 {
     fn make_condition(
         &mut self,

@@ -13,8 +13,8 @@ use crate::ast::{map_arith, map_param, MayM4, ParameterSubstitution};
 use crate::m4_macro::{M4Macro, SideEffect};
 use crate::{
     ast::{
-        minimal::{Condition, GuardBodyPair},
-        AndOr, PatternBodyPair, Redirect, RedirectOrCmdWord, RedirectOrEnvVar,
+        condition::Condition, minimal::GuardBodyPair, AndOr, PatternBodyPair, Redirect,
+        RedirectOrCmdWord, RedirectOrEnvVar,
     },
     m4_macro::M4Argument,
 };
@@ -223,7 +223,7 @@ impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> 
 impl<C, W, F, U> ShellBuilder for NodeBuilder<C, W, F, U>
 where
     C: From<ShellCommand<Self::Word>> + Into<Option<ShellCommand<Self::Word>>> + Clone,
-    W: From<Word<F>> + Into<Word<F>> + Clone + Debug,
+    W: From<Word<F>> + Into<Word<F>> + Into<Option<String>> + From<String> + Clone + Debug,
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Into<Option<String>>
@@ -676,10 +676,10 @@ where
     }
 }
 
-impl<C, W, F, U> ConditionBuilder<NodeId, W, F> for NodeBuilder<C, W, F, U>
+impl<C, W, F, U> ConditionBuilder for NodeBuilder<C, W, F, U>
 where
     C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone,
-    W: From<Word<F>> + Into<Word<F>> + Clone + Debug,
+    W: From<Word<F>> + Into<Word<F>> + Into<Option<String>> + From<String> + Clone + Debug,
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Into<Option<String>>
