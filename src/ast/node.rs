@@ -357,7 +357,8 @@ impl<U> AutoconfPool<U> {
     /// spaces for multiline argument formatting.
     fn m4_argument_to_string(&self, arg: &M4Argument, indent_level: usize) -> String {
         use crate::m4_macro::M4Argument::*;
-        let newline = format!("\n{}", " ".repeat(indent_level));
+        const TAB_WIDTH: usize = 2;
+        let newline = format!("\n{}", " ".repeat(indent_level * TAB_WIDTH));
         match arg {
             Literal(lit) => format!("[{}]", lit),
             Word(word) => self.display_word(word, false),
@@ -370,13 +371,19 @@ impl<U> AutoconfPool<U> {
                     .join(if words.len() < 10 { " " } else { &newline })
             ),
             Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
-            Commands(cmds) => format!(
-                "[\n{}{newline}]",
-                cmds.iter()
-                    .map(|c| self.display_node(*c, indent_level + 2)) // TODO: check if the +2 should be +1
+            Commands(cmds) => {
+                if !cmds.is_empty() {
+                    format!(
+                        "[\n{}{newline}]",
+                        cmds.iter()
+                    .map(|c| self.display_node(*c, indent_level + 2))
                     .collect::<Vec<String>>()
                     .join("\n")
-            ),
+                    )
+                } else {
+                    "[]".to_owned()
+                }
+            }
             Unknown(unknown) => format!("[{}]", unknown),
         }
     }

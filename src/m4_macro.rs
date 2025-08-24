@@ -68,9 +68,25 @@ pub enum M4ExportType {
 impl PartialEq for M4Type {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Lit, _) | (_, Lit) => true,
+            (Lit, Lit) => true,
             (Word, Word) => true,
-            (Args, _) | (_, Args) => true,
+            (Arr(_), Arr(_)) => true,
+            (Args, Args) => true,
+            (Prog, Prog) => true,
+            (Cmds, Cmds) => true,
+            (Def, Def) => true,
+            (Ctrl, Ctrl) => true,
+            (Body, Body) => true,
+            (Path(_), Path(_)) => true,
+            (Paths(_, _), Paths(_, _)) => true,
+            (Type(_), Type(_)) => true,
+            (Types(_, _), Types(_, _)) => true,
+            (VarName(_, _), VarName(_, _)) => true,
+            (Library(_), Library(_)) => true,
+            (CPP, CPP) => true,
+            (Symbol(_), Symbol(_)) => true,
+            (Symbols(_, _), Symbols(_, _)) => true,
+            (AMCond, AMCond) => true,
             _ => false,
         }
     }
@@ -137,7 +153,7 @@ pub struct M4Macro<C, W> {
     /// original m4 macro name if an alternative macro was adopted
     pub original_name: Option<String>,
     /// additional information about this macro
-    pub signature: M4MacroSignature,
+    pub signature: Option<M4MacroSignature>,
 }
 
 impl<C, W> M4Macro<C, W> {
@@ -153,7 +169,7 @@ impl<C, W> M4Macro<C, W> {
         effects: Option<SideEffect>,
         original_name: Option<String>,
     ) -> Self {
-        let signature = MACROS[&name].clone();
+        let signature = MACROS.get(&name).cloned();
         Self {
             name,
             args,
@@ -177,6 +193,14 @@ impl<C: Clone, W: Clone> M4Macro<C, W> {
     pub fn get_arg_as_word(&self, index: usize) -> Option<W> {
         match self.args.get(index) {
             Some(M4Argument::Word(word)) => Some(word.clone()),
+            _ => None,
+        }
+    }
+
+    /// Take the scpeficied argument as a literal
+    pub fn get_arg_as_literal(&self, index: usize) -> Option<String> {
+        match self.args.get(index) {
+            Some(M4Argument::Literal(lit)) => Some(lit.clone()),
             _ => None,
         }
     }

@@ -366,6 +366,38 @@ fi]"#;
 }
 
 #[test]
+fn test_condition_concat_via_and() {
+    let input = r#"
+[if test "$foo" = "1" -a "$bar" = "0" ; then
+  var="yes"
+fi]"#;
+
+    let expected = cmd_if(
+        cond_and(cond(eq(word_var("foo"), word_lit("1"))), cond(eq(word_var("bar"), word_lit("0")))),
+        &[assign("var", word_lit("yes"))],
+    );
+
+    let mut p = make_parser(input);
+    assert_eq!(p.complete_command().unwrap().unwrap(), expected);
+}
+
+#[test]
+fn test_condition_concat_via_or() {
+    let input = r#"
+[if test "$foo" = "1" -o "$bar" = "0" ; then
+  var="yes"
+fi]"#;
+
+    let expected = cmd_if(
+        cond_or(cond(eq(word_var("foo"), word_lit("1"))), cond(eq(word_var("bar"), word_lit("0")))),
+        &[assign("var", word_lit("yes"))],
+    );
+
+    let mut p = make_parser(input);
+    assert_eq!(p.complete_command().unwrap().unwrap(), expected);
+}
+
+#[test]
 fn test_quoted_patterns_in_macro_argument() {
     let input = r#"
 AC_ARG_ENABLE(size,

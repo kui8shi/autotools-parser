@@ -51,7 +51,9 @@ where
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let cmd = self.simplify_m4_macro(&macro_call).unwrap_or(Macro(macro_call));
+        let cmd = self
+            .simplify_m4_macro(&macro_call)
+            .unwrap_or(Macro(macro_call));
         let compound_cmd = if !redirects.is_empty() {
             Shell(CompoundCommand::Redirect(
                 Box::new(AcCommand::new_may_m4(cmd)),
@@ -581,7 +583,8 @@ where
 {
     fn make_condition(&mut self, cmd: C) -> Result<Condition<C, W>, BuilderError>;
 
-    fn parse_condition(&self, words: &[W]) -> Result<Operator<W>, BuilderError> {
+    fn parse_test_command(&self, words: &[W]) -> Result<Condition<C, W>, BuilderError> {
+        #[derive(Debug)]
         enum OperatorKind {
             Eq,
             Neq,
@@ -595,69 +598,157 @@ where
             File,
             NoExists,
         }
+        #[derive(Debug)]
+        enum ConcatKind {
+            And,
+            Or,
+        }
+        #[derive(Debug)]
+        struct ExpressionState<W> {
+            flipped: bool,
+            operator: Option<OperatorKind>,
+            lhs: W,
+            rhs: W,
+        }
+        use ConcatKind::*;
         use OperatorKind::*;
 
-        let mut lhs = Word::Empty.into();
-        let mut rhs = Word::Empty.into();
-        let mut operator_kind = None;
-        let mut flipped = false;
+        fn make_operator<W>(state: ExpressionState<W>) -> Operator<W> {
+            if let Some(operator) = state.operator {
+                match operator {
+                    Neq => Operator::Neq(state.lhs, state.rhs),
+                    Eq => Operator::Eq(state.lhs, state.rhs),
+                    Ge => Operator::Ge(state.lhs, state.rhs),
+                    Gt => Operator::Gt(state.lhs, state.rhs),
+                    Le => Operator::Le(state.lhs, state.rhs),
+                    Lt => Operator::Lt(state.lhs, state.rhs),
+                    Empty => Operator::Empty(state.rhs),
+                    NonEmpty => Operator::NonEmpty(state.rhs),
+                    Dir => Operator::Dir(state.rhs),
+                    File => Operator::File(state.rhs),
+                    NoExists => Operator::NoExists(state.rhs),
+                }
+            } else {
+                Operator::NonEmpty(state.lhs)
+            }
+        }
+
+        let mut state = ExpressionState {
+            flipped: false,
+            operator: None,
+            lhs: Word::Empty.into(),
+            rhs: Word::Empty.into(),
+        };
+
+        let mut conditions: Vec<Condition<C, W>> = Vec::new();
+        let mut concat_kinds: Vec<ConcatKind> = Vec::new();
         for word in words {
-            if operator_kind.is_none() {
+            if state.operator.is_none() {
                 if let Word::Single(fragment) = word.clone().into() {
                     if let Some(literal) = fragment.into() {
-                        operator_kind = match literal.as_str() {
-                            "!=" | "-ne" => Some(Neq),
-                            "=" | "-eq" => Some(Eq),
-                            "-ge" => Some(Ge),
-                            "-gt" => Some(Gt),
-                            "-le" => Some(Le),
-                            "-lt" => Some(Lt),
-                            "-z" => Some(Empty),
-                            "-n" => Some(NonEmpty),
-                            "-d" | "-f" if flipped => Some(NoExists),
-                            "-d" => Some(Dir),
+                        match literal.as_str() {
+                            "!=" | "-ne" => {
+                                state.operator.replace(Neq);
+                                continue;
+                            }
+                            "=" | "-eq" => {
+                                state.operator.replace(Eq);
+                                continue;
+                            }
+                            "-ge" => {
+                                state.operator.replace(Ge);
+                                continue;
+                            }
+                            "-gt" => {
+                                state.operator.replace(Gt);
+                                continue;
+                            }
+                            "-le" => {
+                                state.operator.replace(Le);
+                                continue;
+                            }
+                            "-lt" => {
+                                state.operator.replace(Lt);
+                                continue;
+                            }
+                            "-z" => {
+                                state.operator.replace(Empty);
+                                continue;
+                            }
+                            "-n" => {
+                                state.operator.replace(NonEmpty);
+                                continue;
+                            }
+                            "-d" | "-f" if state.flipped => {
+                                state.operator.replace(NoExists);
+                                continue;
+                            }
+                            "-d" => {
+                                state.operator.replace(Dir);
+                                continue;
+                            }
                             // TODO: More precision for file existance + extra operators
                             "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
-                            | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => Some(File),
+                            | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => {
+                                state.operator.replace(File);
+                                continue;
+                            }
                             "!" => {
-                                flipped = true;
+                                state.flipped = true;
                                 continue;
                             }
                             _ => {
                                 // return Err(BuilderError::UnsupportedSyntax);
-                                None
                             }
                         };
-                        if operator_kind.is_some() {
-                            continue;
+                    }
+                    // before encountering an operator
+                    // and the word is not an operator
+                    state.lhs = word.clone();
+                }
+            } else {
+                if let Word::Single(fragment) = word.clone().into() {
+                    if let Some(literal) = fragment.into() {
+                        match literal.as_str() {
+                            "-a" => {
+                                conditions.push(Condition::Cond(make_operator(state)));
+                                concat_kinds.push(And);
+                                state = ExpressionState {
+                                    flipped: false,
+                                    operator: None,
+                                    lhs: Word::Empty.into(),
+                                    rhs: Word::Empty.into(),
+                                };
+                                continue;
+                            }
+                            "-o" => {
+                                conditions.push(Condition::Cond(make_operator(state)));
+                                concat_kinds.push(Or);
+                                state = ExpressionState {
+                                    operator: None,
+                                    lhs: Word::Empty.into(),
+                                    rhs: Word::Empty.into(),
+                                    flipped: false,
+                                };
+                                continue;
+                            }
+                            _ => {}
                         }
                     }
+                    state.rhs = word.clone();
                 }
-                // before encountering an operator
-                // and the word is not an operator
-                lhs = word.clone();
-            } else {
-                rhs = word.clone();
             }
         }
-        let operator = if let Some(kind) = operator_kind {
-            match kind {
-                Neq => Operator::Neq(lhs, rhs),
-                Eq => Operator::Eq(lhs, rhs),
-                Ge => Operator::Ge(lhs, rhs),
-                Gt => Operator::Gt(lhs, rhs),
-                Le => Operator::Le(lhs, rhs),
-                Lt => Operator::Lt(lhs, rhs),
-                Empty => Operator::Empty(rhs),
-                NonEmpty => Operator::NonEmpty(rhs),
-                Dir => Operator::Dir(rhs),
-                File => Operator::File(rhs),
-                NoExists => Operator::NoExists(rhs),
+        conditions.push(Condition::Cond(make_operator(state)));
+        debug_assert!(conditions.len() == concat_kinds.len() + 1);
+        let mut ret = conditions.remove(0);
+        for concat_kind in concat_kinds {
+            match concat_kind {
+                And => ret = Condition::And(Box::new(ret), Box::new(conditions.remove(0))),
+                Or => ret = Condition::Or(Box::new(ret), Box::new(conditions.remove(0))),
             }
-        } else {
-            Operator::NonEmpty(lhs)
-        };
-        Ok(operator)
+        }
+        Ok(ret)
     }
 }
 
@@ -675,7 +766,7 @@ where
                 if let Word::Single(w) = &first_word.0 {
                     match w {
                         Shell(WordFragment::Literal(v)) if v.clone().into() == "test" => {
-                            Some(Condition::Cond(self.parse_condition(&words[1..])?))
+                            Some(self.parse_test_command(&words[1..])?)
                         }
                         Shell(WordFragment::Literal(v)) if v.clone().into() == "eval" => Some(
                             Condition::Eval(Box::new(AcCommand::new_cmd(words[1..].to_owned()))),

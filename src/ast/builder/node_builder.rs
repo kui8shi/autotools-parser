@@ -694,7 +694,7 @@ where
                 if let Word::Single(f) = first_word.clone().into() {
                     match f.into() {
                         Some(WordFragment::Literal(v)) if v.clone() == "test" => {
-                            Some(Condition::Cond(self.parse_condition(&words[1..])?))
+                            Some(self.parse_test_command(&words[1..])?)
                         }
                         Some(WordFragment::Literal(v)) if v.clone() == "eval" => {
                             Some(Condition::Eval(Box::new(
