@@ -5,8 +5,8 @@ use autotools_parser::ast::ParameterSubstitution::Arith;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_arithmetic_substitution_valid() {
@@ -109,7 +109,7 @@ fn test_arithmetic_substitution_valid() {
     ];
 
     for (s, a) in cases.into_iter() {
-        let correct = word_subst(Arith(Some(a)));
+        let correct = word(subst(Arith(Some(a))));
         match make_parser(s).parameter() {
             Ok(w) => {
                 if w != correct {
@@ -123,7 +123,7 @@ fn test_arithmetic_substitution_valid() {
         }
     }
 
-    let correct = word_subst(Arith(None));
+    let correct = word(subst(Arith(None)));
     assert_eq!(correct, make_parser("$(( ))").parameter().unwrap());
 }
 
@@ -141,10 +141,10 @@ fn test_arithmetic_substitution_left_to_right_associativity() {
 
     macro_rules! check {
         ($constructor:path, $op:tt) => {{
-            let correct = word_subst(Arith(Some($constructor(
+            let correct = word(subst(Arith(Some($constructor(
                 Box::new($constructor(x(), y())),
                 z(),
-            ))));
+            )))));
 
             let src = format!("$((x {0} y {0} z))", stringify!($op));
             match make_parser(&src).parameter() {
@@ -161,13 +161,13 @@ fn test_arithmetic_substitution_left_to_right_associativity() {
         }};
 
         (assig: $constructor:path, $op:tt) => {{
-            let correct = word_subst(Arith(Some(Assign(
+            let correct = word(subst(Arith(Some(Assign(
                 String::from("x"),
                 Box::new($constructor(
                     x(),
                     Box::new(Assign(String::from("y"), Box::new($constructor(y(), z())))),
                 )),
-            ))));
+            )))));
 
             let src = format!("$((x {0}= y {0}= z))", stringify!($op));
             match make_parser(&src).parameter() {
@@ -214,10 +214,10 @@ fn test_arithmetic_substitution_left_to_right_associativity() {
     check!(assig: BitwiseXor, ^ );
     check!(assig: BitwiseOr,  | );
 
-    let correct = word_subst(Arith(Some(Assign(
+    let correct = word(subst(Arith(Some(Assign(
         String::from("x"),
         Box::new(Assign(String::from("y"), z())),
-    ))));
+    )))));
     assert_eq!(
         correct,
         make_parser("$(( x = y = z ))").parameter().unwrap()
@@ -251,7 +251,7 @@ fn test_arithmetic_substitution_right_to_left_associativity() {
     ];
 
     for (s, a) in cases.into_iter() {
-        let correct = word_subst(Arith(Some(a)));
+        let correct = word(subst(Arith(Some(a))));
         match make_parser(s).parameter() {
             Ok(w) => {
                 if w != correct {
@@ -582,7 +582,7 @@ fn test_arithmetic_substitution_precedence() {
     ];
 
     for (s, end) in cases.into_iter() {
-        let correct = word_subst(Arith(Some(Sequence(vec![
+        let correct = word(subst(Arith(Some(Sequence(vec![
             *var("x"),
             Assign(
                 String::from("a"),
@@ -622,7 +622,7 @@ fn test_arithmetic_substitution_precedence() {
                     )),
                 )),
             ),
-        ]))));
+        ])))));
 
         let src = format!(
             "$(( x , a = b?c: d || e && f | g ^ h & i == j < k << l + m * n ** {} ))",
@@ -767,7 +767,7 @@ fn test_arithmetic_substitution_operators_of_equal_precedence() {
     ];
 
     for (s, a) in cases.into_iter() {
-        let correct = word_subst(Arith(Some(a)));
+        let correct = word(subst(Arith(Some(a))));
         match make_parser(s).parameter() {
             Ok(w) => {
                 if w != correct {

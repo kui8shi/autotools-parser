@@ -1,17 +1,14 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::ComplexWord::*;
-use autotools_parser::ast::MayM4::*;
-use autotools_parser::ast::SimpleWord::*;
-use autotools_parser::ast::*;
+use autotools_parser::ast::{Parameter, ParameterSubstitution};
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_backticked_valid() {
-    let correct = word_subst(ParameterSubstitution::Command(vec![cmd("foo")]));
+    let correct = word(subst(ParameterSubstitution::Command(vec![cmd("foo")])));
     assert_eq!(
         correct,
         make_parser("`foo`")
@@ -22,19 +19,14 @@ fn test_backticked_valid() {
 
 #[test]
 fn test_backticked_valid_backslashes_removed_if_before_dollar_backslash_and_backtick() {
-    let correct = word_subst(ParameterSubstitution::Command(vec![cmd_from_simple(
-        SimpleCommand {
-            redirects_or_env_vars: vec![],
-            redirects_or_cmd_words: vec![
-                RedirectOrCmdWord::CmdWord(word("foo")),
-                RedirectOrCmdWord::CmdWord(TopLevelWord(Concat(vec![
-                    Word::Simple(Shell(Param(Parameter::Dollar))),
-                    escaped("`"),
-                    escaped("o"),
-                ]))),
-            ],
-        },
-    )]));
+    let correct = word(subst(ParameterSubstitution::Command(vec![cmd_from_words(
+        "foo",
+        &[words(&[
+            param(Parameter::Dollar),
+            escaped("`"),
+            escaped("o"),
+        ])],
+    )])));
     assert_eq!(
         correct,
         make_parser("`foo \\$\\$\\\\\\`\\o`")
@@ -45,26 +37,12 @@ fn test_backticked_valid_backslashes_removed_if_before_dollar_backslash_and_back
 
 #[test]
 fn test_backticked_nested_backticks() {
-    let correct = word_subst(ParameterSubstitution::Command(vec![cmd_from_simple(
-        SimpleCommand {
-            redirects_or_env_vars: vec![],
-            redirects_or_cmd_words: vec![
-                RedirectOrCmdWord::CmdWord(word("foo")),
-                RedirectOrCmdWord::CmdWord(word_subst(ParameterSubstitution::Command(vec![
-                    cmd_from_simple(SimpleCommand {
-                        redirects_or_env_vars: vec![],
-                        redirects_or_cmd_words: vec![
-                            RedirectOrCmdWord::CmdWord(word("bar")),
-                            RedirectOrCmdWord::CmdWord(TopLevelWord(Concat(vec![
-                                escaped("$"),
-                                escaped("$"),
-                            ]))),
-                        ],
-                    }),
-                ]))),
-            ],
-        },
-    )]));
+    let correct = word(subst(ParameterSubstitution::Command(vec![cmd_from_words(
+        "foo",
+        &[word(subst(ParameterSubstitution::Command(vec![
+            cmd_from_words("bar", &[words(&[escaped("$"), escaped("$")])]),
+        ])))],
+    )])));
     assert_eq!(
         correct,
         make_parser(r#"`foo \`bar \\\\$\\\\$\``"#)
@@ -75,34 +53,17 @@ fn test_backticked_nested_backticks() {
 
 #[test]
 fn test_backticked_nested_backticks_x2() {
-    let correct = word_subst(ParameterSubstitution::Command(vec![cmd_from_simple(
-        SimpleCommand {
-            redirects_or_env_vars: vec![],
-            redirects_or_cmd_words: vec![
-                RedirectOrCmdWord::CmdWord(word("foo")),
-                RedirectOrCmdWord::CmdWord(word_subst(ParameterSubstitution::Command(vec![
-                    cmd_from_simple(SimpleCommand {
-                        redirects_or_env_vars: vec![],
-                        redirects_or_cmd_words: vec![
-                            RedirectOrCmdWord::CmdWord(word("bar")),
-                            RedirectOrCmdWord::CmdWord(word_subst(ParameterSubstitution::Command(
-                                vec![cmd_from_simple(SimpleCommand {
-                                    redirects_or_env_vars: vec![],
-                                    redirects_or_cmd_words: vec![
-                                        RedirectOrCmdWord::CmdWord(word("baz")),
-                                        RedirectOrCmdWord::CmdWord(TopLevelWord(Concat(vec![
-                                            escaped("$"),
-                                            escaped("$"),
-                                        ]))),
-                                    ],
-                                })],
-                            ))),
-                        ],
-                    }),
-                ]))),
-            ],
-        },
-    )]));
+    let correct = word(subst(ParameterSubstitution::Command(vec![cmd_from_words(
+        "foo",
+        &[word(subst(ParameterSubstitution::Command(vec![
+            cmd_from_words(
+                "bar",
+                &[word(subst(ParameterSubstitution::Command(vec![
+                    cmd_from_words("baz", &[words(&[escaped("$"), escaped("$")])]),
+                ])))],
+            ),
+        ])))],
+    )])));
     assert_eq!(
         correct,
         make_parser(r#"`foo \`bar \\\`baz \\\\\\\\$\\\\\\\\$ \\\`\``"#)
@@ -113,46 +74,22 @@ fn test_backticked_nested_backticks_x2() {
 
 #[test]
 fn test_backticked_nested_backticks_x3() {
-    let correct = word_subst(ParameterSubstitution::Command(vec![cmd_from_simple(
-        SimpleCommand {
-            redirects_or_env_vars: vec![],
-            redirects_or_cmd_words: vec![
-                RedirectOrCmdWord::CmdWord(word("foo")),
-                RedirectOrCmdWord::CmdWord(word_subst(ParameterSubstitution::Command(vec![
-                    cmd_from_simple(SimpleCommand {
-                        redirects_or_env_vars: vec![],
-                        redirects_or_cmd_words: vec![
-                            RedirectOrCmdWord::CmdWord(word("bar")),
-                            RedirectOrCmdWord::CmdWord(word_subst(ParameterSubstitution::Command(
-                                vec![cmd_from_simple(SimpleCommand {
-                                    redirects_or_env_vars: vec![],
-                                    redirects_or_cmd_words: vec![
-                                        RedirectOrCmdWord::CmdWord(word("baz")),
-                                        RedirectOrCmdWord::CmdWord(word_subst(
-                                            ParameterSubstitution::Command(vec![cmd_from_simple(
-                                                SimpleCommand {
-                                                    redirects_or_env_vars: vec![],
-                                                    redirects_or_cmd_words: vec![
-                                                        RedirectOrCmdWord::CmdWord(word("qux")),
-                                                        RedirectOrCmdWord::CmdWord(TopLevelWord(
-                                                            Concat(vec![
-                                                                escaped("$"),
-                                                                escaped("$"),
-                                                            ]),
-                                                        )),
-                                                    ],
-                                                },
-                                            )]),
-                                        )),
-                                    ],
-                                })],
-                            ))),
-                        ],
-                    }),
-                ]))),
-            ],
-        },
-    )]));
+    let correct = word(subst(ParameterSubstitution::Command(vec![cmd_from_words(
+        "foo",
+        &[word(subst(ParameterSubstitution::Command(vec![
+            cmd_from_words(
+                "bar",
+                &[word(subst(ParameterSubstitution::Command(vec![
+                    cmd_from_words(
+                        "baz",
+                        &[word(subst(ParameterSubstitution::Command(vec![
+                            cmd_from_words("qux", &[words(&[escaped("$"), escaped("$")])]),
+                        ])))],
+                    ),
+                ])))],
+            ),
+        ])))],
+    )])));
     assert_eq!(
         correct,
         make_parser(

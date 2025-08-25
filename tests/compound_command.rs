@@ -1,12 +1,13 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::builder::*;
-use autotools_parser::ast::CompoundCommandKind::*;
-use autotools_parser::ast::*;
+use autotools_parser::ast::condition::Condition;
+use autotools_parser::ast::minimal::CompoundCommand;
+use autotools_parser::ast::MayM4::*;
+use autotools_parser::ast::{builder::*, Redirect};
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_do_group_valid() {
@@ -31,7 +32,7 @@ fn test_do_group_invalid_missing_separator() {
 fn test_do_group_valid_keyword_delimited_by_separator() {
     let mut p = make_parser("do foo done; done");
     let correct = CommandGroup {
-        commands: vec![cmd_args("foo", &["done"])],
+        commands: vec![cmd_from_lits("foo", &["done"])],
         trailing_comments: vec![],
     };
     assert_eq!(correct, p.do_group().unwrap());
@@ -148,25 +149,22 @@ fn test_do_group_invalid_missing_body() {
 
 #[test]
 fn test_compound_command_delegates_valid_commands_brace() {
-    let correct = CompoundCommand {
-        kind: Brace(vec![cmd("foo")]),
-        io: vec![],
-    };
-    assert_eq!(correct, make_parser("{ foo; }").compound_command().unwrap());
+    let correct = cmd_brace(&[cmd("foo")]);
+    assert_eq!(
+        correct,
+        make_parser("{ foo; }").complete_command().unwrap().unwrap()
+    );
 }
 
 #[test]
 fn test_compound_command_delegates_valid_commands_subshell() {
     let commands = ["(foo)", "( foo)", " (foo)", "\t(foo)", "\\\n(foo)"];
 
-    let correct = CompoundCommand {
-        kind: Subshell(vec![cmd("foo")]),
-        io: vec![],
-    };
+    let correct = cmd_subshell(cmd("foo"));
 
     for cmd in &commands {
-        match make_parser(cmd).compound_command() {
-            Ok(ref result) if result == &correct => {}
+        match make_parser(cmd).complete_command() {
+            Ok(Some(ref result)) if result == &correct => {}
             Ok(result) => panic!(
                 "Parsed \"{}\" as an unexpected command type:\n{:#?}",
                 cmd, result
@@ -178,88 +176,64 @@ fn test_compound_command_delegates_valid_commands_subshell() {
 
 #[test]
 fn test_compound_command_delegates_valid_commands_while() {
-    let correct = CompoundCommand {
-        kind: While(GuardBodyPair {
-            guard: vec![cmd("guard")],
-            body: vec![cmd("foo")],
-        }),
-        io: vec![],
-    };
+    let correct = cmd_while(Condition::ReturnZero(Box::new(cmd("guard"))), &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("while guard; do foo; done")
-            .compound_command()
+            .complete_command()
+            .unwrap()
             .unwrap()
     );
 }
 
 #[test]
 fn test_compound_command_delegates_valid_commands_until() {
-    let correct = CompoundCommand {
-        kind: Until(GuardBodyPair {
-            guard: vec![cmd("guard")],
-            body: vec![cmd("foo")],
-        }),
-        io: vec![],
-    };
+    let correct = cmd_until(Condition::ReturnZero(Box::new(cmd("guard"))), &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("until guard; do foo; done")
-            .compound_command()
+            .complete_command()
+            .unwrap()
             .unwrap()
     );
 }
 
 #[test]
 fn test_compound_command_delegates_valid_commands_for() {
-    let correct = CompoundCommand {
-        kind: For {
-            var: String::from("var"),
-            words: Some(vec![]),
-            body: vec![cmd("foo")],
-        },
-        io: vec![],
-    };
+    let correct = cmd_for("var", &[], &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("for var in; do foo; done")
-            .compound_command()
+            .complete_command()
+            .unwrap()
             .unwrap()
     );
 }
 
 #[test]
 fn test_compound_command_delegates_valid_commands_if() {
-    let correct = CompoundCommand {
-        kind: If {
-            conditionals: vec![GuardBodyPair {
-                guard: vec![cmd("guard")],
-                body: vec![cmd("body")],
-            }],
-            else_branch: None,
-        },
-        io: vec![],
-    };
+    let correct = cmd_if(
+        Condition::ReturnZero(Box::new(cmd("guard"))),
+        &[cmd("body")],
+    );
     assert_eq!(
         correct,
         make_parser("if guard; then body; fi")
-            .compound_command()
+            .complete_command()
+            .unwrap()
             .unwrap()
     );
 }
 
 #[test]
 fn test_compound_command_delegates_valid_commands_case() {
-    let correct = CompoundCommand {
-        kind: Case {
-            word: word("foo"),
-            arms: vec![],
-        },
-        io: vec![],
-    };
+    let correct = cmd_case(word_lit("foo"), &[]);
     assert_eq!(
         correct,
-        make_parser("case foo in esac").compound_command().unwrap()
+        make_parser("case foo in esac")
+            .complete_command()
+            .unwrap()
+            .unwrap()
     );
 }
 
@@ -362,16 +336,16 @@ fn test_compound_command_captures_redirections_after_command() {
 
     for cmd in &cases {
         match make_parser(cmd).compound_command() {
-            Ok(CompoundCommand { io, .. }) => assert_eq!(
-                io,
-                vec!(
-                    Redirect::Append(Some(1), word("out")),
-                    Redirect::DupRead(None, word("2")),
-                    Redirect::DupWrite(Some(2), word("-")),
-                )
+            Ok(Shell(CompoundCommand::Redirect(_, io))) => assert_eq!(
+                vec![
+                    Redirect::Append(Some(1), word_lit("out")),
+                    Redirect::DupRead(None, word_lit("2")),
+                    Redirect::DupWrite(Some(2), word_lit("-")),
+                ],
+                io
             ),
-
             Err(err) => panic!("Failed to parse \"{}\": {}", cmd, err),
+            _ => panic!("Failed to parse \"{}\"", cmd),
         }
     }
 }

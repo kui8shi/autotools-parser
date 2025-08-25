@@ -3,8 +3,8 @@ use autotools_parser::ast::builder::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_subshell_valid() {

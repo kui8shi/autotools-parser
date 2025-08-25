@@ -3,8 +3,8 @@ use autotools_parser::ast::builder::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_brace_group_valid() {
@@ -50,7 +50,7 @@ fn test_brace_group_valid_end_must_be_whitespace_and_separator_delimited() {
 fn test_brace_group_valid_keyword_delimited_by_separator() {
     let mut p = make_parser("{ foo }; }");
     let correct = CommandGroup {
-        commands: vec![cmd_args("foo", &["}"])],
+        commands: vec![cmd_from_words("foo", &[word_lit("}")])],
         trailing_comments: vec![],
     };
     assert_eq!(correct, p.brace_group().unwrap());

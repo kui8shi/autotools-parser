@@ -3,8 +3,8 @@ use autotools_parser::ast::builder::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_for_command_valid_with_words() {
@@ -31,7 +31,7 @@ fn test_for_command_valid_with_words() {
                     Newline(Some("#prew1".into())),
                     Newline(Some("#prew2".into())),
                 ),
-                vec!(word("one"), word("two"), word("three"),),
+                vec!(word_lit("one"), word_lit("two"), word_lit("three"),),
                 Some(Newline(Some("#word comment".into())))
             )),
             pre_body_comments: vec!(

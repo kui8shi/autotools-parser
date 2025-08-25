@@ -224,10 +224,9 @@ where
             if assignments.is_empty() {
                 Ok(cmd)
             } else {
-                assignments.push(cmd);
-                Ok(AcCommand::new_compound(CompoundCommand::Subshell(
-                    assignments,
-                )))
+                let mut cmds = assignments;
+                cmds.push(cmd);
+                Ok(AcCommand::new_compound(CompoundCommand::Brace(cmds)))
             }
         }
     }
@@ -640,7 +639,7 @@ where
             }
         }
 
-        let empty: Self::Word = "".to_owned().into();
+        let empty: Self::Word = String::new().into();
         let mut state = ExpressionState {
             flipped: false,
             operator: None,
@@ -708,10 +707,10 @@ where
                             // return Err(BuilderError::UnsupportedSyntax);
                         }
                     }
-                    // before encountering an operator
-                    // and the word is not an operator
-                    state.lhs = word.clone();
                 }
+                // before encountering an operator
+                // and the word is not an operator
+                state.lhs = word.clone();
             } else {
                 if let Some(literal) = word.clone().into() {
                     match literal.as_str() {

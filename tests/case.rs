@@ -3,24 +3,24 @@ use autotools_parser::ast::builder::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_case_command_valid() {
     let correct = CaseFragments {
-        word: word("foo"),
+        word: word_lit("foo"),
         post_word_comments: vec![],
         in_comment: None,
         arms: vec![
             CaseArm {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
-                    pattern_alternatives: vec![word("hello"), word("goodbye")],
+                    pattern_alternatives: vec![word_lit("hello"), word_lit("goodbye")],
                     pattern_comment: None,
                 },
                 body: CommandGroup {
-                    commands: vec![cmd_args("echo", &["greeting"])],
+                    commands: vec![cmd_from_lits("echo", &["greeting"])],
                     trailing_comments: vec![],
                 },
                 arm_comment: None,
@@ -28,11 +28,11 @@ fn test_case_command_valid() {
             CaseArm {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
-                    pattern_alternatives: vec![word("world")],
+                    pattern_alternatives: vec![word_lit("world")],
                     pattern_comment: None,
                 },
                 body: CommandGroup {
-                    commands: vec![cmd_args("echo", &["noun"])],
+                    commands: vec![cmd_from_lits("echo", &["noun"])],
                     trailing_comments: vec![],
                 },
                 arm_comment: None,
@@ -59,7 +59,7 @@ fn test_case_command_valid() {
 #[test]
 fn test_case_command_valid_with_comments() {
     let correct = CaseFragments {
-        word: word("foo"),
+        word: word_lit("foo"),
         post_word_comments: vec![
             Newline(Some(String::from("#word_comment"))),
             Newline(Some(String::from("#post_word_a"))),
@@ -74,11 +74,11 @@ fn test_case_command_valid_with_comments() {
                         Newline(None),
                         Newline(Some(String::from("#pre_pat_a"))),
                     ],
-                    pattern_alternatives: vec![word("hello"), word("goodbye")],
+                    pattern_alternatives: vec![word_lit("hello"), word_lit("goodbye")],
                     pattern_comment: Some(Newline(Some(String::from("#pat_a")))),
                 },
                 body: CommandGroup {
-                    commands: vec![cmd_args("echo", &["greeting"])],
+                    commands: vec![cmd_from_lits("echo", &["greeting"])],
                     trailing_comments: vec![
                         Newline(None),
                         Newline(Some(String::from("#post_body_a"))),
@@ -92,11 +92,11 @@ fn test_case_command_valid_with_comments() {
                         Newline(None),
                         Newline(Some(String::from("#pre_pat_b"))),
                     ],
-                    pattern_alternatives: vec![word("world")],
+                    pattern_alternatives: vec![word_lit("world")],
                     pattern_comment: Some(Newline(Some(String::from("#pat_b")))),
                 },
                 body: CommandGroup {
-                    commands: vec![cmd_args("echo", &["noun"])],
+                    commands: vec![cmd_from_lits("echo", &["noun"])],
                     trailing_comments: vec![],
                 },
                 arm_comment: Some(Newline(Some(String::from("#arm_b")))),
@@ -137,7 +137,7 @@ fn test_case_command_valid_with_comments() {
 #[test]
 fn test_case_command_valid_with_comments_no_body() {
     let correct = CaseFragments {
-        word: word("foo"),
+        word: word_lit("foo"),
         post_word_comments: vec![
             Newline(Some(String::from("#word_comment"))),
             Newline(Some(String::from("#post_word_a"))),

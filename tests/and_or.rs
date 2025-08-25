@@ -1,35 +1,27 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::PipeableCommand::*;
-use autotools_parser::ast::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_and_or_correct_associativity() {
     let mut p = make_parser("foo || bar && baz");
-    let correct = CommandList {
-        first: ListableCommand::Single(Simple(cmd_simple("foo"))),
-        rest: vec![
-            AndOr::Or(ListableCommand::Single(Simple(cmd_simple("bar")))),
-            AndOr::And(ListableCommand::Single(Simple(cmd_simple("baz")))),
-        ],
-    };
+    let correct = cmd_and(
+        cond_or(cond_return_zero(cmd("foo")), cond_return_zero(cmd("bar"))),
+        cmd("baz"),
+    );
     assert_eq!(correct, p.and_or_list().unwrap());
 }
 
 #[test]
 fn test_and_or_valid_with_newlines_after_operator() {
+    let correct = cmd_and(
+        cond_or(cond_return_zero(cmd("foo")), cond_return_zero(cmd("bar"))),
+        cmd("baz"),
+    );
     let mut p = make_parser("foo ||\n\n\n\nbar && baz");
-    let correct = CommandList {
-        first: ListableCommand::Single(Simple(cmd_simple("foo"))),
-        rest: vec![
-            AndOr::Or(ListableCommand::Single(Simple(cmd_simple("bar")))),
-            AndOr::And(ListableCommand::Single(Simple(cmd_simple("baz")))),
-        ],
-    };
     assert_eq!(correct, p.and_or_list().unwrap());
 }
 

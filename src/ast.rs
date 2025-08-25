@@ -938,9 +938,9 @@ mod tests {
     #[test]
     fn test_display_parameter() {
         use super::minimal::Word::Single;
+        use super::minimal::WordFragment::Param;
         use super::MayM4::*;
         use super::Parameter::*;
-        use super::minimal::WordFragment::Param;
         use crate::lexer::Lexer;
 
         let params = vec![

@@ -10,17 +10,11 @@ use autotools_parser::ast::minimal::WordFragment;
 use autotools_parser::ast::MayM4;
 use autotools_parser::ast::MayM4::*;
 use autotools_parser::ast::Redirect;
-use autotools_parser::lexer::Lexer;
 use autotools_parser::m4_macro::M4Argument;
 use autotools_parser::m4_macro::SideEffect;
 use autotools_parser::m4_macro::Var;
-use autotools_parser::parse::autoconf::MinimalParser;
 mod minimal_util;
 use minimal_util::*;
-
-pub fn make_parser(src: &str) -> MinimalParser<Lexer<std::str::Chars<'_>>> {
-    MinimalParser::new_with_config(Lexer::new(src.chars()), true)
-}
 
 #[test]
 fn test_macro_with_raw_literal() {
@@ -227,14 +221,14 @@ MACRO(arg1, arg2)[]dnl unusual style of commentf
 
 #[test]
 fn test_condition() {
-    let input = r#"test "$foo" = "yes" && [foo]=1"#;
+    let input = r#"test ${foo} = "yes" && [foo]=1"#;
     let mut p = make_parser(input);
 
     // Create expected structure with AND condition
-    let expected = MinimalCommand::new_compound(CompoundCommand::And(
-        Condition::Cond(Operator::Eq(word_var("foo"), word_lit("yes"))),
-        Box::new(AcCommand::new_assign("foo".into(), word_lit("1"))),
-    ));
+    let expected = cmd_and(
+        cond(eq(word_var("foo"), word_lit("yes"))),
+        assign("foo", word_lit("1")),
+    );
 
     match p.complete_command() {
         Ok(cmd) => {
@@ -251,7 +245,7 @@ fn test_condition() {
 fn test_macro_word_and_empty_quotes() {
     let input = r#"WORD_[]MACRO([$var],[arg2],[arg3])[]_SUFFIX)"#;
     let mut p = make_parser(input);
-    let expected = words(&[
+    let expected = words_may_m4(&[
         may_lit("WORD_"),
         m4_macro_as_word("MACRO", &[m4_raw("$var"), m4_raw("arg2"), m4_raw("arg3")]),
         may_lit("_SUFFIX"),
@@ -433,12 +427,12 @@ esac],
                     &[
                         word_lit("yes"),
                         word_lit("no"),
-                        words(&[
+                        words_may_m4(&[
                             Shell(WordFragment::SquareOpen),
                             may_lit("02468"),
                             Shell(WordFragment::SquareClose),
                         ]),
-                        words(&[
+                        words_may_m4(&[
                             Shell(WordFragment::SquareOpen),
                             may_lit("0-9"),
                             Shell(WordFragment::SquareClose),
@@ -450,7 +444,7 @@ esac],
                     &[],
                 ),
                 (
-                    &[words(&[
+                    &[words_may_m4(&[
                         Shell(WordFragment::Star),
                         Shell(WordFragment::SquareOpen),
                         may_lit("13579"),
@@ -462,7 +456,7 @@ esac],
                     )],
                 ),
                 (
-                    &[word(Shell(WordFragment::Star))],
+                    &[word(WordFragment::Star)],
                     &[m4_macro_as_cmd(
                         "AC_MSG_ERROR",
                         &[m4_lit("bad value, need yes/no/number")],

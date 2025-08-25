@@ -5,8 +5,8 @@ use autotools_parser::ast::builder::*;
 use autotools_parser::parse::autoconf::AutoconfParser;
 use autotools_parser::parse::ParseError;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_parser_should_yield_none_after_error() {
@@ -131,7 +131,7 @@ fn test_skip_whitespace_skips_escaped_newlines() {
 fn test_comment_cannot_start_mid_whitespace_delimited_word() {
     let mut p = make_parser("hello#world");
     let w = p.word().unwrap().expect("no valid word was discovered");
-    assert_eq!(w, word("hello#world"));
+    assert_eq!(w, word_lit("hello#world"));
 }
 
 #[test]
@@ -146,12 +146,12 @@ fn test_comment_can_start_if_whitespace_before_pound() {
 fn test_braces_literal_unless_brace_group_expected() {
     let source = "echo {} } {";
     let mut p = make_parser(source);
-    assert_eq!(p.word().unwrap().unwrap(), word("echo"));
-    assert_eq!(p.word().unwrap().unwrap(), word("{}"));
-    assert_eq!(p.word().unwrap().unwrap(), word("}"));
-    assert_eq!(p.word().unwrap().unwrap(), word("{"));
+    assert_eq!(p.word().unwrap().unwrap(), word_lit("echo"));
+    assert_eq!(p.word().unwrap().unwrap(), word_lit("{}"));
+    assert_eq!(p.word().unwrap().unwrap(), word_lit("}"));
+    assert_eq!(p.word().unwrap().unwrap(), word_lit("{"));
 
-    let correct = Some(cmd_args("echo", &["{}", "}", "{"]));
+    let correct = Some(cmd_from_lits("echo", &["{}", "}", "{"]));
     assert_eq!(correct, make_parser(source).complete_command().unwrap());
 }
 
@@ -166,5 +166,10 @@ fn ensure_parser_could_be_send_and_sync() {
     use autotools_parser::token::Token;
 
     fn send_and_sync<T: Send + Sync>() {}
-    send_and_sync::<AutoconfParser<std::vec::IntoIter<Token>, ArcBuilder>>();
+    send_and_sync::<
+        AutoconfParser<
+            std::vec::IntoIter<Token>,
+            autotools_parser::ast::builder::MinimalBuilder<String>,
+        >,
+    >();
 }

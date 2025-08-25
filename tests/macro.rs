@@ -1,24 +1,18 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::Command::*;
-use autotools_parser::ast::PipeableCommand::*;
-use autotools_parser::ast::*;
+use autotools_parser::ast::Parameter;
 use autotools_parser::m4_macro::M4Argument::*;
 use autotools_parser::m4_macro::M4Macro;
+use autotools_parser::token::Positional;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
-pub fn macro_as_command(name: &str, args: &[&str]) -> TopLevelCommand<String> {
-    TopLevelCommand(List(CommandList {
-        first: ListableCommand::Single(Compound(Box::new(CompoundCommand {
-            kind: CompoundCommandKind::Macro(M4Macro::new(
-                name.to_string(),
-                args.iter().map(|a| Unknown(a.to_string())).collect(),
-            )),
-            io: vec![],
-        }))),
-        rest: vec![],
-    }))
+pub fn macro_as_command(name: &str, args: &[&str]) -> MinimalCommand {
+    let args = args
+        .iter()
+        .map(|a| Unknown(a.to_string()))
+        .collect::<Vec<_>>();
+    m4_macro_as_cmd(name, &args)
 }
 
 #[test]
@@ -28,7 +22,7 @@ fn test_macro_with_command() {
     let name = "AH_CONFIG_COMMANDS_PRE";
     let correct = M4Macro::new(
         name.to_string(),
-        vec![Commands(vec![cmd_args("echo", &["hi"])])],
+        vec![Commands(vec![cmd_from_lits("echo", &["hi"])])],
     );
     assert_eq!(correct, p.macro_call(&[name]).unwrap());
 }
@@ -108,7 +102,7 @@ fn test_macro_quoted_comma() {
 fn test_macro_quoted_positional_param() {
     let input = r#"echo [$][1]"#;
     let mut p = make_parser(input);
-    let expected = cmd_from_simple(*cmd_args_simple("echo", &["$1"]));
+    let expected = cmd_from_words("echo", &[word(param(Parameter::Positional(1)))]);
     assert_eq!(p.complete_command().unwrap(), Some(expected));
 }
 
@@ -116,10 +110,10 @@ fn test_macro_quoted_positional_param() {
 fn test_macro_quoted_variable() {
     let input = r#"test "[$][][condition]" = yes"#;
     let mut p = make_parser(input);
-    let expected = cmd_from_simple(*cmd_args_words(
+    let expected = cmd_from_words(
         "test",
-        &[double_quoted(&["$condition"]), word("="), word("yes")],
-    ));
+        &[word(var("condition")), word_lit("="), word_lit("yes")],
+    );
     assert_eq!(p.complete_command().unwrap(), Some(expected));
 }
 

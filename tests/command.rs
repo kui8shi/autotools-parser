@@ -1,38 +1,12 @@
 #![deny(rust_2018_idioms)]
-use std::rc::Rc;
-
-use autotools_parser::ast::Command::*;
-use autotools_parser::ast::CompoundCommandKind::*;
-use autotools_parser::ast::PipeableCommand::*;
-use autotools_parser::ast::*;
+use autotools_parser::ast::minimal::AcCommand;
+use autotools_parser::ast::minimal::Command;
+use autotools_parser::ast::minimal::CompoundCommand;
+use autotools_parser::ast::MayM4;
 use autotools_parser::token::Token;
 
-mod parse_support;
-use crate::parse_support::*;
-
-#[test]
-fn test_complete_command_job() {
-    let mut p = make_parser("foo && bar & baz");
-    let cmd1 = p
-        .complete_command()
-        .unwrap()
-        .expect("failed to parse first command");
-    let cmd2 = p
-        .complete_command()
-        .unwrap()
-        .expect("failed to parse second command");
-
-    let correct1 = TopLevelCommand(Job(CommandList {
-        first: ListableCommand::Single(Simple(cmd_simple("foo"))),
-        rest: vec![AndOr::And(ListableCommand::Single(Simple(cmd_simple(
-            "bar",
-        ))))],
-    }));
-    let correct2 = cmd("baz");
-
-    assert_eq!(correct1, cmd1);
-    assert_eq!(correct2, cmd2);
-}
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_complete_command_non_eager_parse() {
@@ -50,12 +24,7 @@ fn test_complete_command_non_eager_parse() {
         .unwrap()
         .expect("failed to parse third command");
 
-    let correct1 = TopLevelCommand(List(CommandList {
-        first: ListableCommand::Single(Simple(cmd_simple("foo"))),
-        rest: vec![AndOr::And(ListableCommand::Single(Simple(cmd_simple(
-            "bar",
-        ))))],
-    }));
+    let correct1 = cmd_and(cond_return_zero(cmd("foo")), cmd("bar"));
     let correct2 = cmd("baz");
     let correct3 = cmd("qux");
 
@@ -72,10 +41,7 @@ fn test_complete_command_valid_no_input() {
 
 #[test]
 fn test_command_delegates_valid_commands_brace() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: Brace(vec![cmd("foo")]),
-        io: vec![],
-    }));
+    let correct = cmd_brace(&[cmd("foo")]);
     assert_eq!(correct, make_parser("{ foo; }").command().unwrap());
 }
 
@@ -83,10 +49,7 @@ fn test_command_delegates_valid_commands_brace() {
 fn test_command_delegates_valid_commands_subshell() {
     let commands = ["(foo)", "( foo)"];
 
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: Subshell(vec![cmd("foo")]),
-        io: vec![],
-    }));
+    let correct = cmd_subshell(cmd("foo"));
 
     for cmd in &commands {
         match make_parser(cmd).command() {
@@ -102,13 +65,7 @@ fn test_command_delegates_valid_commands_subshell() {
 
 #[test]
 fn test_command_delegates_valid_commands_while() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: While(GuardBodyPair {
-            guard: vec![cmd("guard")],
-            body: vec![cmd("foo")],
-        }),
-        io: vec![],
-    }));
+    let correct = cmd_while(cond_return_zero(cmd("guard")), &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("while guard; do foo; done").command().unwrap()
@@ -117,13 +74,7 @@ fn test_command_delegates_valid_commands_while() {
 
 #[test]
 fn test_command_delegates_valid_commands_until() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: Until(GuardBodyPair {
-            guard: vec![cmd("guard")],
-            body: vec![cmd("foo")],
-        }),
-        io: vec![],
-    }));
+    let correct = cmd_until(cond_return_zero(cmd("guard")), &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("until guard; do foo; done").command().unwrap()
@@ -132,14 +83,7 @@ fn test_command_delegates_valid_commands_until() {
 
 #[test]
 fn test_command_delegates_valid_commands_for() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: For {
-            var: String::from("var"),
-            words: Some(vec![]),
-            body: vec![cmd("foo")],
-        },
-        io: vec![],
-    }));
+    let correct = cmd_for("var", &[], &[cmd("foo")]);
     assert_eq!(
         correct,
         make_parser("for var in; do foo; done").command().unwrap()
@@ -148,16 +92,7 @@ fn test_command_delegates_valid_commands_for() {
 
 #[test]
 fn test_command_delegates_valid_commands_if() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: If {
-            conditionals: vec![GuardBodyPair {
-                guard: vec![cmd("guard")],
-                body: vec![cmd("body")],
-            }],
-            else_branch: None,
-        },
-        io: vec![],
-    }));
+    let correct = cmd_if(cond_return_zero(cmd("guard")), &[cmd("body")]);
     assert_eq!(
         correct,
         make_parser("if guard; then body; fi").command().unwrap()
@@ -166,19 +101,13 @@ fn test_command_delegates_valid_commands_if() {
 
 #[test]
 fn test_command_delegates_valid_commands_case() {
-    let correct = Compound(Box::new(CompoundCommand {
-        kind: Case {
-            word: word("foo"),
-            arms: vec![],
-        },
-        io: vec![],
-    }));
+    let correct = cmd_case(word_lit("foo"), &[]);
     assert_eq!(correct, make_parser("case foo in esac").command().unwrap());
 }
 
 #[test]
 fn test_command_delegates_valid_simple_commands() {
-    let correct = Simple(cmd_args_simple("echo", &["foo", "bar"]));
+    let correct = cmd_from_lits("echo", &["foo", "bar"]);
     assert_eq!(correct, make_parser("echo foo bar").command().unwrap());
 }
 
@@ -198,14 +127,10 @@ fn test_command_delegates_valid_commands_function() {
         // "foo(    )           { echo body; }",
     ];
 
-    let correct = FunctionDef(
-        String::from("foo"),
-        Rc::new(CompoundCommand {
-            kind: Brace(vec![cmd_args("echo", &["body"])]),
-            io: vec![],
-        }),
-    );
-
+    let correct = cmd_from_compound(CompoundCommand::FunctionDef {
+        name: "foo".into(),
+        body: Box::new(cmd_brace(&[cmd_from_lits("echo", &["body"])])),
+    });
     for cmd in &commands {
         match make_parser(cmd).command() {
             Ok(ref result) if result == &correct => {}
@@ -245,11 +170,15 @@ fn test_command_parses_quoted_compound_commands_as_simple_commands() {
 
     for cmd in &cases {
         match make_parser(cmd).command() {
-            Ok(Simple(_)) => {}
-            Ok(result) => panic!(
-                "Parse::command unexpectedly parsed \"{}\" as a non-simple command:\n{:#?}",
-                cmd, result
-            ),
+            Ok(cmd) => {
+                if let Command::Cmd(_) = *cmd.cmd {
+                } else {
+                    panic!(
+                        "Parse::command unexpectedly parsed \"{:?}\" as a non-simple command:\n",
+                        cmd
+                    )
+                }
+            }
             Err(err) => panic!("Parse::command failed to parse \"{}\": {}", cmd, err),
         }
     }
@@ -274,8 +203,8 @@ fn test_command_should_delegate_literals_and_names_loop_while() {
         ]);
 
         let cmd = p.command().unwrap();
-        if let Compound(ref compound_cmd) = cmd {
-            if let While(..) = compound_cmd.kind {
+        if let Command::Compound(ref compound_cmd) = *cmd.cmd {
+            if let MayM4::Shell(CompoundCommand::While(_)) = compound_cmd {
                 continue;
             }
         }
@@ -303,8 +232,8 @@ fn test_command_should_delegate_literals_and_names_loop_until() {
         ]);
 
         let cmd = p.command().unwrap();
-        if let Compound(ref compound_cmd) = cmd {
-            if let Until(..) = compound_cmd.kind {
+        if let Command::Compound(ref compound_cmd) = *cmd.cmd {
+            if let MayM4::Shell(CompoundCommand::Until(_)) = compound_cmd {
                 continue;
             }
         }
@@ -359,8 +288,12 @@ fn test_command_should_delegate_literals_and_names_if() {
                         ]);
 
                         let cmd = p.command().unwrap();
-                        if let Compound(ref compound_cmd) = cmd {
-                            if let If { .. } = compound_cmd.kind {
+                        if let Command::Compound(ref compound_cmd) = *cmd.cmd {
+                            if let MayM4::Shell(CompoundCommand::If {
+                                conditionals: _,
+                                else_branch: _,
+                            }) = compound_cmd
+                            {
                                 continue;
                             }
                         }
@@ -408,12 +341,16 @@ fn test_command_should_delegate_literals_and_names_for() {
             ]);
 
             let cmd = p.command().unwrap();
-            if let Compound(ref compound_cmd) = cmd {
-                if let For { .. } = compound_cmd.kind {
+            if let Command::Compound(ref compound_cmd) = *cmd.cmd {
+                if let MayM4::Shell(CompoundCommand::For {
+                    var: _,
+                    words: _,
+                    body: _,
+                }) = compound_cmd
+                {
                     continue;
                 }
             }
-
             panic!("Parsed an unexpected command:\n{:#?}", cmd)
         }
     }
@@ -451,8 +388,8 @@ fn test_command_should_delegate_literals_and_names_case() {
                 ]);
 
                 let cmd = p.command().unwrap();
-                if let Compound(ref compound_cmd) = cmd {
-                    if let Case { .. } = compound_cmd.kind {
+                if let Command::Compound(ref compound_cmd) = *cmd.cmd {
+                    if let MayM4::Shell(CompoundCommand::Case { word: _, arms: _ }) = compound_cmd {
                         continue;
                     }
                 }
@@ -486,8 +423,16 @@ fn test_command_should_delegate_literals_and_names_for_function_declaration() {
             Token::CurlyClose,
         ]);
         match p.command() {
-            Ok(FunctionDef(..)) => {}
-            Ok(result) => panic!("Parsed an unexpected command type:\n{:#?}", result),
+            Ok(cmd) => {
+                if let Command::Compound(MayM4::Shell(CompoundCommand::FunctionDef {
+                    name: _,
+                    body: _,
+                })) = *cmd.cmd
+                {
+                } else {
+                    panic!("Parsed an unexpected command type:\n{:#?}", cmd);
+                }
+            }
             Err(err) => panic!("Failed to parse command: {}", err),
         }
     }
@@ -509,8 +454,12 @@ fn test_command_do_not_delegate_functions_only_if_fn_name_is_a_literal_token() {
         Token::CurlyClose,
     ]);
     match p.command() {
-        Ok(Simple(..)) => {}
-        Ok(result) => panic!("Parsed an unexpected command type:\n{:#?}", result),
+        Ok(cmd) => {
+            if let Command::Cmd(_) = *cmd.cmd {
+            } else {
+                panic!("Parsed an unexpected command type:\n{:#?}", cmd);
+            }
+        }
         Err(err) => panic!("Failed to parse command: {}", err),
     }
 }
@@ -532,8 +481,16 @@ fn test_command_delegate_functions_only_if_fn_name_is_a_name_token() {
         Token::CurlyClose,
     ]);
     match p.command() {
-        Ok(FunctionDef(..)) => {}
-        Ok(result) => panic!("Parsed an unexpected command type:\n{:#?}", result),
+        Ok(cmd) => {
+            if let Command::Compound(MayM4::Shell(CompoundCommand::FunctionDef {
+                name: _,
+                body: _,
+            })) = *cmd.cmd
+            {
+            } else {
+                panic!("Parsed an unexpected command type:\n{:#?}", cmd);
+            }
+        }
         Err(err) => panic!("Failed to parse command: {}", err),
     }
 }

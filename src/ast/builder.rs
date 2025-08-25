@@ -762,7 +762,7 @@ impl<T: BuilderBase + ShellBuilder + M4Builder + ?Sized> ShellBuilder for Box<T>
 }
 
 /// error produced by ast builder
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BuilderError {
     /// when the selected builder has limited support
     UnsupportedSyntax,

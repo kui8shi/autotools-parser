@@ -1,24 +1,17 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::CompoundCommandKind::*;
-use autotools_parser::ast::PipeableCommand::*;
-use autotools_parser::ast::*;
+use autotools_parser::ast::minimal::CompoundCommand::*;
 use autotools_parser::parse::ParseErrorKind::*;
 use autotools_parser::token::Token;
 
-use std::rc::Rc;
-
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use minimal_util::*;
 
 #[test]
 fn test_function_declaration_valid() {
-    let correct = FunctionDef(
-        String::from("foo"),
-        Rc::new(CompoundCommand {
-            kind: Brace(vec![cmd_args("echo", &["body"])]),
-            io: vec![],
-        }),
-    );
+    let correct = cmd_from_compound(FunctionDef {
+        name: String::from("foo"),
+        body: Box::new(cmd_brace(&[cmd_from_lits("echo", &["body"])])),
+    });
 
     assert_eq!(
         correct,
@@ -172,13 +165,10 @@ fn test_function_declaration_valid_body_need_not_be_a_compound_command() {
 
 #[test]
 fn test_function_declaration_parens_can_be_subshell_if_function_keyword_present() {
-    let correct = FunctionDef(
-        String::from("foo"),
-        Rc::new(CompoundCommand {
-            kind: Subshell(vec![cmd_args("echo", &["subshell"])]),
-            io: vec![],
-        }),
-    );
+    let correct = cmd_from_compound(FunctionDef {
+        name: String::from("foo"),
+        body: Box::new(cmd_subshell(cmd_from_lits("echo", &["subshell"]))),
+    });
 
     assert_eq!(
         correct,

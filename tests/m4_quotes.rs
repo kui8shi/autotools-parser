@@ -1,10 +1,10 @@
 #![deny(rust_2018_idioms)]
 use autotools_parser::ast::builder::*;
+use autotools_parser::ast::minimal::WordFragment::*;
 use autotools_parser::ast::Parameter;
-use autotools_parser::ast::TopLevelCommand;
 
-mod parse_support;
-use crate::parse_support::*;
+mod minimal_util;
+use crate::minimal_util::*;
 
 #[test]
 fn test_quoted_patterns() {
@@ -15,12 +15,12 @@ fn test_quoted_patterns() {
                   [a | b] | [c | d])    ;;  # inside words & end with closing quotes & split '|'
                   "a-[$][cond]")          ;;  # interpolated & quoted variable
                   esac"#;
-    let empty_cmds = CommandGroup::<TopLevelCommand<String>> {
+    let empty_cmds = CommandGroup::<MinimalCommand> {
         commands: vec![],
         trailing_comments: vec![],
     };
     let correct = CaseFragments {
-        word: word_param(Parameter::<String>::Var("var".into())),
+        word: word(param(Parameter::<String>::Var("var".into()))),
         post_word_comments: vec![],
         in_comment: Some(Newline(None)),
         arms: vec![
@@ -28,8 +28,17 @@ fn test_quoted_patterns() {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
                     pattern_alternatives: vec![
-                        concat_words(&["[", "a", "]", "*"]),
-                        concat_words(&["[", "b", "]", ":", "[", "c", "]", "*"]),
+                        words(&[SquareOpen, lit("a"), SquareClose, Star]),
+                        words(&[
+                            SquareOpen,
+                            lit("b"),
+                            SquareClose,
+                            Colon,
+                            SquareOpen,
+                            lit("c"),
+                            SquareClose,
+                            Star,
+                        ]),
                     ],
                     pattern_comment: None,
                 },
@@ -40,8 +49,8 @@ fn test_quoted_patterns() {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
                     pattern_alternatives: vec![
-                        concat_words(&["[", "a-z", "]", "*"]),
-                        concat_words(&["?", ":", "[", "b", "]", "*"]),
+                        words(&[SquareOpen, lit("a-z"), SquareClose, Star]),
+                        words(&[Question, Colon, SquareOpen, lit("b"), SquareClose, Star]),
                     ],
                     pattern_comment: None,
                 },
@@ -51,7 +60,7 @@ fn test_quoted_patterns() {
             CaseArm {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
-                    pattern_alternatives: vec![word("x"), word("y")],
+                    pattern_alternatives: vec![word_lit("x"), word_lit("y")],
                     pattern_comment: None,
                 },
                 body: empty_cmds.clone(),
@@ -62,7 +71,12 @@ fn test_quoted_patterns() {
             CaseArm {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
-                    pattern_alternatives: vec![word("a"), word("b"), word("c"), word("d")],
+                    pattern_alternatives: vec![
+                        word_lit("a"),
+                        word_lit("b"),
+                        word_lit("c"),
+                        word_lit("d"),
+                    ],
                     pattern_comment: None,
                 },
                 body: empty_cmds.clone(),
@@ -73,7 +87,7 @@ fn test_quoted_patterns() {
             CaseArm {
                 patterns: CasePatternFragments {
                     pre_pattern_comments: vec![],
-                    pattern_alternatives: vec![double_quoted(&["a-", "$cond"])],
+                    pattern_alternatives: vec![word(double_quoted(&[lit("a-"), var("cond")]))],
                     pattern_comment: None,
                 },
                 body: empty_cmds.clone(),
@@ -83,7 +97,7 @@ fn test_quoted_patterns() {
         post_arms_comments: vec![],
     };
     let mut p = make_parser(input);
-    let res = p.case_command();
+    let res = p.case_command().unwrap();
 
-    assert_eq!(res, Ok(correct));
+    assert_eq!(correct, res);
 }
