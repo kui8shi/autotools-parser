@@ -27,12 +27,34 @@ pub enum Operator<W> {
     NoExists(W),
 }
 
+impl<W> Operator<W> {
+    /// negate the operator
+    pub fn flip(self) -> Self {
+        use Operator::*;
+        match self {
+            Eq(lhs, rhs) => Neq(lhs, rhs),
+            Neq(lhs, rhs) => Eq(lhs, rhs),
+            Ge(lhs, rhs) => Lt(lhs, rhs),
+            Gt(lhs, rhs) => Le(lhs, rhs),
+            Le(lhs, rhs) => Gt(lhs, rhs),
+            Lt(lhs, rhs) => Ge(lhs, rhs),
+            Empty(x) => NonEmpty(x),
+            NonEmpty(x) => Empty(x),
+            Dir(x) => NoExists(x),
+            File(x) => NoExists(x),
+            NoExists(x) => File(x),
+        }
+    }
+}
+
 /// Represents a condition for control flow, which can be a single operator-based
 /// condition, a logical combination of conditions, or an evaluated word.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Condition<C, W> {
     /// A single condition based on an operator.
     Cond(Operator<W>),
+    /// A negation of a condition.
+    Not(Box<Self>),
     /// Logical AND of two conditions.
     And(Box<Self>, Box<Self>),
     /// Logical OR of two conditions.
@@ -41,4 +63,18 @@ pub enum Condition<C, W> {
     Eval(Box<C>),
     /// Evaluates the commands, then take the return code as a boolean condition.
     ReturnZero(Box<C>),
+}
+
+impl<C, W> Condition<C, W> {
+    /// negate the condition
+    pub fn flip(self) -> Self {
+        use Condition::*;
+        match self {
+            Cond(op) => Cond(op.flip()),
+            Not(cond) => *cond,
+            And(lhs, rhs) => Or(Box::new(lhs.flip()), Box::new(rhs.flip())),
+            Or(lhs, rhs) => And(Box::new(lhs.flip()), Box::new(rhs.flip())),
+            c @ _ => Not(Box::new(c)),
+        }
+    }
 }

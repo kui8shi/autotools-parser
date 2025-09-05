@@ -24,6 +24,8 @@ pub struct QuoteRewriteConfig {
     pub transformed_close_quote: String,
     /// Names to replace. This is to avoid unusual m4 errors.
     pub replace: HashMap<String, String>,
+    /// Main content for reference.
+    pub main_content: Option<String>,
 }
 
 impl Default for QuoteRewriteConfig {
@@ -39,14 +41,13 @@ impl Default for QuoteRewriteConfig {
                 ("m4_PACKAGE_VERSION".into(), "AC_AUTOCONF_VERSION".into()),
                 // Don't know why but AC_BEFORE is error-prone.
                 ("AC_BEFORE".into(), "dnl AC_BEFORE".into()),
-                // m4sugar somehow evaluates AC_REQUIRE.
-                ("AC_REQUIRE".into(), "dnl AC_REQUIRE".into()),
                 // Current impl cannot recognize it.
                 ("AC_FD_CC".into(), "5".into()),
                 // Currently m4_foreach cannot not be processed under an environment with quotes changed
                 ("m4_foreach".into(), "M4_FOREACH".into()),
                 // ("m4_toupper".into(), "TO_UPPER".into()),
             ]),
+            main_content: None,
         }
     }
 }
@@ -143,8 +144,8 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                 }
                 Token::Name(ref name)
                     if self.iter.peek() == Some(&Token::ParenOpen)
-                        && !(!is_user_macro(name)
-                            && self
+                        && (is_user_macro(name)
+                            || !self
                                 .stack
                                 .last()
                                 .is_some_and(|ctx| ctx.quote_level > ctx.rewrite_level)) =>
@@ -171,11 +172,13 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                             self.iter.next();
                         }
                         assert_eq!(self.iter.next(), Some(Token::ParenClose));
-                        if !self.called_macros.contains(&required) {
-                            self.called_macros.insert(required.clone());
-                            // user-defined macro is required.
-                            // self.result.push_str(&required);
-                        } else {
+                        if self
+                            .config
+                            .main_content
+                            .as_ref()
+                            .is_some_and(|content| content.contains(&required))
+                            || self.called_macros.contains(&required)
+                        {
                             // m4sugar somehow evaluates AC_REQUIRE.
                             // protect AC_REQUIRE from got evaluated
                             self.result.push_str(&format!(
@@ -184,6 +187,10 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                                 self.config.transformed_close_quote,
                                 &required,
                             ))
+                        } else {
+                            self.called_macros.insert(required.clone());
+                            // user-defined macro is required.
+                            self.result.push_str(&required);
                         }
                     } else {
                         self.stack.push(InMacroState {

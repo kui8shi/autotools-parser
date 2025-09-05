@@ -721,6 +721,10 @@ where
                 Box::new(first.clone()),
                 Box::new(self.make_condition(second.clone())?),
             )),
+            Some(Pipe(true, cmds)) if cmds.len() == 1 => {
+                let cmd = cmds.first().unwrap().clone();
+                self.make_condition(cmd).ok().map(|cond| cond.flip())
+            },
             _ => None,
         }
         .map_or(

@@ -317,7 +317,7 @@ impl<U> DisplayNode for AutoconfPool<U> {
     }
 
     fn display_word(&self, word: &AcWord, should_quote: bool) -> String {
-        use super::minimal::WordFragment::DoubleQuoted;
+        use super::minimal::WordFragment::{DoubleQuoted, Literal};
         use Word::*;
         match &word.0 {
             Empty => "\"\"".to_string(),
@@ -335,6 +335,8 @@ impl<U> DisplayNode for AutoconfPool<U> {
                 let s = self.may_m4_word_to_string(frag);
                 if should_quote && !matches!(frag, super::MayM4::Shell(DoubleQuoted(_))) {
                     format!("\"{}\"", s)
+                } else if should_quote && !matches!(frag, super::MayM4::Shell(Literal(_))) {
+                    format!("\'{}\'", s)
                 } else {
                     s
                 }
@@ -445,29 +447,30 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 "{tab}{}",
                 words
                     .iter()
-                    .map(|w| self.display_word(w, false))
+                    .enumerate()
+                    .map(|(i, w)| self.display_word(w, i > 0))
                     .collect::<Vec<String>>()
                     .join(" ")
             ),
             Brace(cmds) => {
                 format!(
-                    "{tab}{{\n{}\n{tab}}}",
+                    "{tab}{{\n{}{tab}}}",
                     self.body_to_string(cmds, indent_level + 1)
                 )
             }
             Subshell(cmds) => {
                 format!(
-                    "{tab}(\n{}\n{tab})",
+                    "{tab}(\n{}{tab})",
                     self.body_to_string(cmds, indent_level + 1)
                 )
             }
             While(pair) => format!(
-                "{tab}while {}; do\n{}\n{tab}done",
+                "{tab}while {}; do\n{}{tab}done",
                 self.condition_to_string(&pair.condition),
                 self.body_to_string(&pair.body, indent_level + 1)
             ),
             Until(pair) => format!(
-                "{tab}until {}; do\n{}\n{tab}done",
+                "{tab}until {}; do\n{}{tab}done",
                 self.condition_to_string(&pair.condition),
                 self.body_to_string(&pair.body, indent_level + 1)
             ),
@@ -478,7 +481,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 let first_if = {
                     let pair = conditionals.first().unwrap();
                     format!(
-                        "{tab}if {}; then\n{}\n",
+                        "{tab}if {}; then\n{}",
                         self.condition_to_string(&pair.condition),
                         self.body_to_string(&pair.body, indent_level + 1)
                     )
@@ -488,7 +491,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                     .skip(1)
                     .map(|pair| {
                         format!(
-                            "{tab}else if {}; then\n{}\n",
+                            "{tab}else if {}; then\n{}",
                             self.condition_to_string(&pair.condition),
                             self.body_to_string(&pair.body, indent_level + 1)
                         )
@@ -499,14 +502,14 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                     format!("{tab}fi")
                 } else {
                     format!(
-                        "{tab}else\n{}\n{tab}fi",
+                        "{tab}else\n{}{tab}fi",
                         self.body_to_string(else_branch, indent_level + 1)
                     )
                 };
                 format!("{}{}{}", first_if, else_if, rest)
             }
             For { var, words, body } => format!(
-                "{tab}for {var} in {}; do\n{}\n{tab}done",
+                "{tab}for {var} in {}; do\n{}{tab}done",
                 words
                     .iter()
                     .map(|w| self.display_word(w, true))
@@ -515,20 +518,29 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 self.body_to_string(body, indent_level + 1)
             ),
             Case { word, arms } => format!(
-                "{tab}case {} in\n{}\n{tab}esac",
+                "{tab}case {} in\n{}{tab}esac",
                 self.display_word(word, false),
-                arms.iter()
-                    .map(|arm| format!(
-                        "{tab}  {})\n{}\n{tab}    ;;",
-                        arm.patterns
-                            .iter()
-                            .map(|w| self.display_word(w, false))
-                            .collect::<Vec<String>>()
-                            .join("|"),
-                        self.body_to_string(&arm.body, indent_level + 2)
-                    ))
-                    .collect::<Vec<String>>()
-                    .join("\n")
+                {
+                    let mut arms = arms
+                        .iter()
+                        .map(|arm| {
+                            format!(
+                                "{tab}  {})\n{}{tab}    ;;",
+                                arm.patterns
+                                    .iter()
+                                    .map(|w| self.display_word(w, false))
+                                    .collect::<Vec<String>>()
+                                    .join("|"),
+                                self.body_to_string(&arm.body, indent_level + 2)
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    if !arms.is_empty() {
+                        arms.push('\n');
+                    }
+                    arms
+                }
             ),
             And(cond, id) => format!(
                 "{} && {}",
@@ -572,11 +584,16 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
 
     /// Convert a list of command node IDs to a formatted string.
     fn body_to_string(&self, cmds: &[NodeId], level: usize) -> String {
-        cmds.iter()
+        let mut body = cmds
+            .iter()
             .map(|c| self.display_node(*c, level))
             .filter(|s| !s.is_empty())
             .collect::<Vec<String>>()
-            .join("\n")
+            .join("\n");
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body
     }
 
     /// Format a `Condition` AST into its shell script string representation.
@@ -584,6 +601,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
         use super::condition::Condition::*;
         match cond {
             Cond(op) => format!("test {}", self.operator_to_string(op)),
+            Not(cond) => format!("! {}", self.condition_to_string(cond)),
             And(lhs, rhs) => format!(
                 "{} && {}",
                 self.condition_to_string(lhs),
@@ -652,7 +670,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
     fn shell_word_to_string(&self, shell_word: &WordFragment<W>) -> String {
         use crate::ast::minimal::WordFragment::*;
         match &shell_word {
-            Literal(lit) => lit.to_string(),
+            Literal(lit) => lit.to_owned(),
             DoubleQuoted(frags) => format!(
                 "\"{}\"",
                 frags
@@ -1167,5 +1185,14 @@ mod tests {
         let pool = AutoconfPool::from_vec(vec![body.clone(), func.clone(), mac.clone()]);
         assert_eq!(pool.display_node(1, 0), "function f () b");
         assert_eq!(pool.display_node(2, 0), "m([a],\n  w)");
+    }
+}
+
+fn add_newline(mut s: String) -> String {
+    if s.is_empty() {
+        s
+    } else {
+        s.push('\n');
+        s
     }
 }

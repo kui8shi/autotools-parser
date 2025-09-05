@@ -1509,6 +1509,16 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ..Default::default()
                 },
             ),
+            (
+                "AM_MAINTAINER_MODE",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // [enabled]
+                    ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
             // generic program and file checks
             (
                 "AC_CHECK_PROG",
@@ -1678,7 +1688,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![(ExVar(VarAttrs::internal()), format!("ac_cv_path_{}", s))]
+                                vec![
+                                    (ExVar(VarAttrs::internal()), format!("ac_cv_path_{}", s)),
+                                    (ExVar(VarAttrs::internal()), format!("ac_cv_path_{}", s)),
+                                ]
                             }),
                         ),
                         Arr(Blank), // progs-to-check-for
@@ -2302,6 +2315,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                     ],
                     ret_type: Some(Cmds),
+                    shell_vars: Some(vec![
+                        // the macro uses the flags
+                        Var::reference("LDFLAGS"),
+                        Var::reference("LIBS"),
+                    ]),
                     ..Default::default()
                 },
             ),
@@ -2330,6 +2348,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                     ],
                     ret_type: Some(Cmds),
+                    shell_vars: Some(vec![
+                        // the macro uses the flags
+                        Var::reference("LDFLAGS"),
+                        Var::reference("LIBS"),
+                    ]),
                     ..Default::default()
                 },
             ),
@@ -3301,7 +3324,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to 1 if C11-style _Generic works.
-                        "const".into(),
+                        "HAVE_C__GENERIC".into(),
                         "ac_cv_c__Generic".into(),
                     ]),
                     ..Default::default()
@@ -7356,6 +7379,14 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AC_LIBTOOL_WIN32_DLL",
                 // deprecated. replaced by 'win32-dll' option of LT_INIT.
+                M4MacroSignature {
+                    replaced_by: Some("LT_INIT".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AC_LIBTOOL_PROG_COMPILER_PIC",
+                // deprecated. replaced by _LT_COMPILER_PIC in LT_INIT.
                 M4MacroSignature {
                     replaced_by: Some("LT_INIT".into()),
                     ..Default::default()

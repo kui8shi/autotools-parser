@@ -1,14 +1,16 @@
 //! Preprocess m4 files for partially expansion of m4 macros
 mod rewrite_quotes;
 
-use regex::Regex;
+use regex::{Captures, Regex};
+use rewrite_quotes::QuoteRewriteConfig;
 use std::collections::HashSet;
+use std::env::current_dir;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// If m4_include is used other than including .m4 files, the whole process won't work.
+/// Matches to m4_include including files
 const REGEX_M4_INCLUDE: &str = r"m4_include\(\[?([^\[\]\)]+)\]?\)";
 
 /// Collects m4 include directives from the given file path
@@ -31,10 +33,17 @@ pub fn collect_m4_includes(ac_path: &Path) -> io::Result<Vec<PathBuf>> {
     // Regular expression to match m4_include directives
     let include_regex = Regex::new(REGEX_M4_INCLUDE).unwrap();
 
-    let mut included_paths = vec![parent_dir.join("acinclude.m4")];
+    let mut included_paths = Vec::new();
 
-    for cap in include_regex.captures_iter(&content) {
-        if let Some(included_file) = cap.get(1) {
+    for included_file_by_default in ["acinclude.m4"] {
+        let included_path = parent_dir.join(included_file_by_default);
+        if included_path.exists() {
+            included_paths.push(included_path);
+        }
+    }
+
+    for caps in include_regex.captures_iter(&content) {
+        if let Some(included_file) = caps.get(1) {
             let included_path = parent_dir.join(included_file.as_str());
             if included_path.exists() {
                 included_paths.push(included_path);
@@ -43,6 +52,48 @@ pub fn collect_m4_includes(ac_path: &Path) -> io::Result<Vec<PathBuf>> {
     }
 
     Ok(included_paths)
+}
+
+/// Expand m4 include directives from the given file path
+///
+/// This function scans a file for m4_include directives and return the
+/// file content while expanding the directives according to the following rules:
+/// 1. if the included file paths have m4 extension, remove the directives.
+/// 2. otherwise, expand the directives with the corresponding file contents.
+///
+/// The included file paths are assumed to be relative to the parent directory of the input file.
+///
+/// # Arguments
+///
+/// * `ac_path` - Path to the m4/autoconf file to scan
+///
+/// # Returns
+///
+/// A string of the file content with m4 include directives expanded
+pub fn expand_m4_includes(ac_path: &Path) -> io::Result<String> {
+    let content = fs::read_to_string(ac_path)?;
+    let parent_dir = ac_path.parent().unwrap_or(Path::new("."));
+
+    // Regular expression to match m4_include directives
+    let include_regex = Regex::new(REGEX_M4_INCLUDE).unwrap();
+
+    let content = include_regex
+        .replace_all(&content, |caps: &Captures<'_>| {
+            if let Some(included_file) = caps.get(1) {
+                let included_path = parent_dir.join(included_file.as_str());
+                let is_m4 = included_path
+                    .extension()
+                    .is_some_and(|ext| ext.to_str() == Some("m4"));
+                if included_path.exists() && !is_m4 {
+                    if let Ok(included_content) = fs::read_to_string(&included_path) {
+                        return included_content.trim().to_string();
+                    }
+                }
+            }
+            "".into()
+        })
+        .to_string();
+    Ok(content)
 }
 
 /// Performs partial expansion of m4 macros in the given file
@@ -63,6 +114,11 @@ pub fn collect_m4_includes(ac_path: &Path) -> io::Result<Vec<PathBuf>> {
 ///
 /// The stdout from the autom4te command or an error
 pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
+    let project_dir = ac_path
+        .parent()
+        .map(|path| path.to_path_buf())
+        .unwrap_or(current_dir().unwrap());
+
     // Create a temporary file for the processed content
     let ac_tmp_path = std::env::temp_dir().join("autoconf_processed.m4");
 
@@ -77,35 +133,40 @@ pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
         "lt~obsolete.m4".to_string(),
     ]);
 
-    // Read the main file content
-    let main_content = fs::read_to_string(ac_path)?;
-
-    // Remove m4_include directives
-    let include_regex = Regex::new(REGEX_M4_INCLUDE).unwrap();
-    let main_content_no_includes = include_regex.replace_all(&main_content, "").to_string();
-
     let mut processed_content = String::new();
 
-    fn process(label: &str, content: &str) -> String {
+    fn process(label: &str, content: &str, main_content: Option<&str>) -> String {
         let mut out = format!("\ndnl ==== {} ====\n", label);
-        out.push_str(&rewrite_quotes::rewrite_quotes(content));
+        out.push_str(&&rewrite_quotes::rewrite_quotes_with_config(
+            content,
+            QuoteRewriteConfig {
+                main_content: main_content.map(|s| s.to_owned()),
+                ..Default::default()
+            },
+        ));
         out
     }
 
+    // Read the main file content while expanding m4_include directives
+    let main_content = expand_m4_includes(ac_path)?;
+
     // Process and append content from included files
-    for path in &included_paths {
+    for path in included_paths {
         let filename = path.file_name().unwrap().to_owned().into_string().unwrap();
-        if !excluded_paths.contains(&filename) && path.exists() {
+        let is_m4 = path
+            .extension()
+            .is_some_and(|ext| ext.to_str() == Some("m4"));
+        if !excluded_paths.contains(&filename) && path.exists() && is_m4 {
             if let Ok(include_content) = fs::read_to_string(path) {
                 // Process quotes in the included file
-                let processed_include = process(&filename, &include_content);
+                let processed_include = process(&filename, &include_content, Some(&main_content));
                 processed_content.push_str(&processed_include);
             }
         }
     }
 
     // Process quotes in the main file
-    processed_content.push_str(&process("configure.ac", &main_content_no_includes));
+    processed_content.push_str(&process("configure.ac", &main_content, None));
 
     // Prepare the header content
     let header = "m4_divert(0)\n\
@@ -129,6 +190,7 @@ pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
     let output = Command::new("autom4te")
         .arg("--language=m4sugar")
         .arg(ac_tmp_path)
+        .current_dir(project_dir)
         .output()?;
 
     if !output.status.success() {
@@ -141,6 +203,10 @@ pub fn partial_expansion(ac_path: &Path) -> io::Result<String> {
         ));
     }
 
+    let result = String::from_utf8_lossy(&output.stdout)
+        .trim_start()
+        .to_owned();
+
     // Return the stdout from autom4te
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(result)
 }

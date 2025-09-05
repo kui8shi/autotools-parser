@@ -298,6 +298,7 @@ where
         use self::Condition::*;
         match self {
             Cond(op) => write!(fmt, "test {}", op),
+            Not(cond) => write!(fmt, "! {}", cond),
             And(lhs, rhs) => write!(fmt, "{} && {}", lhs, rhs),
             Or(lhs, rhs) => write!(fmt, "{} || {}", lhs, rhs),
             Eval(cmd) => write!(fmt, "eval \"{}\"", cmd.to_string()),
