@@ -543,17 +543,17 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 }
             ),
             And(cond, id) => format!(
-                "{} && {}",
+                "{tab}{} && {}",
                 self.condition_to_string(cond),
-                self.display_node(*id, indent_level)
+                self.display_node(*id, 0)
             ),
             Or(cond, id) => format!(
-                "{} || {}",
+                "{tab}{} || {}",
                 self.condition_to_string(cond),
-                self.display_node(*id, indent_level)
+                self.display_node(*id, 0)
             ),
             Pipe(bang, cmds) => format!(
-                "{}{}",
+                "{tab}{}{}",
                 if *bang { "!" } else { "" },
                 cmds.iter()
                     .map(|c| self.display_node(*c, 0))
@@ -569,7 +569,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                     .collect::<Vec<String>>()
                     .join(" ")
             ),
-            Background(cmd) => format!("{} &", self.display_node(*cmd, indent_level)),
+            Background(cmd) => format!("{tab}{} &", self.display_node(*cmd, indent_level)),
             FunctionDef { name, body } => {
                 format!("function {name} () {}", self.display_node(*body, 0))
             }

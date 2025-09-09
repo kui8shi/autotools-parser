@@ -98,9 +98,11 @@ where
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let mut cmd = self
-            .simplify_m4_macro(&macro_call)
-            .unwrap_or(self.new_node(macro_call.into()));
+        let mut cmd = if let Some(cmd) = self.simplify_m4_macro(&macro_call) {
+            cmd
+        } else {
+            self.new_node(macro_call.into())
+        };
         if !redirects.is_empty() {
             cmd = self.new_node(Redirect(cmd, redirects).into())
         }
@@ -688,7 +690,7 @@ where
 {
     fn make_condition(&mut self, cmd: NodeId) -> Result<Condition<NodeId, W>, BuilderError> {
         let node = self.node_pop(cmd);
-        match node.cmd.clone().into() {
+        if let Some(condition) = match node.cmd.clone().into() {
             Some(Cmd(words)) => {
                 let first_word = words.first().unwrap();
                 if let Word::Single(f) = first_word.clone().into() {
@@ -724,16 +726,14 @@ where
             Some(Pipe(true, cmds)) if cmds.len() == 1 => {
                 let cmd = cmds.first().unwrap().clone();
                 self.make_condition(cmd).ok().map(|cond| cond.flip())
-            },
+            }
             _ => None,
+        } {
+            Ok(condition)
+        } else {
+            self.node_push(node);
+            Ok(Condition::ReturnZero(Box::new(cmd)))
         }
-        .map_or(
-            {
-                self.node_push(node);
-                Ok(Condition::ReturnZero(Box::new(cmd)))
-            },
-            Ok,
-        )
     }
 }
 

@@ -50,9 +50,11 @@ where
         macro_call: M4Macro<Self::Command, Self::Word>,
         redirects: Vec<Self::Redirect>,
     ) -> Result<Self::CompoundCommand, Self::Error> {
-        let cmd = self
-            .simplify_m4_macro(&macro_call)
-            .unwrap_or(Macro(macro_call));
+        let cmd = if let Some(cmd) = self.simplify_m4_macro(&macro_call) {
+            cmd
+        } else {
+            Macro(macro_call)
+        };
         let compound_cmd = if !redirects.is_empty() {
             Shell(CompoundCommand::Redirect(
                 Box::new(AcCommand::new_may_m4(cmd)),
@@ -797,7 +799,7 @@ where
             Compound(Shell(CompoundCommand::Pipe(true, cmds))) if cmds.len() == 1 => {
                 let cmd = cmds.first().unwrap().clone();
                 self.make_condition(cmd).ok().map(|cond| cond.flip())
-            },
+            }
             _ => None,
         }
         .map_or(Ok(Condition::ReturnZero(Box::new(cmd))), Ok)
