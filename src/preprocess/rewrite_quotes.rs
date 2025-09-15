@@ -151,6 +151,11 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                                 .is_some_and(|ctx| ctx.quote_level > ctx.rewrite_level)) =>
                 {
                     if let Some((ref name, rewrite_level)) = self.macro_name(name) {
+                        let rewrite_level = self
+                            .stack
+                            .last()
+                            .map(|last| last.rewrite_level.max(rewrite_level))
+                            .unwrap_or(rewrite_level);
                         self.called_macros.insert(name.into());
                         self.stack.push(InMacroState {
                             rewrite_level,
@@ -266,10 +271,10 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                 name
             };
             if (!self.stack.is_empty() || self.in_double_quote_string) && is_defining_macro {
-                // to prevent unintetional expansions, we ignore define macros inside other macros.
+                // to prevent unintetional expansions, we ignore 'define' macros inside other macros.
                 None
             } else if name.starts_with("m4_") {
-                Some((name.to_string(), if is_defining_macro { 1 } else { 1 }))
+                Some((name.to_string(), if is_defining_macro { 2 } else { 1 }))
             } else {
                 None
             }

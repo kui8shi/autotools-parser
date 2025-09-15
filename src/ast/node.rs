@@ -333,10 +333,10 @@ impl<U> DisplayNode for AutoconfPool<U> {
             }
             Single(frag) => {
                 let s = self.may_m4_word_to_string(frag);
-                if should_quote && !matches!(frag, super::MayM4::Shell(DoubleQuoted(_))) {
-                    format!("\"{}\"", s)
-                } else if should_quote && !matches!(frag, super::MayM4::Shell(Literal(_))) {
+                if should_quote && matches!(frag, super::MayM4::Shell(Literal(_))) {
                     format!("\'{}\'", s)
+                } else if should_quote && !matches!(frag, super::MayM4::Shell(DoubleQuoted(_))) {
+                    format!("\"{}\"", s)
                 } else {
                     s
                 }

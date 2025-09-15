@@ -894,7 +894,7 @@ where
 
     fn should_skip_macro_evaluation(&self) -> bool {
         use QuoteContextKind::*;
-        // we skip macro evaluationwhen in quotes.
+        // we skip macro evaluation when in quotes.
         // in the actual configure.ac, such macro calls quoted are not evaluated.
         let quote_context = self.quote_stack.last().unwrap();
         match &quote_context.kind {
@@ -1087,14 +1087,17 @@ where
             }
         }
 
+        self.stash_quote_context(QuoteContextKind::Other("heredoc".into()));
+
         let heredoc_start_pos = self.iter.pos();
         let mut heredoc = Vec::new();
         'heredoc: loop {
             let mut line_start_pos = self.iter.pos();
             let mut line = Vec::new();
             'line: loop {
-                // self.may_open_quote(None, false);
-                // self.may_close_quote(None, false);
+                if self.may_open_quote(None, false) || self.may_close_quote(None, false) {
+                    continue;
+                }
                 if strip_tabs {
                     let skip_next = if let Some(Whitespace(w)) = self.iter.peek() {
                         let stripped = w.trim_start_matches('\t');
@@ -1164,8 +1167,6 @@ where
         }
         self.iter
             .buffer_tokens_to_yield_first(saved_tokens, saved_pos);
-
-        self.stash_quote_context(QuoteContextKind::Other("heredoc".into()));
 
         let body = if quoted {
             let body = heredoc.into_iter().flat_map(|(t, _)| t).collect::<Vec<_>>();

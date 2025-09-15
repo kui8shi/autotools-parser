@@ -64,6 +64,11 @@ impl<C, W, F, U: Default> NodeBuilder<C, W, F, U> {
             .insert(Node::new(comments, None, cmd, Default::default()))
     }
 
+    fn new_node_with_range(&mut self, cmd: C, range: (usize, usize)) -> NodeId {
+        self.nodes
+            .insert(Node::new(None, Some(range), cmd, Default::default()))
+    }
+
     fn node_mut(&mut self, id: NodeId) -> &mut Node<C, U> {
         &mut self.nodes[id]
     }

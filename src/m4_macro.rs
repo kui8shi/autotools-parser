@@ -200,6 +200,14 @@ impl<C: Clone, W: Clone> M4Macro<C, W> {
         }
     }
 
+    /// Take the scpeficied argument as an array of words
+    pub fn get_arg_as_array(&self, index: usize) -> Option<Vec<W>> {
+        match self.args.get(index) {
+            Some(M4Argument::Array(words)) => Some(words.clone()),
+            _ => None,
+        }
+    }
+
     /// Take the scpeficied argument as a literal
     pub fn get_arg_as_literal(&self, index: usize) -> Option<String> {
         match self.args.get(index) {
