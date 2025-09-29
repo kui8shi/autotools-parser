@@ -142,7 +142,8 @@ where
     C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone,
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
-        + Clone,
+        + Clone
+        + Debug,
     U: Default,
 {
     fn map_quote_word(kind: QuoteWordKind<F>) -> Result<Option<F>, <Self as BuilderBase>::Error> {
@@ -219,7 +220,7 @@ impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> 
     }
 
     fn include(&mut self, path: Self::Word) -> Result<Self::Statement, Self::Error> {
-        Err(BuilderError::UnsupportedSyntax)
+        Ok(self.new_node(AmLine::Include(path)))
     }
 
     fn variable(&mut self, var: AmVar) -> Result<Self::WordFragment, Self::Error> {
@@ -234,7 +235,8 @@ where
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Into<Option<String>>
-        + Clone,
+        + Clone
+        + Debug,
     U: Default,
 {
     type CommandList = Self::Command;

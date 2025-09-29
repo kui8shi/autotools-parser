@@ -58,15 +58,46 @@ impl<L> From<WordFragment<L, AcCommand<L, AcWord<L>>, AcWord<L>>> for MinimalWor
     }
 }
 
+impl<L, C, W> Into<Option<String>> for WordFragment<L, C, W>
+where
+    L: Into<String>,
+{
+    fn into(self) -> Option<String> {
+        use WordFragment::*;
+        match self {
+            Literal(literal) => Some(literal.into()),
+            DoubleQuoted(word_fragments) => {
+                let mut literals: Vec<String> = Vec::new();
+                for word_fragment in word_fragments {
+                    if let Some(literal) = word_fragment.into() {
+                        literals.push(literal);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(literals.concat())
+            }
+            Escaped(escaped) => Some(format!("\\{}", escaped.into())),
+            Param(_) => None,
+            Subst(_) => None,
+            Star => Some("*".into()),
+            Question => Some("*".into()),
+            SquareOpen => Some("[".into()),
+            SquareClose => Some("]".into()),
+            Tilde => Some("~".into()),
+            Colon => Some(":".into()),
+        }
+    }
+}
+
 impl<L, C, W> Into<Option<String>> for MayM4WordFragment<L, C, W>
 where
     L: Into<String>,
 {
     fn into(self) -> Option<String> {
         use MayM4::*;
-        use WordFragment::*;
         match self {
-            Shell(Literal(l)) => Some(l.into()),
+            Shell(word_fragment) => word_fragment.into(),
             _ => None,
         }
     }

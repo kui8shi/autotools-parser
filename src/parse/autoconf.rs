@@ -3,6 +3,7 @@
 // FIXME: consider parsing out array index syntax? (e.g. ${array[some index]}
 // FIXME: arithmetic substitutions don't currently support param/comand substitutions
 
+use std::fmt::Debug;
 use std::iter::empty as empty_iter;
 use std::mem;
 use std::ops::{AddAssign, Not, SubAssign};
@@ -51,8 +52,8 @@ impl<I, B> Parser for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder + ConditionBuilder,
-    B::Word: From<String> + Into<Option<String>> + Clone,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B::Word: From<String> + Into<Option<String>> + Clone + Debug,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     type TopLevel = B::Command;
     type Error = B::Error;
@@ -65,8 +66,8 @@ impl<I, B> IntoIterator for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder + ConditionBuilder,
-    B::Word: From<String> + Into<Option<String>> + Clone,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B::Word: From<String> + Into<Option<String>> + Clone + Debug,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     type IntoIter = ParserIterator<Self>;
     type Item = <Self::IntoIter as Iterator>::Item;
@@ -294,8 +295,8 @@ where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
     B: ShellBuilder + M4Builder + ConditionBuilder,
-    B::Word: From<String> + Into<Option<String>> + Clone,
-    B::WordFragment: Into<Option<String>> + Clone,
+    B::Word: From<String> + Into<Option<String>> + Clone + Debug,
+    B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
     /// token in the iterator will be used (or `UnexpectedEOF` if none left).
@@ -2553,9 +2554,9 @@ where
             Some((k, v, o)) => (k.as_ref(), Some(v), o),
             None => (name, None, None),
         };
-        let mut effects = macro_entry
+        let mut effects: Option<SideEffect> = macro_entry
             .and_then(|sig| (!sig.has_no_exports()).then_some(sig))
-            .map(|sig| sig.clone().into());
+            .map(|sig| sig.into());
         if Some(&ParenOpen) == self.iter.peek() {
             eat!(self, { ParenOpen => {} });
         } else {
@@ -2614,10 +2615,10 @@ where
                             effects.get_or_insert_default().add_shell_var(&arg, attr);
                         }
                         if let Some(f) = f {
-                            for (export_type, val) in f(&arg) {
+                            for export_type in f(&arg) {
                                 effects
                                     .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
+                                    .add_side_effect(&export_type);
                             }
                         }
                         self.skip_macro_arg()?;
@@ -2626,10 +2627,10 @@ where
                     M4Type::Type(f) => {
                         let arg = peeked_arg.clone();
                         if let Some(f) = f {
-                            for (export_type, val) in f(&arg) {
+                            for export_type in f(&arg) {
                                 effects
                                     .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
+                                    .add_side_effect(&export_type);
                             }
                         }
                         self.skip_macro_arg()?;
@@ -2699,10 +2700,10 @@ where
                         } else {
                             let arg = peeked_arg.clone();
                             if let Some(f) = f {
-                                for (export_type, val) in f(&arg) {
+                                for export_type in f(&arg) {
                                     effects
                                         .get_or_insert_default()
-                                        .add_side_effect(&export_type, &val);
+                                        .add_side_effect(&export_type);
                                 }
                             }
                             M4Argument::Literal(arg)
@@ -2717,10 +2718,10 @@ where
                         } else {
                             let arg = peeked_arg.clone();
                             if let Some(f) = f {
-                                for (export_type, val) in f(&arg) {
+                                for export_type in f(&arg) {
                                     effects
                                         .get_or_insert_default()
-                                        .add_side_effect(&export_type, &val);
+                                        .add_side_effect(&export_type);
                                 }
                             }
                             M4Argument::Literal(arg)
@@ -2884,13 +2885,12 @@ where
             };
             if let Some(word) = word {
                 if let Some(f) = func {
-                    if let Single(Simple(ref frag)) = word {
-                        if let Some(elm) = frag.clone().into() {
-                            for (export_type, val) in f(&elm) {
-                                effects
-                                    .get_or_insert_default()
-                                    .add_side_effect(&export_type, &val);
-                            }
+                    let word_as_lit: Option<String> = word.clone().into();
+                    if let Some(literal) = word_as_lit {
+                        for export_type in f(&literal) {
+                            effects
+                                .get_or_insert_default()
+                                .add_side_effect(&export_type);
                         }
                     }
                 }

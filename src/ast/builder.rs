@@ -162,6 +162,51 @@ pub enum QuoteWordKind<X> {
     SingleQuoted(String),
 }
 
+impl<X> Into<Option<String>> for ConcatWordKind<X>
+where
+    X: Into<Option<String>>,
+{
+    fn into(self) -> Option<String> {
+        match self {
+            ConcatWordKind::Concat(quote_word_kinds) => {
+                let mut literals: Vec<String> = Vec::new();
+                for quote_word_kind in quote_word_kinds {
+                    if let Some(literal) = quote_word_kind.into() {
+                        literals.push(literal);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(literals.concat())
+            }
+            ConcatWordKind::Single(quote_word_kind) => quote_word_kind.into(),
+        }
+    }
+}
+
+impl<X> Into<Option<String>> for QuoteWordKind<X>
+where
+    X: Into<Option<String>>,
+{
+    fn into(self) -> Option<String> {
+        match self {
+            QuoteWordKind::Simple(word) => word.into(),
+            QuoteWordKind::DoubleQuoted(words) => {
+                let mut literals: Vec<String> = Vec::new();
+                for word in words {
+                    if let Some(literal) = word.into() {
+                        literals.push(literal);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(literals.concat())
+            }
+            QuoteWordKind::SingleQuoted(literal) => Some(literal.clone()),
+        }
+    }
+}
+
 /// An indicator to the builder what kind of simple word was parsed.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum WordKind<C, W> {

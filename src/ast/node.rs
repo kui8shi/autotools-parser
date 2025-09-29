@@ -227,6 +227,7 @@ pub trait DisplayNode {
     fn display_word(&self, word: &Self::Word, should_quote: bool) -> String;
 }
 
+#[derive(Default)]
 /// A pool of autoconf commands stored as nodes.
 pub struct AutoconfPool<U = ()> {
     /// Contains all nodes. `NodeId` represents indexes of nodes in this slab.
@@ -369,7 +370,8 @@ impl<U> AutoconfPool<U> {
         let tab = " ".repeat(indent_level * TAB_WIDTH);
         format!(
             "{tab}{}({})",
-            m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
+            // m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
+            &m4_macro.name,
             m4_macro
                 .args
                 .iter()

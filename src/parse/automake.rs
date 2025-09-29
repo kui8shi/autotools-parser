@@ -238,9 +238,11 @@ where
         loop {
             if let Some(directive) = self.peek_reserved_word(&[ELSE, ENDIF]) {
                 if directive == ELSE {
+                    self.iter.next();
                     after_else_keyword = true;
                     self.newline();
                 } else if directive == ENDIF {
+                    self.iter.next();
                     self.word()?;
                     self.newline();
                     break;
@@ -252,8 +254,8 @@ where
                 self.automake_statement()?.unwrap()
             };
             match after_else_keyword {
-                true => then.push(stmt),
-                false => otherwise.push(stmt),
+                false => then.push(stmt),
+                true => otherwise.push(stmt),
             }
         }
         Ok(self.builder.conditional(guard_var, then, otherwise)?)
@@ -288,6 +290,9 @@ where
 
     /// Parses a single automake shell command statement.
     pub fn automake_command(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
+        // consume tab
+        eat!(self, { Whitespace(_) => {} });
+        // in recipe, command name can be prefixed by '@' (: silent). we don't need that.
         eat_maybe!(self, { At => {} });
         if let Some(cmd) = self.complete_command()? {
             Ok(Some(self.builder.shell_as_recipe(cmd)?))
@@ -1753,6 +1758,7 @@ where
     }
 
     fn automake_template(&mut self) -> ParseResult<B::WordFragment, B::Error> {
+        eat!(self, { At => { }});
         let is_template = {
             let mut peeked = self.iter.multipeek();
             if !matches!(peeked.peek_next(), Some(Name(_) | Literal(_))) {

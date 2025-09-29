@@ -31,16 +31,6 @@ impl Into<Option<WordFragment<String, NodeId, ShWord>>> for ShWord {
     }
 }
 
-impl Into<Option<String>> for ShWordFragment {
-    fn into(self) -> Option<String> {
-        use WordFragment::*;
-        match self {
-            Literal(l) => Some(l.into()),
-            _ => None,
-        }
-    }
-}
-
 impl Into<Option<String>> for ShWord {
     fn into(self) -> Option<String> {
         match self.0 {

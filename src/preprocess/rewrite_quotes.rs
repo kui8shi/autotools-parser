@@ -85,6 +85,7 @@ struct Rewriter<I> {
     stack: Vec<InMacroState>,
     called_macros: HashSet<String>,
     in_double_quote_string: bool,
+    in_sed_string: bool,
 }
 
 impl<I: Iterator<Item = Token>> Rewriter<I> {
@@ -100,6 +101,7 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
             stack: Vec::new(),
             called_macros: HashSet::new(),
             in_double_quote_string: false,
+            in_sed_string: false,
         }
     }
 }
@@ -141,6 +143,14 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                 }
                 Token::Name(ref name) if self.config.replace.contains_key(name) => {
                     self.result.push_str(self.config.replace.get(name).unwrap());
+                }
+                Token::Name(ref name) if name == "sed" => {
+                    self.in_sed_string = true;
+                    self.result.push_str(name);
+                }
+                Token::Newline => {
+                    self.in_sed_string = false;
+                    self.result.push('\n');
                 }
                 Token::Name(ref name)
                     if self.iter.peek() == Some(&Token::ParenOpen)
@@ -274,12 +284,17 @@ impl<I: Iterator<Item = Token>> Rewriter<I> {
                 // to prevent unintetional expansions, we ignore 'define' macros inside other macros.
                 None
             } else if name.starts_with("m4_") {
-                Some((name.to_string(), if is_defining_macro { 2 } else { 1 }))
+                Some((name.to_string(), if is_defining_macro { 1 } else { 1 }))
             } else {
                 None
             }
         } else {
-            is_user_macro(name).then_some((name.to_string(), 1))
+            if self.in_sed_string {
+                // in a line where sed command is called, we ignore any macro-like literals.
+                None
+            } else {
+                is_user_macro(name).then_some((name.to_string(), 1))
+            }
         }
     }
 }

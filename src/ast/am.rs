@@ -86,6 +86,8 @@ pub enum AmLine {
     Conditional(AmConditional),
     /// Represents an assignment statement in automake.
     Assignment(AmAssignment),
+    /// Represents an include statement in automake.
+    Include(AmWord),
     /// Represents a shell command in a rule. Note that this can NOT be the top-level statement
     Shell(ShellCommand<AmWord>),
 }
