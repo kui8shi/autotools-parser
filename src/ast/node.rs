@@ -1,10 +1,7 @@
 //! Defines node representations of the shell source.
-use std::cell::Cell;
-
 use crate::m4_macro;
-use slab::Slab;
 
-use super::minimal::Word;
+use super::{minimal::Word, Arithmetic};
 
 /// Represents a unique node id
 pub type NodeId = usize;
@@ -22,7 +19,7 @@ pub type PatternBodyPair<W> = super::PatternBodyPair<NodeId, W>;
 pub type Redirect<W> = super::Redirect<W>;
 /// Wraps parameter substitution with fixing generics
 pub type ParameterSubstitution<W> =
-    super::ParameterSubstitution<super::Parameter<String>, NodeId, W, super::Arithmetic<String>>;
+    super::ParameterSubstitution<super::Parameter<String>, NodeId, W, Arithmetic<String>>;
 /// Wraps m4 macro with fixing generics
 pub type M4Macro = m4_macro::M4Macro<NodeId, AcWord>;
 /// Wraps m4 argument with fixing generics
@@ -227,6 +224,96 @@ pub trait DisplayNode {
     fn display_word(&self, word: &Self::Word, should_quote: bool) -> String;
 }
 
+/// Trait providing methods to convert AST nodes related to m4 macros to their script string
+/// representations.
+pub trait DisplayM4: NodePool<AcWord> {
+    /// Standard indentation width for formatting M4 macros.
+    const M4_TAB_WIDTH: usize = 2;
+    /// Entry function for displaying a word fragment which can be a M4 macro call.
+    fn display_may_m4_word(&self, frag: &AcWordFragment) -> String {
+        self.may_m4_word_to_string(frag)
+    }
+
+    /// Entry function for displaying an M4 macro call (`M4Macro`).
+    fn display_m4_macro(&self, m4_macro: &M4Macro, indent_level: usize) -> String {
+        self.m4_macro_to_string(m4_macro, indent_level)
+    }
+
+    /// Entry function for displaying an M4 macro argument (`M4Argument`).
+    fn display_m4_argument(&self, arg: &M4Argument, indent_level: usize) -> String {
+        self.m4_argument_to_string(arg, indent_level)
+    }
+
+    /// Format a word fragment which is yet to turn out to be a M4 macro call
+    fn may_m4_word_to_string(&self, frag: &AcWordFragment) -> String {
+        use super::MayM4::*;
+        match frag {
+            Macro(macro_word) => format!(
+                "{}({})",
+                macro_word.name,
+                macro_word
+                    .args
+                    .iter()
+                    .map(|arg| self.display_m4_argument(arg, 0))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Shell(shell_word) => self.display_shell_word(shell_word),
+        }
+    }
+
+    /// Format an M4 macro call (`M4Macro`) into a string
+    fn m4_macro_to_string(&self, m4_macro: &M4Macro, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::M4_TAB_WIDTH);
+        format!(
+            "{tab}{}({})",
+            // m4_macro.original_name.as_ref().unwrap_or(&m4_macro.name),
+            &m4_macro.name,
+            m4_macro
+                .args
+                .iter()
+                .map(|arg| self.display_m4_argument(arg, indent_level + 1))
+                .collect::<Vec<String>>()
+                .join(&format!(",\n{tab}  "))
+        )
+    }
+
+    /// Format an M4 macro argument (`M4Argument`) into a string, applying `indent_level`
+    /// spaces for multiline argument formatting.
+    fn m4_argument_to_string(&self, arg: &M4Argument, indent_level: usize) -> String {
+        use crate::m4_macro::M4Argument::*;
+        let newline = format!("\n{}", " ".repeat(indent_level * Self::M4_TAB_WIDTH));
+        match arg {
+            Literal(lit) => format!("[{}]", lit),
+            Word(word) => self.display_word(word, false),
+            Array(words) => format!(
+                "{}",
+                words
+                    .iter()
+                    .map(|w| self.display_word(w, false))
+                    .collect::<Vec<String>>()
+                    .join(if words.len() < 10 { " " } else { &newline })
+            ),
+            Program(prog) => format!("[{}]", prog.replace("\n", &newline)),
+            Commands(cmds) => {
+                if !cmds.is_empty() {
+                    format!(
+                        "[\n{}{newline}]",
+                        cmds.iter()
+                            .map(|c| self.display_node(*c, indent_level + 2))
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    )
+                } else {
+                    "[]".to_owned()
+                }
+            }
+            Condition(cond) => format!("[{}]", self.display_condition(cond)),
+            Unknown(unknown) => format!("[{}]", unknown),
+        }
+    }
+}
+
 /// A macro call utilizing M4 macros.
 //Macro(M4Macro),
 
@@ -236,6 +323,143 @@ pub trait DisplayNode {
 /// The type parameter `L` represents the literal type used in words and must implement
 /// `fmt::Display` for formatting.
 pub trait NodePool<W>: DisplayNode<Word = W> {
+    /// Standard indentation width for formatting shell commands.
+    const TAB_WIDTH: usize = 2;
+    /// Entry function for displaying a command.
+    fn display_command(
+        &self,
+        cmd: &ShellCommand<W>,
+        comment: Option<String>,
+        indent_level: usize,
+    ) -> String {
+        self.command_to_string(cmd, comment, indent_level)
+    }
+
+    /// Entry function for displaying a command body.
+    fn display_body(&self, cmds: &[NodeId], level: usize) -> String {
+        self.body_to_string(cmds, level)
+    }
+
+    /// Entry function for displaying a condition.
+    fn display_condition(&self, cond: &Condition<W>) -> String {
+        self.condition_to_string(cond)
+    }
+
+    /// Entry function for displaying a redirect.
+    fn display_redirect(&self, redirect: &Redirect<W>) -> String {
+        self.redirect_to_string(redirect)
+    }
+
+    /// Entry function for displaying a shell word.
+    fn display_shell_word(&self, shell_word: &WordFragment<W>) -> String {
+        self.shell_word_to_string(shell_word)
+    }
+
+    /// Entry function for displaying an inner parameter.
+    fn display_inner_param(&self, param: &super::Parameter<String>) -> String {
+        self.inner_param_to_string(param)
+    }
+
+    /// Entry function for displaying a parameter substitution.
+    fn display_parameter_substitution(&self, param_subst: &ParameterSubstitution<W>) -> String {
+        self.parameter_substitution_to_string(param_subst)
+    }
+
+    /// Entry function for displaying an operator.
+    fn display_operator(&self, op: &Operator<W>) -> String {
+        self.operator_to_string(op)
+    }
+
+    /// Entry function for displaying an assignment command.
+    fn display_assignment(&self, name: &str, word: &W, indent_level: usize) -> String {
+        self.assignment_to_string(name, word, indent_level)
+    }
+
+    /// Entry function for displaying a simple command.
+    fn display_cmd(&self, words: &[W], indent_level: usize) -> String {
+        self.cmd_to_string(words, indent_level)
+    }
+
+    /// Entry function for displaying a brace command.
+    fn display_brace(&self, cmds: &[NodeId], indent_level: usize) -> String {
+        self.brace_to_string(cmds, indent_level)
+    }
+
+    /// Entry function for displaying a subshell command.
+    fn display_subshell(&self, cmds: &[NodeId], indent_level: usize) -> String {
+        self.subshell_to_string(cmds, indent_level)
+    }
+
+    /// Entry function for displaying a while loop.
+    fn display_while(&self, pair: &GuardBodyPair<W>, indent_level: usize) -> String {
+        self.while_to_string(pair, indent_level)
+    }
+
+    /// Entry function for displaying an until loop.
+    fn display_until(&self, pair: &GuardBodyPair<W>, indent_level: usize) -> String {
+        self.until_to_string(pair, indent_level)
+    }
+
+    /// Entry function for displaying an if statement.
+    fn display_if(
+        &self,
+        conditionals: &[GuardBodyPair<W>],
+        else_branch: &[NodeId],
+        indent_level: usize,
+    ) -> String {
+        self.if_to_string(conditionals, else_branch, indent_level)
+    }
+
+    /// Entry function for displaying a for loop.
+    fn display_for(&self, var: &str, words: &[W], body: &[NodeId], indent_level: usize) -> String {
+        self.for_to_string(var, words, body, indent_level)
+    }
+
+    /// Entry function for displaying a case statement.
+    fn display_case(&self, word: &W, arms: &[PatternBodyPair<W>], indent_level: usize) -> String {
+        self.case_to_string(word, arms, indent_level)
+    }
+
+    /// Entry function for displaying an and command.
+    fn display_and(&self, cond: &Condition<W>, id: NodeId, indent_level: usize) -> String {
+        self.and_to_string(cond, id, indent_level)
+    }
+
+    /// Entry function for displaying an or command.
+    fn display_or(&self, cond: &Condition<W>, id: NodeId, indent_level: usize) -> String {
+        self.or_to_string(cond, id, indent_level)
+    }
+
+    /// Entry function for displaying a pipe command.
+    fn display_pipe(&self, bang: bool, cmds: &[NodeId], indent_level: usize) -> String {
+        self.pipe_to_string(bang, cmds, indent_level)
+    }
+
+    /// Entry function for displaying a redirect command.
+    fn display_redirect_cmd(
+        &self,
+        cmd: NodeId,
+        redirects: &[Redirect<W>],
+        indent_level: usize,
+    ) -> String {
+        self.redirect_cmd_to_string(cmd, redirects, indent_level)
+    }
+
+    /// Entry function for displaying a background command.
+    fn display_background(&self, cmd: NodeId, indent_level: usize) -> String {
+        self.background_to_string(cmd, indent_level)
+    }
+
+    /// Entry function for displaying a function definition.
+    fn display_function_def(&self, name: &str, body: NodeId) -> String {
+        self.function_def_to_string(name, body)
+    }
+
+    /// Entry function for displaying an arithmetic.
+    fn display_arithmetic(&self, arith: &Arithmetic<String>) -> String {
+        arith.to_string()
+    }
+
     /// Format the AST node with the given `node_id` into a string, indenting each line
     /// by `indent` spaces to represent nested structures.
     fn command_to_string(
@@ -245,143 +469,27 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
         indent_level: usize,
     ) -> String {
         use self::ShellCommand::*;
-        const TAB_WIDTH: usize = 2;
-        let tab = " ".repeat(indent_level * TAB_WIDTH);
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
 
         let content = match cmd {
-            Assignment(name, word) => {
-                format!("{tab}{}={}", name, self.display_word(word, true))
-            }
-            Cmd(words) => format!(
-                "{tab}{}",
-                words
-                    .iter()
-                    .enumerate()
-                    .map(|(i, w)| self.display_word(w, i > 0))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            ),
-            Brace(cmds) => {
-                format!(
-                    "{tab}{{\n{}{tab}}}",
-                    self.body_to_string(cmds, indent_level + 1)
-                )
-            }
-            Subshell(cmds) => {
-                format!(
-                    "{tab}(\n{}{tab})",
-                    self.body_to_string(cmds, indent_level + 1)
-                )
-            }
-            While(pair) => format!(
-                "{tab}while {}; do\n{}{tab}done",
-                self.condition_to_string(&pair.condition),
-                self.body_to_string(&pair.body, indent_level + 1)
-            ),
-            Until(pair) => format!(
-                "{tab}until {}; do\n{}{tab}done",
-                self.condition_to_string(&pair.condition),
-                self.body_to_string(&pair.body, indent_level + 1)
-            ),
+            Assignment(name, word) => self.display_assignment(name, word, indent_level),
+            Cmd(words) => self.display_cmd(words, indent_level),
+            Brace(cmds) => self.display_brace(cmds, indent_level),
+            Subshell(cmds) => self.display_subshell(cmds, indent_level),
+            While(pair) => self.display_while(pair, indent_level),
+            Until(pair) => self.display_until(pair, indent_level),
             If {
                 conditionals,
                 else_branch,
-            } => {
-                let first_if = {
-                    let pair = conditionals.first().unwrap();
-                    format!(
-                        "{tab}if {}; then\n{}",
-                        self.condition_to_string(&pair.condition),
-                        self.body_to_string(&pair.body, indent_level + 1)
-                    )
-                };
-                let else_if = conditionals
-                    .iter()
-                    .skip(1)
-                    .map(|pair| {
-                        format!(
-                            "{tab}else if {}; then\n{}",
-                            self.condition_to_string(&pair.condition),
-                            self.body_to_string(&pair.body, indent_level + 1)
-                        )
-                    })
-                    .collect::<Vec<String>>()
-                    .join("");
-                let rest = if else_branch.is_empty() {
-                    format!("{tab}fi")
-                } else {
-                    format!(
-                        "{tab}else\n{}{tab}fi",
-                        self.body_to_string(else_branch, indent_level + 1)
-                    )
-                };
-                format!("{}{}{}", first_if, else_if, rest)
-            }
-            For { var, words, body } => format!(
-                "{tab}for {var} in {}; do\n{}{tab}done",
-                words
-                    .iter()
-                    .map(|w| self.display_word(w, true))
-                    .collect::<Vec<String>>()
-                    .join(" "),
-                self.body_to_string(body, indent_level + 1)
-            ),
-            Case { word, arms } => format!(
-                "{tab}case {} in\n{}{tab}esac",
-                self.display_word(word, false),
-                {
-                    let mut arms = arms
-                        .iter()
-                        .map(|arm| {
-                            format!(
-                                "{tab}  {})\n{}{tab}    ;;",
-                                arm.patterns
-                                    .iter()
-                                    .map(|w| self.display_word(w, false))
-                                    .collect::<Vec<String>>()
-                                    .join("|"),
-                                self.body_to_string(&arm.body, indent_level + 2)
-                            )
-                        })
-                        .collect::<Vec<String>>()
-                        .join("\n");
-                    if !arms.is_empty() {
-                        arms.push('\n');
-                    }
-                    arms
-                }
-            ),
-            And(cond, id) => format!(
-                "{tab}{} && {}",
-                self.condition_to_string(cond),
-                self.display_node(*id, 0)
-            ),
-            Or(cond, id) => format!(
-                "{tab}{} || {}",
-                self.condition_to_string(cond),
-                self.display_node(*id, 0)
-            ),
-            Pipe(bang, cmds) => format!(
-                "{tab}{}{}",
-                if *bang { "!" } else { "" },
-                cmds.iter()
-                    .map(|c| self.display_node(*c, 0))
-                    .collect::<Vec<String>>()
-                    .join(" | ")
-            ),
-            Redirect(cmd, redirects) => format!(
-                "{} {}",
-                self.display_node(*cmd, indent_level),
-                redirects
-                    .iter()
-                    .map(|r| self.redirect_to_string(r))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            ),
-            Background(cmd) => format!("{tab}{} &", self.display_node(*cmd, indent_level)),
-            FunctionDef { name, body } => {
-                format!("function {name} () {}", self.display_node(*body, 0))
-            }
+            } => self.display_if(conditionals, else_branch, indent_level),
+            For { var, words, body } => self.display_for(var, words, body, indent_level),
+            Case { word, arms } => self.display_case(word, arms, indent_level),
+            And(cond, id) => self.display_and(cond, *id, indent_level),
+            Or(cond, id) => self.display_or(cond, *id, indent_level),
+            Pipe(bang, cmds) => self.display_pipe(*bang, cmds, indent_level),
+            Redirect(cmd, redirects) => self.display_redirect_cmd(*cmd, redirects, indent_level),
+            Background(cmd) => self.display_background(*cmd, indent_level),
+            FunctionDef { name, body } => self.display_function_def(name, *body),
         };
         if let Some(comment) = comment {
             let newline = format!("\n{tab}");
@@ -389,6 +497,216 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
         } else {
             content
         }
+    }
+
+    /// Format an assignment command into a string.
+    fn assignment_to_string(&self, name: &str, word: &W, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!("{tab}{}={}", name, self.display_word(word, true))
+    }
+
+    /// Format a simple command into a string.
+    fn cmd_to_string(&self, words: &[W], indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}{}",
+            words
+                .iter()
+                .enumerate()
+                .map(|(i, w)| self.display_word(w, i > 0))
+                .collect::<Vec<String>>()
+                .join(" ")
+        )
+    }
+
+    /// Format a brace command into a string.
+    fn brace_to_string(&self, cmds: &[NodeId], indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}{{\n{}{tab}}}",
+            self.display_body(cmds, indent_level + 1)
+        )
+    }
+
+    /// Format a subshell command into a string.
+    fn subshell_to_string(&self, cmds: &[NodeId], indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}(\n{}{tab})",
+            self.display_body(cmds, indent_level + 1)
+        )
+    }
+
+    /// Format a while loop into a string.
+    fn while_to_string(&self, pair: &GuardBodyPair<W>, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}while {}; do\n{}{tab}done",
+            self.display_condition(&pair.condition),
+            self.display_body(&pair.body, indent_level + 1)
+        )
+    }
+
+    /// Format an until loop into a string.
+    fn until_to_string(&self, pair: &GuardBodyPair<W>, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}until {}; do\n{}{tab}done",
+            self.display_condition(&pair.condition),
+            self.display_body(&pair.body, indent_level + 1)
+        )
+    }
+
+    /// Format an if statement into a string.
+    fn if_to_string(
+        &self,
+        conditionals: &[GuardBodyPair<W>],
+        else_branch: &[NodeId],
+        indent_level: usize,
+    ) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+
+        let first_if = {
+            let pair = conditionals.first().unwrap();
+            format!(
+                "{tab}if {}; then\n{}",
+                self.display_condition(&pair.condition),
+                self.display_body(&pair.body, indent_level + 1)
+            )
+        };
+        let else_if = conditionals
+            .iter()
+            .skip(1)
+            .map(|pair| {
+                format!(
+                    "{tab}else if {}; then\n{}",
+                    self.display_condition(&pair.condition),
+                    self.display_body(&pair.body, indent_level + 1)
+                )
+            })
+            .collect::<Vec<String>>()
+            .join("");
+        let rest = if else_branch.is_empty() {
+            format!("{tab}fi")
+        } else {
+            format!(
+                "{tab}else\n{}{tab}fi",
+                self.display_body(else_branch, indent_level + 1)
+            )
+        };
+        format!("{}{}{}", first_if, else_if, rest)
+    }
+
+    /// Format a for loop into a string.
+    fn for_to_string(
+        &self,
+        var: &str,
+        words: &[W],
+        body: &[NodeId],
+        indent_level: usize,
+    ) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}for {var} in {}; do\n{}{tab}done",
+            words
+                .iter()
+                .map(|w| self.display_word(w, true))
+                .collect::<Vec<String>>()
+                .join(" "),
+            self.display_body(body, indent_level + 1)
+        )
+    }
+
+    /// Format a case statement into a string.
+    fn case_to_string(&self, word: &W, arms: &[PatternBodyPair<W>], indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}case {} in\n{}{tab}esac",
+            self.display_word(word, false),
+            {
+                let mut arms = arms
+                    .iter()
+                    .map(|arm| {
+                        format!(
+                            "{tab}  {})\n{}{tab}    ;;",
+                            arm.patterns
+                                .iter()
+                                .map(|w| self.display_word(w, false))
+                                .collect::<Vec<String>>()
+                                .join("|"),
+                            self.display_body(&arm.body, indent_level + 2)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !arms.is_empty() {
+                    arms.push('\n');
+                }
+                arms
+            }
+        )
+    }
+
+    /// Format an and command into a string.
+    fn and_to_string(&self, cond: &Condition<W>, id: NodeId, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}{} && {}",
+            self.display_condition(cond),
+            self.display_node(id, 0)
+        )
+    }
+
+    /// Format an or command into a string.
+    fn or_to_string(&self, cond: &Condition<W>, id: NodeId, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}{} || {}",
+            self.display_condition(cond),
+            self.display_node(id, 0)
+        )
+    }
+
+    /// Format a pipe command into a string.
+    fn pipe_to_string(&self, bang: bool, cmds: &[NodeId], indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!(
+            "{tab}{}{}",
+            if bang { "!" } else { "" },
+            cmds.iter()
+                .map(|c| self.display_node(*c, 0))
+                .collect::<Vec<String>>()
+                .join(" | ")
+        )
+    }
+
+    /// Format a redirect command into a string.
+    fn redirect_cmd_to_string(
+        &self,
+        cmd: NodeId,
+        redirects: &[Redirect<W>],
+        indent_level: usize,
+    ) -> String {
+        format!(
+            "{} {}",
+            self.display_node(cmd, indent_level),
+            redirects
+                .iter()
+                .map(|r| self.display_redirect(r))
+                .collect::<Vec<String>>()
+                .join(" ")
+        )
+    }
+
+    /// Format a background command into a string.
+    fn background_to_string(&self, cmd: NodeId, indent_level: usize) -> String {
+        let tab = " ".repeat(indent_level * Self::TAB_WIDTH);
+        format!("{tab}{} &", self.display_node(cmd, indent_level))
+    }
+
+    /// Format a function definition into a string.
+    fn function_def_to_string(&self, name: &str, body: NodeId) -> String {
+        format!("function {name} () {}", self.display_node(body, 0))
     }
 
     /// Convert a list of command node IDs to a formatted string.
@@ -409,17 +727,17 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
     fn condition_to_string(&self, cond: &Condition<W>) -> String {
         use super::condition::Condition::*;
         match cond {
-            Cond(op) => format!("test {}", self.operator_to_string(op)),
-            Not(cond) => format!("! {}", self.condition_to_string(cond)),
+            Cond(op) => format!("test {}", self.display_operator(op)),
+            Not(cond) => format!("! {}", self.display_condition(cond)),
             And(lhs, rhs) => format!(
                 "{} && {}",
-                self.condition_to_string(lhs),
-                self.condition_to_string(rhs)
+                self.display_condition(lhs),
+                self.display_condition(rhs)
             ),
             Or(lhs, rhs) => format!(
                 "{} && {}",
-                self.condition_to_string(lhs),
-                self.condition_to_string(rhs)
+                self.display_condition(lhs),
+                self.display_condition(rhs)
             ),
             Eval(cmd) => format!("eval \"{}\"", cmd.to_string()),
             ReturnZero(cmd) => format!("{}", self.display_node(**cmd, 0)),
@@ -484,19 +802,35 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 "\"{}\"",
                 frags
                     .iter()
-                    .map(|frag| self.shell_word_to_string(frag))
+                    .map(|frag| self.display_shell_word(frag))
                     .collect::<Vec<String>>()
                     .concat()
             ),
             Escaped(lit) => format!("\\{}", lit),
-            Param(param) => format!("${{{}}}", param_raw(&param)),
-            Subst(param_subst) => self.parameter_substitution_to_string(&param_subst),
+            Param(param) => format!("${{{}}}", self.display_inner_param(&param)),
+            Subst(param_subst) => self.display_parameter_substitution(&param_subst),
             Star => "*".to_string(),
             Question => "?".to_string(),
             SquareOpen => "[".to_string(),
             SquareClose => "]".to_string(),
             Tilde => "~".to_string(),
             Colon => ":".to_string(),
+        }
+    }
+
+    /// Format a `Parameter` into its literal string form, except its prefixes such as '$'.
+    fn inner_param_to_string(&self, param: &super::Parameter<String>) -> String {
+        use super::Parameter::*;
+        match param {
+            At => "@".to_string(),
+            Star => "*".to_string(),
+            Pound => "#".to_string(),
+            Question => "?".to_string(),
+            Dash => "-".to_string(),
+            Dollar => "$".to_string(),
+            Bang => "!".to_string(),
+            Positional(p) => p.to_string(),
+            Var(v) => v.to_string(),
         }
     }
 
@@ -511,59 +845,59 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                     .collect::<Vec<String>>()
                     .join(";")
             ),
-            Len(param) => format!("${{#{}}}", param_raw(param)),
+            Len(param) => format!("${{#{}}}", self.display_inner_param(param)),
             Arith(arith) => format!(
                 "$(( {} ))",
-                arith.as_ref().map_or("".to_string(), |a| a.to_string())
+                arith.as_ref().map_or("".to_string(), |a| self.display_arithmetic(a))
             ),
             Default(_, param, word) => format!(
                 "${{{}:-{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 word.as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Assign(_, param, word) => format!(
                 "${{{}:={}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 word.as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Error(_, param, word) => format!(
                 "${{{}:?{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 word.as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             Alternative(_, param, word) => format!(
                 "${{{}:+{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 word.as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveSmallestSuffix(param, pattern) => format!(
                 "${{{}%{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 pattern
                     .as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveLargestSuffix(param, pattern) => format!(
                 "${{{}%%{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 pattern
                     .as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveSmallestPrefix(param, pattern) => format!(
                 "${{{}#{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 pattern
                     .as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
             ),
             RemoveLargestPrefix(param, pattern) => format!(
                 "${{{}##{}}}",
-                param_raw(param),
+                self.display_inner_param(param),
                 pattern
                     .as_ref()
                     .map_or("".to_string(), |w| self.display_word(w, false))
@@ -612,21 +946,6 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
             File(w) => format!("-f {}", self.display_word(w, false)),
             NoExists(w) => format!("! -e {}", self.display_word(w, false)),
         }
-    }
-}
-
-fn param_raw(param: &super::Parameter<String>) -> String {
-    use super::Parameter::*;
-    match param {
-        At => "@".to_string(),
-        Star => "*".to_string(),
-        Pound => "#".to_string(),
-        Question => "?".to_string(),
-        Dash => "-".to_string(),
-        Dollar => "$".to_string(),
-        Bang => "!".to_string(),
-        Positional(p) => p.to_string(),
-        Var(v) => v.to_string(),
     }
 }
 

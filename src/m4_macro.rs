@@ -720,12 +720,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_precious("libdir"),  // ${exec_prefix}/lib
                         Var::define_precious("localedir"), // ${datarootdir}/locale
                         Var::define_precious("mandir"),  // ${datarootdir}/man
-                        Var::define_precious("host"),    // $host
-                        Var::define_precious("host_alias"), // $host_alias
-                        Var::define_precious("build"),   // raw argument
-                        Var::define_precious("build_alias"), // canonicalized
-                        Var::define_precious("target"),  // $build_alias
-                        Var::define_precious("target_alias"), // $build_alias
+                        // Var::define_precious("host"),    // $host
+                        // Var::define_precious("host_alias"), // $host_alias
+                        // Var::define_precious("build"),   // raw argument
+                        // Var::define_precious("build_alias"), // canonicalized
+                        // Var::define_precious("target"),  // $build_alias
+                        // Var::define_precious("target_alias"), // $build_alias
                         "cross_compiling".into(),        // $host_alias != $build_alias
                         "ac_tool_prefix".into(),         // "$host_alias-"
                         // by _AC_INIT_DIRCHECK
