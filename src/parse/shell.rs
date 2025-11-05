@@ -71,7 +71,6 @@ where
 pub struct ShellParser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
-    in_recipe: bool,
 }
 
 impl<I: Iterator<Item = Token>, B: ShellBuilder + Default> ShellParser<I, B>
@@ -213,7 +212,6 @@ where
         ShellParser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
-            in_recipe: false,
         }
     }
 
@@ -252,7 +250,7 @@ where
         &mut self,
         pre_cmd_comments: Vec<builder::Newline>,
         start_pos: SourcePos,
-        preserve_line_head: bool,
+        _preserve_line_head: bool,
     ) -> ParseResult<B::Command, B::Error> {
         let cmd = self.and_or_list()?;
 
@@ -898,22 +896,6 @@ where
         &mut self,
     ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         self.word_preserve_trailing_whitespace_raw_with_delim(None)
-    }
-
-    /// Parses words until a specified word delimiter hits
-    fn words_with_delim(&mut self, delims: &[Token]) -> ParseResult<Vec<B::Word>, B::Error> {
-        let mut ret = Vec::new();
-        while let Some(w) = self.word_preserve_trailing_whitespace_raw_with_delim(Some(delims))? {
-            let word = self.builder.word(w)?;
-            ret.push(word);
-            if let Some(tok) = self.iter.peek() {
-                if delims.iter().any(|t| t == tok) {
-                    break;
-                }
-            }
-            self.skip_whitespace();
-        }
-        Ok(ret)
     }
 
     /// Identical to `Parser::word_preserve_trailing_whitespace_raw()` but

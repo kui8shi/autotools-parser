@@ -303,8 +303,8 @@ where
 
     /// Parses a single automake recipe command.
     pub fn automake_recipe(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
-        let start_pos = self.iter.pos();
-        let pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
+        let _start_pos = self.iter.pos();
+        let _pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
 
         match self.iter.peek() {
             Some(Name(s)) => {
@@ -330,8 +330,8 @@ where
     /// Parses a single automake top-level statement.
     pub fn automake_statement(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
         const INCLUDE: &str = "include";
-        let start_pos = self.iter.pos();
-        let pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
+        let _start_pos = self.iter.pos();
+        let _pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
 
         match self.iter.peek().cloned() {
             Some(Name(s)) => {
@@ -353,7 +353,7 @@ where
                 }
             }
             Some(Dollar | Percent | Dot) => Ok(self.automake_rule()?),
-            Some(Whitespace(s)) => Err(self.make_unexpected_err()),
+            Some(Whitespace(_)) => Err(self.make_unexpected_err()),
             None => Ok(None),
             _ => Err(self.make_unexpected_err()),
         }

@@ -799,7 +799,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
         match &shell_word {
             Literal(lit) => lit.to_owned(),
             DoubleQuoted(frags) => format!(
-                "\"{}\"",
+                "{}",
                 frags
                     .iter()
                     .map(|frag| self.display_shell_word(frag))
@@ -946,14 +946,5 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
             File(w) => format!("-f {}", self.display_word(w, false)),
             NoExists(w) => format!("! -e {}", self.display_word(w, false)),
         }
-    }
-}
-
-fn add_newline(mut s: String) -> String {
-    if s.is_empty() {
-        s
-    } else {
-        s.push('\n');
-        s
     }
 }

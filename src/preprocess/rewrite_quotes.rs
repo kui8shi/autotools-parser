@@ -53,12 +53,14 @@ impl Default for QuoteRewriteConfig {
 }
 
 /// Rewrites m4 quotes in an m4/autoconf file content
+#[allow(dead_code)]
 pub fn rewrite_quotes(input: &str) -> String {
     let mut rewriter = Rewriter::new(Lexer::new(input.chars()), QuoteRewriteConfig::default());
     rewriter.rewrite_quotes()
 }
 
 /// Same as above but with a configuration specifying quoting characters
+#[allow(dead_code)]
 pub fn rewrite_quotes_with_config(input: &str, config: QuoteRewriteConfig) -> String {
     let mut rewriter = Rewriter::new(Lexer::new(input.chars()), config);
     rewriter.rewrite_quotes()
