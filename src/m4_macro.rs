@@ -726,8 +726,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // Var::define_precious("build_alias"), // canonicalized
                         // Var::define_precious("target"),  // $build_alias
                         // Var::define_precious("target_alias"), // $build_alias
-                        "cross_compiling".into(),        // $host_alias != $build_alias
-                        "ac_tool_prefix".into(),         // "$host_alias-"
+                        "cross_compiling".into(), // $host_alias != $build_alias
+                        "ac_tool_prefix".into(),  // "$host_alias-"
                         // by _AC_INIT_DIRCHECK
                         "ac_pwd".into(),
                         // by _AC_INIT_SRCDIR
@@ -1372,8 +1372,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AM_CONDITIONAL",
                 M4MacroSignature {
                     arg_types: vec![
-                        Lit,    // conditional (definition of AM var)
-                        AMCond, // condition
+                        VarName(None, Some(&|s| vec![ExCond(s.into())])), // conditional (definition of AM var)
+                        AMCond,                                           // condition
                     ],
                     ret_type: Some(Cmds),
                     ..Default::default()

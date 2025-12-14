@@ -71,7 +71,6 @@ where
 pub struct AutomakeParser<I, B> {
     iter: TokenIterWrapper<I>,
     builder: B,
-    in_recipe: bool,
 }
 
 impl<I: Iterator<Item = Token>, B: ShellBuilder + MakeBuilder + Default> AutomakeParser<I, B>
@@ -213,7 +212,6 @@ where
         AutomakeParser {
             iter: TokenIterWrapper::Regular(TokenIter::new(iter)),
             builder,
-            in_recipe: false,
         }
     }
 
@@ -223,7 +221,7 @@ where
     }
 
     /// Parses a single automake top-level statement.
-    pub fn automake_conditional(&mut self) -> ParseResult<B::Statement, B::Error> {
+    pub fn automake_conditional(&mut self, in_recipe: bool) -> ParseResult<B::Statement, B::Error> {
         const ENDIF: &str = "endif";
         self.skip_whitespace();
         let guard_var = if let Some(Name(name)) = self.iter.next() {
@@ -248,8 +246,8 @@ where
                     break;
                 }
             }
-            let stmt = if self.in_recipe {
-                self.automake_recipe()?.unwrap()
+            let stmt = if in_recipe {
+                self.automake_command()?.unwrap()
             } else {
                 self.automake_statement()?.unwrap()
             };
@@ -291,25 +289,27 @@ where
     /// Parses a single automake shell command statement.
     pub fn automake_command(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
         // consume tab
-        eat!(self, { Whitespace(_) => {} });
-        // in recipe, command name can be prefixed by '@' (: silent). we don't need that.
+        eat_maybe!(self, { Whitespace(_) => {} });
+        // in recipe, command name can be prefixed by '-@' (: silent). we don't need that.
+        eat_maybe!(self, { Dash => {} });
         eat_maybe!(self, { At => {} });
-        if let Some(cmd) = self.complete_command()? {
+        let cmd = if let Some(cmd) = self.complete_command()? {
             Ok(Some(self.builder.shell_as_recipe(cmd)?))
         } else {
             Ok(None)
-        }
+        };
+        cmd
     }
 
     /// Parses a single automake recipe command.
     pub fn automake_recipe(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
         let _start_pos = self.iter.pos();
         let _pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
-
         match self.iter.peek() {
             Some(Name(s)) => {
                 if s == IF {
-                    Ok(Some(self.automake_conditional()?))
+                    self.iter.next();
+                    Ok(Some(self.automake_conditional(true)?))
                 } else {
                     // now we are out of recipe.
                     Ok(None)
@@ -338,7 +338,7 @@ where
                 if s == IF {
                     // conditional statement
                     eat!(self, { Name(_) => {} });
-                    Ok(Some(self.automake_conditional()?))
+                    Ok(Some(self.automake_conditional(false)?))
                 } else if s == INCLUDE {
                     // include statement
                     eat!(self, { Name(_) => {} });
