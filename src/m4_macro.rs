@@ -1504,6 +1504,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         VarName(Some(VarAttrs::output()), None), // name
                         Word,                                    // program
+                        Path(None),                              // [missing_dir] obsolete argument
                     ],
                     ret_type: Some(Cmds),
                     paths: Some(vec![
@@ -3144,6 +3145,16 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ..Default::default()
                 },
             ),
+            (
+                "AC_TYPE_SIGNAL",
+                M4MacroSignature {
+                    ret_type: Some(Cmds),
+                    shell_vars: None,
+                    cpp_symbols: Some(vec!["RETSIGTYPE".into()]),
+                    paths: Some(vec!["signal.h".into()]),
+                    ..Default::default()
+                },
+            ),
             // Generic type checks
             (
                 "AC_CHECK_TYPE",
@@ -3268,6 +3279,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AC_OPENMP",
                 M4MacroSignature {
+                    arg_types: vec![
+                        Lit, // [language]
+                    ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         Var::define_output("OPENMP_CFLAGS"),
@@ -8169,6 +8183,27 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Lit,                                      // flag
                         VarName(Some(VarAttrs::default()), None), // flag-variable
                     ],
+                    ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_PTHREAD",
+                M4MacroSignature {
+                    arg_types: vec![
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    shell_vars: Some(vec![
+                        Var::define_output("PTHREAD_LIBS"),
+                        Var::define_output("PTHREAD_CFLAGS"),
+                        Var::define_output("PTHREAD_CC"),
+                        Var::define_output("PTHREAD_CXX"),
+                    ]),
+                    cpp_symbols: Some(vec![
+                        "PTHREAD_CREATE_JOINABLE".into(),
+                        "HAVE_PTHREAD_PRIO_INHERIT".into(),
+                    ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },

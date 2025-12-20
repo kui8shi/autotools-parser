@@ -43,6 +43,7 @@ where
     I: Iterator<Item = Token>,
     B: ShellBuilder + MakeBuilder,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
+    B::Word: Debug,
 {
     type TopLevel = B::Statement;
     type Error = B::Error;
@@ -56,6 +57,7 @@ where
     I: Iterator<Item = Token>,
     B: ShellBuilder + MakeBuilder,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
+    B::Word: Debug,
 {
     type IntoIter = ParserIterator<Self>;
     type Item = <Self::IntoIter as Iterator>::Item;
@@ -76,6 +78,7 @@ pub struct AutomakeParser<I, B> {
 impl<I: Iterator<Item = Token>, B: ShellBuilder + MakeBuilder + Default> AutomakeParser<I, B>
 where
     B::WordFragment: Into<Option<String>> + Clone + Debug,
+    B::Word: Debug,
 {
     /// Creates a new Parser from a Token iterator or collection.
     pub fn new<T>(iter: T) -> AutomakeParser<I, B>
@@ -101,7 +104,7 @@ where
         + Into<Option<ast::node::WordFragment<AmWord>>>
         + Into<Option<String>>
         + Clone,
-    U: Default,
+    U: Default + Debug,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
@@ -194,6 +197,7 @@ where
     I: Iterator<Item = Token>,
     B: ShellBuilder + MakeBuilder,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
+    B::Word: Debug,
 {
     /// Construct an `Unexpected` error using the given token. If `None` specified, the next
     /// token in the iterator will be used (or `UnexpectedEOF` if none left).
@@ -230,30 +234,52 @@ where
             return Err(self.make_unexpected_err());
         };
         self.linebreak_preserve_line_head_whitespace();
-        let mut after_else_keyword = false;
+
         let mut then = Vec::new();
         let mut otherwise = Vec::new();
-        loop {
+
+        let need_otherwise_branch = loop {
             if let Some(directive) = self.peek_reserved_word(&[ELSE, ENDIF]) {
                 if directive == ELSE {
                     self.iter.next();
-                    after_else_keyword = true;
                     self.newline();
+                    break true;
                 } else if directive == ENDIF {
                     self.iter.next();
-                    self.word()?;
+                    self.word()?; // FIXME: What is this? What for?
                     self.newline();
-                    break;
+                    break false;
                 }
             }
-            let stmt = if in_recipe {
+            let next = if in_recipe {
                 self.automake_command()?.unwrap()
             } else {
-                self.automake_statement()?.unwrap()
+                let stmt = self.automake_statement()?.unwrap();
+                self.linebreak_preserve_line_head_whitespace();
+                stmt
             };
-            match after_else_keyword {
-                false => then.push(stmt),
-                true => otherwise.push(stmt),
+            then.push(next);
+        };
+
+        if need_otherwise_branch {
+            loop {
+                self.linebreak_preserve_line_head_whitespace();
+                if let Some(directive) = self.peek_reserved_word(&[ENDIF]) {
+                    if directive == ENDIF {
+                        self.iter.next();
+                        self.word()?;
+                        self.newline();
+                        break;
+                    }
+                }
+                let next = if in_recipe {
+                    self.automake_command()?.unwrap()
+                } else {
+                    let stmt = self.automake_statement()?.unwrap();
+                    self.linebreak_preserve_line_head_whitespace();
+                    stmt
+                };
+                otherwise.push(next);
             }
         }
         Ok(self.builder.conditional(guard_var, then, otherwise)?)
@@ -275,12 +301,12 @@ where
 
     /// Parses a single automake assignment statement.
     pub fn automake_assignment(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
-        if let Some((name, op)) = self.automake_assign_op()? {
+        if let Some((ident, op)) = self.automake_assign_op()? {
             // assignment statement
             self.skip_whitespace();
             let words = self.words_with_delim(&[Newline])?;
             eat!(self, { Newline => {} });
-            Ok(Some(self.builder.assignment(name, op, words)?))
+            Ok(Some(self.builder.assignment(ident, op, words)?))
         } else {
             Ok(None)
         }
@@ -304,10 +330,10 @@ where
     /// Parses a single automake recipe command.
     pub fn automake_recipe(&mut self) -> ParseResult<Option<B::Statement>, B::Error> {
         let _start_pos = self.iter.pos();
-        let _pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
+        let pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
         match self.iter.peek() {
             Some(Name(s)) => {
-                if s == IF {
+                if s == IF && pre_stmt_comments.is_empty() {
                     self.iter.next();
                     Ok(Some(self.automake_conditional(true)?))
                 } else {
@@ -360,12 +386,20 @@ where
     }
 
     /// Parse an automake assignment operator without consuming tokens until confirmed.
-    pub fn automake_assign_op(&mut self) -> ParseResult<Option<(String, AmAssignOp)>, B::Error> {
+    pub fn automake_assign_op(&mut self) -> ParseResult<Option<(B::Word, AmAssignOp)>, B::Error> {
         use AmAssignOp::*;
         let may_op = {
             let mut peeked = self.iter.multipeek();
-            peeked.peek_next(); // eat identifier
-            let first_token_after_whitespaces = Self::multipeek_skip_whitespace(&mut peeked);
+            let first_token_after_whitespaces = loop {
+                let t = peeked.peek_next();
+                match t {
+                    Some(Name(_) | At) => {
+                        // eat identifier
+                    }
+                    t @ Some(Equals | Colon | Plus) => break t.cloned(),
+                    _ => break Self::multipeek_skip_whitespace(&mut peeked),
+                }
+            };
             match first_token_after_whitespaces {
                 Some(Equals) => Some(Lazy),
                 Some(Colon) if peeked.peek_next() == Some(&Equals) => Some(Instant),
@@ -374,7 +408,12 @@ where
             }
         };
         if let Some(op) = may_op {
-            if let Some(Name(ref name)) = self.iter.next() {
+            let delims = [Equals, Colon, Plus];
+            let word = match self.word_preserve_trailing_whitespace_raw_with_delim(Some(&delims))? {
+                Some(w) => Some(self.builder.word(w)?),
+                None => None,
+            };
+            if let Some(ident) = word {
                 self.skip_whitespace();
                 match &op {
                     Lazy => {
@@ -389,7 +428,7 @@ where
                         eat!(self, { Equals => {} });
                     }
                 };
-                Ok(Some((name.to_owned(), op)))
+                Ok(Some((ident, op)))
             } else {
                 Err(self.make_unexpected_err())
             }
@@ -623,10 +662,27 @@ where
     /// Parses a continuous list of redirections and will error if any words
     /// that are not valid file descriptors are found. Essentially used for
     /// parsing redirection lists after a compound command like `while` or `if`.
-    pub fn redirect_list(&mut self) -> ParseResult<Vec<B::Redirect>, B::Error> {
+    ///
+    /// @kui8shi
+    /// Brace and Subshell commands actually don't need to end with command
+    /// delimiters (newline, semi, etc..) when in a command group. For example,
+    /// shell doesn't correctly execute `if true; then echo hi fi`, but
+    /// does `if true; then (echo hi) fi`. To support this behavior, we introduce
+    /// `is_after_block` just for brace and shell commands.
+    pub fn redirect_list(
+        &mut self,
+        is_after_block: bool,
+    ) -> ParseResult<Vec<B::Redirect>, B::Error> {
         let mut list = Vec::new();
         loop {
             self.skip_whitespace();
+            if is_after_block {
+                if let Some(Name(lit)) = self.iter.peek() {
+                    if matches!(lit.as_str(), DONE | ELIF | ELSE | ESAC | FI) {
+                        break;
+                    }
+                }
+            }
             let start_pos = self.iter.pos();
             match self.redirect()? {
                 Some(Ok(io)) => list.push(io),
@@ -1911,37 +1967,37 @@ where
         let cmd = match kw.or_else(|| self.next_compound_command_type()) {
             Some(CompoundCmdKeyword::If) => {
                 let fragments = self.if_command()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.if_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::While) | Some(CompoundCmdKeyword::Until) => {
                 let (until, guard_body_pair) = self.loop_command()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.loop_command(until, guard_body_pair, io)?
             }
 
             Some(CompoundCmdKeyword::For) => {
                 let for_fragments = self.for_command()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.for_command(for_fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Case) => {
                 let fragments = self.case_command()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.case_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Brace) => {
                 let cmds = self.brace_group()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(true)?;
                 self.builder.brace_group(cmds, io)?
             }
 
             Some(CompoundCmdKeyword::Subshell) => {
                 let cmds = self.subshell()?;
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(true)?;
                 self.builder.subshell(cmds, io)?
             }
 

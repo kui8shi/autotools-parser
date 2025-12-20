@@ -88,7 +88,7 @@ impl<C, W, F, U> BuilderBase for NodeBuilder<C, W, F, U> {
 
 impl<U> M4Builder for NodeBuilder<AcCommand, AcWord, AcWordFragment, U>
 where
-    U: Default,
+    U: Default + Debug,
 {
     type M4Macro = M4Macro<Self::Command, Self::Word>;
     type M4Argument = M4Argument<Self::Command, Self::Word>;
@@ -139,7 +139,7 @@ where
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Clone
         + Debug,
-    U: Default,
+    U: Default + Debug,
 {
     fn map_quote_word(kind: QuoteWordKind<F>) -> Result<Option<F>, <Self as BuilderBase>::Error> {
         use super::QuoteWordKind::*;
@@ -203,7 +203,7 @@ impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> 
 
     fn assignment(
         &mut self,
-        lhs: String,
+        lhs: Self::Word,
         op: AmAssignOp,
         rhs: Vec<Self::Word>,
     ) -> Result<Self::Statement, Self::Error> {
@@ -225,14 +225,14 @@ impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> 
 
 impl<C, W, F, U> ShellBuilder for NodeBuilder<C, W, F, U>
 where
-    C: From<ShellCommand<Self::Word>> + Into<Option<ShellCommand<Self::Word>>> + Clone,
+    C: From<ShellCommand<Self::Word>> + Into<Option<ShellCommand<Self::Word>>> + Clone + Debug,
     W: From<Word<F>> + Into<Word<F>> + Into<Option<String>> + From<String> + Clone + Debug,
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Into<Option<String>>
         + Clone
         + Debug,
-    U: Default,
+    U: Default + Debug,
 {
     type CommandList = Self::Command;
     type ListableCommand = Self::Command;
@@ -436,9 +436,9 @@ where
 
         let conditionals = conditionals
             .into_iter()
-            .map(|gbp| {
-                let mut guard = gbp.guard.commands;
-                let mut body = gbp.body.commands;
+            .map(|pair| {
+                let mut guard = pair.guard.commands;
+                let mut body = pair.body.commands;
 
                 guard.shrink_to_fit();
                 body.shrink_to_fit();
@@ -688,7 +688,7 @@ where
         + Into<Option<WordFragment<String, NodeId, W>>>
         + Into<Option<String>>
         + Clone,
-    U: Default,
+    U: Default + Debug,
 {
     fn make_condition(&mut self, cmd: NodeId) -> Result<Condition<NodeId, W>, BuilderError> {
         let node = self.node_pop(cmd);
@@ -739,4 +739,4 @@ where
     }
 }
 
-impl<U> M4Simplifier for NodeBuilder<AcCommand, AcWord, AcWordFragment, U> where U: Default {}
+impl<U> M4Simplifier for NodeBuilder<AcCommand, AcWord, AcWordFragment, U> where U: Default + Debug {}

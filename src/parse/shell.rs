@@ -101,7 +101,7 @@ where
         + Into<Option<ast::node::WordFragment<ShWord>>>
         + Into<Option<String>>
         + Clone,
-    U: Default,
+    U: Default + Debug,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)

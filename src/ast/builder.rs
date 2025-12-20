@@ -592,7 +592,7 @@ pub trait MakeBuilder: BuilderBase {
     /// Constructs an automake assignment.
     fn assignment(
         &mut self,
-        lhs: String,
+        lhs: Self::Word,
         op: AmAssignOp,
         rhs: Vec<Self::Word>,
     ) -> Result<Self::Statement, Self::Error>;

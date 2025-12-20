@@ -52,6 +52,7 @@ impl<I, B> Parser for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Command: Debug,
     B::Word: From<String> + Into<Option<String>> + Clone + Debug,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
@@ -66,6 +67,7 @@ impl<I, B> IntoIterator for AutoconfParser<I, B>
 where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Command: Debug,
     B::Word: From<String> + Into<Option<String>> + Clone + Debug,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
@@ -202,7 +204,7 @@ where
         + Into<Option<ast::node::WordFragment<AcWord>>>
         + Into<Option<String>>
         + Clone,
-    U: Default,
+    U: Default + Debug,
 {
     /// Parse all complete commands
     /// (special method for NodeBuilder to easily take its state)
@@ -295,6 +297,7 @@ where
     I: Iterator<Item = Token>,
     B: ShellBuilder + M4Builder,
     B: ShellBuilder + M4Builder + ConditionBuilder,
+    B::Command: Debug,
     B::Word: From<String> + Into<Option<String>> + Clone + Debug,
     B::WordFragment: Into<Option<String>> + Clone + Debug,
 {
@@ -503,6 +506,7 @@ where
                         let w = match self.word_preserve_trailing_whitespace_raw_with_delim(
                             self.in_root().not().then_some(&[Comma, ParenClose]),
                             false,
+                            false,
                         )? {
                             Some(w) => Some(self.builder.word(w)?),
                             None => None,
@@ -565,10 +569,27 @@ where
     /// Parses a continuous list of redirections and will error if any words
     /// that are not valid file descriptors are found. Essentially used for
     /// parsing redirection lists after a compound command like `while` or `if`.
-    pub fn redirect_list(&mut self) -> ParseResult<Vec<B::Redirect>, B::Error> {
+    ///
+    /// @kui8shi
+    /// Brace and Subshell commands actually don't need to end with command
+    /// delimiters (newline, semi, etc..) when in a command group. For example,
+    /// shell doesn't correctly execute `if true; then echo hi fi`, but
+    /// does `if true; then (echo hi) fi`. To support this behavior, we introduce
+    /// `is_after_block` just for brace and shell commands.
+    pub fn redirect_list(
+        &mut self,
+        is_after_block: bool,
+    ) -> ParseResult<Vec<B::Redirect>, B::Error> {
         let mut list = Vec::new();
         loop {
             self.skip_whitespace();
+            if is_after_block {
+                if let Some(Name(lit)) = self.iter.peek() {
+                    if matches!(lit.as_str(), DONE | ELIF | ELSE | ESAC | FI) {
+                        break;
+                    }
+                }
+            }
             let start_pos = self.iter.pos();
             match self.redirect()? {
                 Some(Ok(io)) => list.push(io),
@@ -664,6 +685,7 @@ where
         let (src_fd, src_fd_as_word) = match self.word_preserve_trailing_whitespace_raw_with_delim(
             self.in_root().not().then_some(&[Comma, ParenClose]),
             false,
+            false,
         )? {
             None => (None, None),
             Some(w) => match as_num(&w) {
@@ -691,6 +713,7 @@ where
                 match $parser.word_preserve_trailing_whitespace_raw_with_delim(
                     $parser.in_root().not().then_some(&[Comma, ParenClose]),
                     false,
+                    false,
                 )? {
                     Some(p) => $parser.builder.word(p)?,
                     None => return Err(self.make_unexpected_err()),
@@ -711,6 +734,7 @@ where
                     let path = if let Some(p) = $parser
                         .word_preserve_trailing_whitespace_raw_with_delim(
                             $parser.in_root().not().then_some(&[Comma, ParenClose]),
+                            false,
                             false,
                         )? {
                         p
@@ -1237,7 +1261,7 @@ where
     fn word_preserve_trailing_whitespace_raw(
         &mut self,
     ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
-        self.word_preserve_trailing_whitespace_raw_with_delim(None, false)
+        self.word_preserve_trailing_whitespace_raw_with_delim(None, false, false)
     }
 
     /// Identical to `Parser::word_preserve_trailing_whitespace_raw()` but
@@ -1246,6 +1270,7 @@ where
         &mut self,
         delims: Option<&[Token]>,
         refresh_quote_context: bool,
+        is_m4_word: bool,
     ) -> ParseResult<Option<ConcatWordKind<B::WordFragment>>, B::Error> {
         self.skip_whitespace();
         let (quote_open, quote_close) = self.get_quotes();
@@ -1331,11 +1356,17 @@ where
                     continue;
                 }
 
-                Some(&Newline) | Some(&ParenOpen) | Some(&ParenClose) | Some(&Semi)
-                | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf) | Some(&DSemi)
-                | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat) | Some(&GreatAnd)
-                | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber) | Some(&LessGreat)
-                | Some(&Whitespace(_)) | None => break,
+                Some(&Newline) | Some(&ParenOpen) | Some(&ParenClose) | Some(&Whitespace(_))
+                | None => break,
+
+                Some(&Semi) | Some(&Amp) | Some(&Pipe) | Some(&AndIf) | Some(&OrIf)
+                | Some(&DSemi) | Some(&Less) | Some(&Great) | Some(&DLess) | Some(&DGreat)
+                | Some(&GreatAnd) | Some(&LessAnd) | Some(&DLessDash) | Some(&Clobber)
+                | Some(&LessGreat) => {
+                    if !is_m4_word {
+                        break;
+                    }
+                }
             }
 
             if let Some(Name(_)) = self.iter.peek() {
@@ -1347,25 +1378,15 @@ where
             }
 
             let start_pos = self.iter.pos();
-            let w = match self.iter.next().unwrap() {
+            let tok = self.iter.next().unwrap();
+            let w = match tok {
                 // Unless we are explicitly parsing a brace group, `{` and `}` should
                 // be treated as literals.
                 //
                 // Also, comments are only recognized where a Newline is valid, thus '#'
                 // becomes a literal if it occurs in the middle of a word.
-                tok @ Bang
-                | tok @ Pound
-                | tok @ Percent
-                | tok @ Dash
-                | tok @ Equals
-                | tok @ Plus
-                | tok @ At
-                | tok @ Caret
-                | tok @ Slash
-                | tok @ Comma
-                | tok @ Dot
-                | tok @ CurlyOpen
-                | tok @ CurlyClose => Simple(
+                Bang | Pound | Percent | Dash | Equals | Plus | At | Caret | Slash | Comma
+                | Dot | CurlyOpen | CurlyClose => Simple(
                     self.builder
                         .word_fragment(WordKind::Literal(tok.to_string()))?,
                 ),
@@ -1413,9 +1434,19 @@ where
 
                 // All word delimiters should have
                 // broken the loop while peeking above.
-                Newline | ParenOpen | ParenClose | Semi | Amp | Pipe | AndIf | OrIf | DSemi
-                | Less | Great | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber
-                | LessGreat | Whitespace(_) | EmptyQuotes => unreachable!(),
+                Newline | ParenOpen | ParenClose | Whitespace(_) => unreachable!(),
+
+                Semi | Amp | Pipe | AndIf | OrIf | DSemi | Less | Great | DLess | DGreat
+                | GreatAnd | LessAnd | DLessDash | Clobber | LessGreat | EmptyQuotes => {
+                    if is_m4_word {
+                        Simple(
+                            self.builder
+                                .word_fragment(WordKind::Literal(tok.to_string()))?,
+                        )
+                    } else {
+                        unreachable!();
+                    }
+                }
             };
 
             words.push(w);
@@ -1772,9 +1803,11 @@ where
                 }
             }
 
-            match self
-                .word_preserve_trailing_whitespace_raw_with_delim(Some(&[CurlyClose]), true)?
-            {
+            match self.word_preserve_trailing_whitespace_raw_with_delim(
+                Some(&[CurlyClose]),
+                true,
+                false,
+            )? {
                 Some(Single(w)) => words.push(w),
                 Some(Concat(ws)) => words.extend(ws),
                 None => break 'capture_words,
@@ -2080,42 +2113,42 @@ where
             Some(CompoundCmdKeyword::If) => {
                 let fragments = self.if_command()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.if_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::While) | Some(CompoundCmdKeyword::Until) => {
                 let (until, guard_body_pair) = self.loop_command()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.loop_command(until, guard_body_pair, io)?
             }
 
             Some(CompoundCmdKeyword::For) => {
                 let for_fragments = self.for_command()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.for_command(for_fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Case) => {
                 let fragments = self.case_command()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(false)?;
                 self.builder.case_command(fragments, io)?
             }
 
             Some(CompoundCmdKeyword::Brace) => {
                 let cmds = self.brace_group()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(true)?;
                 self.builder.brace_group(cmds, io)?
             }
 
             Some(CompoundCmdKeyword::Subshell) => {
                 let cmds = self.subshell()?;
                 self.may_close_quote(None, true);
-                let io = self.redirect_list()?;
+                let io = self.redirect_list(true)?;
                 self.builder.subshell(cmds, io)?
             }
 
@@ -2128,7 +2161,7 @@ where
                     Some(
                         Less | Great | DLess | DGreat | GreatAnd | LessAnd | DLessDash | Clobber
                         | LessGreat,
-                    ) => self.redirect_list()?,
+                    ) => self.redirect_list(false)?,
                     // @kui8shi
                     // FIXME: Macro of commands sometimes don't end with newline but with another command
                     // which will be incorrectly treated as redirection words, leading to an error.
@@ -2368,7 +2401,7 @@ where
         self.reserved_word(&[CASE])
             .map_err(|_| self.make_unexpected_err())?;
 
-        let word = match self.word_preserve_trailing_whitespace_raw_with_delim(None, true)? {
+        let word = match self.word_preserve_trailing_whitespace_raw_with_delim(None, true, false)? {
             Some(w) => self.builder.word(w)?,
             None => return Err(self.make_unexpected_err()),
         };
@@ -2645,6 +2678,7 @@ where
                         if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
                             Some(&[Comma, ParenClose]),
                             false,
+                            true,
                         )? {
                             M4Argument::Word(self.builder.word(word)?)
                         } else {
@@ -2671,6 +2705,7 @@ where
                             .word_preserve_trailing_whitespace_raw_with_delim(
                                 Some(&[Comma]),
                                 false,
+                                true,
                             )?
                         {
                             M4Argument::Word(self.builder.word(word)?)
@@ -2693,6 +2728,7 @@ where
                             .word_preserve_trailing_whitespace_raw_with_delim(
                                 Some(&[Comma]),
                                 false,
+                                true,
                             )?
                         {
                             // TODO: How can we track side effects like defining `${var}_suffix`?
@@ -2710,10 +2746,22 @@ where
                         }
                     }
                     M4Type::Path(f) | M4Type::Symbol(f) => {
-                        if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
-                            Some(&[Comma]),
-                            false,
-                        )? {
+                        if self.in_quote() {
+                            let words = self.word_interpolated_raw(
+                                Some(&[quote_close.clone()]),
+                                self.iter.pos(),
+                            )?;
+                            M4Argument::Word(
+                                self.builder
+                                    .word(Concat(words.into_iter().map(Simple).collect()))?,
+                            )
+                        } else if let Some(word) = self
+                            .word_preserve_trailing_whitespace_raw_with_delim(
+                                Some(&[Comma]),
+                                false,
+                                true,
+                            )?
+                        {
                             M4Argument::Word(self.builder.word(word)?)
                         } else {
                             let arg = peeked_arg.clone();
@@ -2825,12 +2873,15 @@ where
     // multipeek does not have pos() trait
     fn skip_macro_arg(&mut self) -> ParseResult<Token, B::Error> {
         let mut unquoted_paren_depth = 0;
+        let mut in_string = false;
         loop {
             self.may_open_quote(None, false);
             self.may_close_quote(None, false);
             let in_quote = self.in_quote();
             match self.iter.peek() {
-                Some(&Comma) if !in_quote && unquoted_paren_depth == 0 => return Ok(Comma),
+                Some(&Comma) if !in_quote && unquoted_paren_depth == 0 && !in_string => {
+                    return Ok(Comma)
+                }
                 Some(&ParenOpen) if !in_quote => {
                     unquoted_paren_depth += 1;
                 }
@@ -2839,6 +2890,9 @@ where
                         return Ok(ParenClose);
                     }
                     unquoted_paren_depth -= 1;
+                }
+                Some(&DoubleQuote) => {
+                    in_string = !in_string;
                 }
                 Some(_) => (),
                 None => return Err(ParseError::new(UnexpectedEOF)),
@@ -2868,7 +2922,11 @@ where
                 ArrayDelim::Blank => {
                     let delims = &[Whitespace(" ".into()), Newline, end.clone()];
                     eat_maybe!(self, { Newline => { self.iter.next(); } });
-                    self.word_preserve_trailing_whitespace_raw_with_delim(Some(delims), false)?
+                    self.word_preserve_trailing_whitespace_raw_with_delim(
+                        Some(delims),
+                        false,
+                        true,
+                    )?
                 }
                 ArrayDelim::Comma => {
                     eat_maybe!(self, { Newline => { self.iter.next(); } });
@@ -2948,11 +3006,12 @@ where
         let mut peeked = self.iter.multipeek();
         let mut quote_level = 0;
         let mut unquoted_paren_level = 0;
+        let mut in_string = false;
         let mut literals = Vec::new();
         let mut buf = String::new();
         loop {
             match peeked.peek_next() {
-                Some(&Comma) if quote_level == 0 && unquoted_paren_level == 0 => {
+                Some(&Comma) if quote_level == 0 && unquoted_paren_level == 0 && !in_string => {
                     literals.push(buf.trim().to_string());
                     buf = String::new();
                 }
@@ -2986,6 +3045,8 @@ where
                             // The quote is outermost
                             continue;
                         }
+                    } else if tok == &DoubleQuote {
+                        in_string = !in_string;
                     }
                     buf.push_str(tok.as_str());
                 }
@@ -3945,6 +4006,51 @@ test "$program_prefix$program_suffix$program_transform_name" = NONENONEs,x,x,
         for res in p {
             if let Err(e) = &res {
                 println!("{}", e);
+            } else {
+                println!("{:?}", &res);
+            }
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_double_quoted_string_without_m4_quotes() {
+        let input = r#"AC_MSG_ERROR("value of 1, 2, 3, or 4")"#;
+        let p = make_parser(input);
+        for res in p {
+            if let Err(e) = &res {
+                println!("{}", e);
+            } else {
+                println!("{:?}", &res);
+            }
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_macro_arg_array_with_unusual_characters() {
+        let input = r#"PKG_CHECK_MODULES([a],[b >= 1.0.0],[have_a=yes],[have_a=no])"#;
+        let p = make_parser(input);
+        for res in p {
+            if let Err(e) = &res {
+                println!("{}", e);
+            } else {
+                println!("{:?}", &res);
+            }
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn some_test() {
+        let input = r#"
+AC_DEFINE(_FILE_OFFSET_BITS,64)
+AC_MSG_RESULT([yes])
+"#;
+        let p = make_parser(input);
+        for res in p {
+            if let Err(e) = &res {
+                println!("Error: {}", e);
             } else {
                 println!("{:?}", &res);
             }

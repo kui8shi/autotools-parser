@@ -134,7 +134,7 @@ pub struct AmConditional {
 /// Represents a variable assignment in automake.
 pub struct AmAssignment {
     /// The left-hand side (variable name) of the assignment.
-    pub lhs: String,
+    pub lhs: AmWord,
     /// The assignment operator (=, :=, +=).
     pub op: AmAssignOp,
     /// The right-hand side (value) of the assignment.
