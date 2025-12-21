@@ -235,6 +235,14 @@ impl<C: Clone, W: Clone> M4Macro<C, W> {
             _ => None,
         }
     }
+
+    /// Take the scpeficied argument as a program
+    pub fn get_arg_as_program(&self, index: usize) -> Option<String> {
+        match self.args.get(index) {
+            Some(M4Argument::Program(prog)) => Some(prog.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// Represent side effects that an operation (e.g. macro call) could produce.
