@@ -584,6 +584,7 @@ pub trait MakeBuilder: BuilderBase {
     /// Constructs an automake conditional.
     fn conditional(
         &mut self,
+        negated: bool,
         guard_var: String,
         then: Vec<Self::Statement>,
         otherwise: Vec<Self::Statement>,

@@ -2645,7 +2645,7 @@ where
                     M4Type::VarName(itself, f) => {
                         let arg = peeked_arg.clone();
                         if let Some(attr) = itself {
-                            effects.get_or_insert_default().add_shell_var(&arg, attr);
+                            effects.get_or_insert_default().add_shell_var(&arg, attr, &None);
                         }
                         if let Some(f) = f {
                             for export_type in f(&arg) {
@@ -2674,7 +2674,7 @@ where
                         self.skip_macro_arg()?;
                         M4Argument::Program(peeked_arg.clone())
                     }
-                    M4Type::CPP => {
+                    M4Type::CPPSymbol => {
                         if let Some(word) = self.word_preserve_trailing_whitespace_raw_with_delim(
                             Some(&[Comma, ParenClose]),
                             false,

@@ -41,7 +41,7 @@ pub enum M4Type {
     /// library name , conversions may be applied to become variable names.
     Library(Option<M4ExportFunc>),
     /// C preprocessor symbol name, conversions may be applied to become variable names.
-    CPP,
+    CPPSymbol,
     /// C symbol, conversions may be applied to become variable names.
     Symbol(Option<M4ExportFunc>),
     /// array of C symbols, separated by whitespace.
@@ -74,9 +74,9 @@ pub type M4ExportFunc = &'static (dyn Fn(&str) -> Vec<M4ExportType> + Sync);
 #[derive(Debug, Clone)]
 pub enum M4ExportType {
     /// Export a shell variable
-    ExVar(VarAttrs, String),
+    ExVar(VarAttrs, String, Option<String>),
     /// Export a C preprocessor symbol
-    ExCPP(String),
+    ExCPP(String, Option<Option<String>>),
     /// Reference to a path
     ExPath(String),
     /// Represent a tag b/w two paths
@@ -104,7 +104,7 @@ impl PartialEq for M4Type {
             (Types(_, _), Types(_, _)) => true,
             (VarName(_, _), VarName(_, _)) => true,
             (Library(_), Library(_)) => true,
-            (CPP, CPP) => true,
+            (CPPSymbol, CPPSymbol) => true,
             (Symbol(_), Symbol(_)) => true,
             (Symbols(_, _), Symbols(_, _)) => true,
             (AMCond, AMCond) => true,
@@ -131,7 +131,7 @@ impl std::fmt::Debug for M4Type {
             Types(_, _) => "Types",
             VarName(_, _) => "Var",
             Library(_) => "Library",
-            CPP => "CPP",
+            CPPSymbol => "CPP",
             Symbol(_) => "Symbol",
             Symbols(_, _) => "Symbols",
             AMCond => "AMCond",
@@ -251,7 +251,7 @@ pub struct SideEffect {
     /// exported shell variables.
     pub shell_vars: Option<Vec<Var>>,
     /// exported shell variables.
-    pub cpp_symbols: Option<Vec<String>>,
+    pub cpp_symbols: Option<Vec<CPP>>,
     /// exported path strings.
     pub paths: Option<Vec<String>>,
     /// exported tags of path strings.
@@ -273,10 +273,11 @@ impl From<&M4MacroSignature> for SideEffect {
 
 impl SideEffect {
     /// A shell variable is defined.
-    pub fn add_shell_var(&mut self, val: &str, attrs: &VarAttrs) {
+    pub fn add_shell_var(&mut self, val: &str, attrs: &VarAttrs, value: &Option<String>) {
         let var = Var {
             name: val.into(),
             attrs: *attrs,
+            value: value.clone(),
         };
         if let Some(v) = &mut self.shell_vars {
             v.push(var)
@@ -286,11 +287,12 @@ impl SideEffect {
     }
 
     /// A cpp symbol is defined.
-    pub fn add_cpp_symbol(&mut self, val: &str) {
+    pub fn add_cpp_symbol(&mut self, val: &str, value: &Option<Option<String>>) {
+        let cpp = CPP::new(val, value.clone());
         if let Some(v) = &mut self.cpp_symbols {
-            v.push(val.into())
+            v.push(cpp)
         } else {
-            self.cpp_symbols = Some(vec![val.into()])
+            self.cpp_symbols = Some(vec![cpp])
         }
     }
 
@@ -324,11 +326,11 @@ impl SideEffect {
     /// Any type of export is triggered.
     pub fn add_side_effect(&mut self, export_type: &M4ExportType) {
         match export_type {
-            ExVar(attrs, val) => self.add_shell_var(val, attrs),
-            ExCPP(val) => self.add_cpp_symbol(val),
-            ExPath(val) => self.add_path(val),
+            ExVar(attrs, var, value) => self.add_shell_var(var, attrs, value),
+            ExCPP(symbol, value) => self.add_cpp_symbol(symbol, value),
+            ExPath(path) => self.add_path(path),
             ExTag(dst, src) => self.add_tag(dst, src),
-            ExCond(val) => self.add_am_cond(val),
+            ExCond(cond) => self.add_am_cond(cond),
         }
     }
 }
@@ -348,7 +350,7 @@ pub struct M4MacroSignature {
     /// shell variables affected/used by the macro.
     pub shell_vars: Option<Vec<Var>>,
     /// c preprocessor symbols defined by the macro.
-    pub cpp_symbols: Option<Vec<String>>,
+    pub cpp_symbols: Option<Vec<CPP>>,
     /// When the macro is obsolete and completely replaced by another macro.
     /// If this field is some, other fields should be empty or none.
     pub replaced_by: Option<String>,
@@ -395,6 +397,8 @@ pub struct Var {
     pub name: String,
     /// attributes linked to the variable
     pub attrs: VarAttrs,
+    /// the variable value if fixed
+    pub value: Option<String>,
 }
 
 impl Var {
@@ -432,7 +436,7 @@ impl Var {
     /// return if it is referenced
     pub fn is_used(&self) -> bool {
         match self.attrs.usage {
-            VarUsage::Referenced | VarUsage::Added => true,
+            VarUsage::Referenced | VarUsage::Append => true,
             _ => false,
         }
     }
@@ -440,65 +444,146 @@ impl Var {
     /// return if it is defined
     pub fn is_defined(&self) -> bool {
         match self.attrs.usage {
-            VarUsage::Defined | VarUsage::Added => true,
+            VarUsage::Defined | VarUsage::Append => true,
             _ => false,
         }
+    }
+
+    /// return if it has fixed value
+    pub fn has_fixed_value(&self) -> bool {
+        self.value.is_some()
     }
 }
 
 impl Var {
     /// Create a new shell variable with specified attributes
-    pub fn new(name: &str, kind: VarKind, usage: VarUsage) -> Self {
+    pub fn new(name: &str, kind: VarKind, usage: VarUsage, value: Option<&str>) -> Self {
         Self {
             name: name.into(),
             attrs: VarAttrs::new(kind, usage),
+            value: value.map(|s| s.to_owned()),
         }
     }
 
     /// Create a new shell variable reference
     pub fn reference(name: &str) -> Self {
-        Self::new(name, VarKind::Internal, VarUsage::Referenced)
+        Self::new(name, VarKind::Internal, VarUsage::Referenced, None)
     }
 
     /// Create a new shell variable reference with its kind known
     pub fn reference_some(name: &str, kind: VarKind) -> Self {
-        Self::new(name, kind, VarUsage::Referenced)
+        Self::new(name, kind, VarUsage::Referenced, None)
+    }
+
+    /// Create a new internal shell variable
+    pub fn define_internal(name: &str) -> Self {
+        Self::new(name, VarKind::Internal, VarUsage::Defined, None)
     }
 
     /// Create a new output shell variable
     pub fn define_output(name: &str) -> Self {
-        Self::new(name, VarKind::Output, VarUsage::Defined)
+        Self::new(name, VarKind::Output, VarUsage::Defined, None)
     }
 
     /// Create a new input shell variable
     pub fn define_input(name: &str) -> Self {
-        Self::new(name, VarKind::Input, VarUsage::Defined)
+        Self::new(name, VarKind::Input, VarUsage::Defined, None)
     }
 
     /// Create a new input+output shell variable
     pub fn define_precious(name: &str) -> Self {
-        Self::new(name, VarKind::Precious, VarUsage::Defined)
+        Self::new(name, VarKind::Precious, VarUsage::Defined, None)
     }
 
     /// Create a new environmental variable
     pub fn define_env(name: &str) -> Self {
-        Self::new(name, VarKind::Environment, VarUsage::Defined)
+        Self::new(name, VarKind::Environment, VarUsage::Defined, None)
     }
 
     /// Create a new automake conditional variable
     pub fn define_conditional(name: &str) -> Self {
-        Self::new(name, VarKind::Conditional, VarUsage::Defined)
+        Self::new(name, VarKind::Conditional, VarUsage::Defined, None)
     }
 
     /// Create a shell variable adding operation
-    pub fn add(name: &str, kind: VarKind) -> Self {
-        Self::new(name, kind, VarUsage::Added)
+    pub fn append(name: &str, kind: VarKind) -> Self {
+        Self::new(name, kind, VarUsage::Append, None)
+    }
+
+    /// Create a shell variable with value fixed
+    pub fn with_value(mut self, value: &str) -> Self {
+        self.value.replace(value.into());
+        self
+    }
+
+    /// Create a shell variable with value fixed to "yes"
+    pub fn yes(self) -> Self {
+        self.with_value("yes")
+    }
+
+    /// Create a shell variable with value fixed to "yes"
+    pub fn no(self) -> Self {
+        self.with_value("no")
     }
 }
 
 impl From<&str> for Var {
     fn from(value: &str) -> Self {
-        Self::new(value, VarKind::Internal, VarUsage::Defined)
+        Self::new(value, VarKind::Internal, VarUsage::Defined, None)
+    }
+}
+
+/// Represents a C preprocessor symbol
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CPP {
+    /// name of symbol
+    pub name: String,
+    /// the symbol's value if fixed.
+    /// None if not fixed.
+    /// Some(None) if fixed to unset.
+    /// Some(Some(_)) if fixed to specific value.
+    /// Note that we assume latest environment (e.g. linux-gnu) for this.
+    pub value: Option<Option<String>>,
+}
+
+impl CPP {
+    /// return if it has fixed value
+    pub fn has_fixed_value(&self) -> bool {
+        self.value.is_some()
+    }
+}
+
+impl CPP {
+    /// Create a new cpp symbol
+    pub fn new<S: AsRef<str>>(name: &str, value: Option<Option<S>>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.map(|o| o.map(|s| s.as_ref().to_owned())),
+        }
+    }
+
+    /// Create a new cpp symbol with specified value
+    pub fn with_value(name: &str, value: &str) -> Self {
+        Self::new(name, Some(Some(value)))
+    }
+
+    /// Create a new shell variable with "1" value
+    pub fn set(name: &str) -> Self {
+        Self::new(name, Some(Some("1")))
+    }
+
+    /// Create a new shell variable with unset
+    pub fn unset(name: &str) -> Self {
+        Self::new::<&str>(name, Some(None))
+    }
+}
+
+impl From<&str> for CPP {
+    fn from(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            value: None,
+        }
     }
 }
 
@@ -533,7 +618,7 @@ pub enum VarUsage {
     /// variable is defined
     Defined,
     /// variable is like a list and an item is added
-    Added,
+    Append,
 }
 
 impl Default for VarUsage {
@@ -560,6 +645,11 @@ impl VarAttrs {
     /// Create a new attributes for reading operations
     pub fn read(kind: Option<VarKind>) -> Self {
         Self::new(kind.unwrap_or(VarKind::Internal), VarUsage::Referenced)
+    }
+
+    /// Create a new attributes for appending operations
+    pub fn append(kind: Option<VarKind>) -> Self {
+        Self::new(kind.unwrap_or(VarKind::Internal), VarUsage::Append)
     }
 
     /// Create a new internal shell variable attributes
@@ -677,7 +767,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // Internal Preset
                         // by _AC_INIT_DEFAULTS
                         "ac_host_name".into(),
-                        "ac_default_prefix".into(), // /usr/local
+                        Var::define_internal("ac_default_prefix").with_value("/usr/local"), // /usr/local
                         "ac_clean_CONFIG_STATUS".into(),
                         "ac_clean_files".into(),
                         "ac_config_libobj_dir".into(),
@@ -685,8 +775,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "subdirs".into(),
                         "MFLAGS".into(),
                         "MAKEFLAGS".into(),
-                        Var::define_output("SHELL"),
-                        Var::define_env("PATH_SEPARATOR"),
+                        Var::define_output("SHELL").with_value("/bin/sh"),
+                        Var::define_env("PATH_SEPARATOR").with_value(":"),
                         // by _AC_INIT_PARSE_ARGS
                         Var::define_input("cache_file"), // --cache-file
                         Var::define_input("with_gas"),   // --with-gas
@@ -706,36 +796,36 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_input("program_suffix"), // --program-suffix
                         Var::define_input("program_transform_name"), // --program-transform-name
                         Var::define_input("program_suffix"), // --program-suffix
-                        Var::define_input("exec_prefix"), // = $prefix
-                        Var::define_precious("srcdir"),  // --srcdir
-                        Var::define_precious("bindir"),  // ${exec_prefix}/bin
-                        Var::define_precious("sbindir"), // ${exec_prefix}/sbin
-                        Var::define_precious("libexecdir"), // ${exec_prefix}/libexec
-                        Var::define_precious("datarootdir"), // ${prefix}/share
-                        Var::define_precious("datadir"), // ${datarootdir}
-                        Var::define_precious("sysconfdir"), // ${prefix}/etc
-                        Var::define_precious("sharedstatedir"), // ${prefix}/com
-                        Var::define_precious("localstatedir"), // ${prefix}/var
-                        Var::define_precious("runstatedir"), // ${localstatedir}/run
-                        Var::define_precious("includedir"), // ${prefix}/include
-                        Var::define_precious("oldincludedir"), // /usr/include
-                        Var::define_precious("docdir"),  // ${datarootdir}/doc/${PACKAGE}
-                        Var::define_precious("infodir"), // ${datarootdir}/info
+                        Var::define_input("exec_prefix").with_value("/usr/local"), // = $prefix
+                        Var::define_precious("srcdir").with_value("."), // --srcdir
+                        Var::define_precious("bindir").with_value("/usr/local/bin"), // ${exec_prefix}/bin
+                        Var::define_precious("sbindir").with_value("/usr/local/sbin"), // ${exec_prefix}/sbin
+                        Var::define_precious("libexecdir").with_value("/usr/local/libexec"), // ${exec_prefix}/libexec
+                        Var::define_precious("datarootdir").with_value("/usr/local/share"), // ${prefix}/share
+                        Var::define_precious("datadir").with_value("/usr/local/share"), // ${datarootdir}
+                        Var::define_precious("sysconfdir").with_value("/usr/local/etc"), // ${prefix}/etc
+                        Var::define_precious("sharedstatedir").with_value("/usr/local/com"), // ${prefix}/com
+                        Var::define_precious("localstatedir").with_value("/usr/local/var"), // ${prefix}/var
+                        Var::define_precious("runstatedir").with_value("/usr/local/var/run"), // ${localstatedir}/run
+                        Var::define_precious("includedir").with_value("/usr/local/include"), // ${prefix}/include
+                        Var::define_precious("oldincludedir").with_value("/usr/include"), // /usr/include
+                        Var::define_precious("docdir"), // ${datarootdir}/doc/${PACKAGE}
+                        Var::define_precious("infodir").with_value("/usr/local/share/info"), // ${datarootdir}/info
                         Var::define_precious("htmldir"), // ${docdir}
                         Var::define_precious("dvidir"),  // ${docdir}
                         Var::define_precious("pdfdir"),  // ${docdir}
                         Var::define_precious("psdir"),   // ${docdir}
-                        Var::define_precious("libdir"),  // ${exec_prefix}/lib
-                        Var::define_precious("localedir"), // ${datarootdir}/locale
-                        Var::define_precious("mandir"),  // ${datarootdir}/man
+                        Var::define_precious("libdir").with_value("/usr/local/lib"), // ${exec_prefix}/lib
+                        Var::define_precious("localedir").with_value("/usr/local/share/locale"), // ${datarootdir}/locale
+                        Var::define_precious("mandir").with_value("/usr/local/share/man"), // ${datarootdir}/man
                         // Var::define_precious("host"),    // $host
                         // Var::define_precious("host_alias"), // $host_alias
                         // Var::define_precious("build"),   // raw argument
                         // Var::define_precious("build_alias"), // canonicalized
                         // Var::define_precious("target"),  // $build_alias
                         // Var::define_precious("target_alias"), // $build_alias
-                        "cross_compiling".into(), // $host_alias != $build_alias
-                        "ac_tool_prefix".into(),  // "$host_alias-"
+                        Var::define_internal("cross_compiling").no(), // $host_alias != $build_alias
+                        "ac_tool_prefix".into(),                      // "$host_alias-"
                         // by _AC_INIT_DIRCHECK
                         "ac_pwd".into(),
                         // by _AC_INIT_SRCDIR
@@ -755,7 +845,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "as_dir".into(),
                         Var::define_output("top_srcdir"),
                         Var::define_output("abs_top_srcdir"),
-                        Var::define_output("EXEEXT"),
+                        Var::define_output("EXEEXT").with_value(""),
                     ]),
                     cpp_symbols: Some(vec![
                         // by _AC_INIT_PREPARE
@@ -1008,8 +1098,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("SET_MAKE"),
-                        Var::define_output("MAKE"),
+                        Var::define_output("SET_MAKE").with_value(""),
+                        Var::define_output("MAKE").with_value("make"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1040,9 +1130,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // Set to '-DHAVE_CONFIG_H'
-                        Var::define_output("DEFS"),
+                        Var::define_output("DEFS").with_value("-DHAVE_CONFIG_H"),
                     ]),
-                    cpp_symbols: Some(vec!["HAVE_CONFIG_H".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_CONFIG_H")]),
                     ..Default::default()
                 },
             ),
@@ -1057,8 +1147,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AH_TEMPLATE",
                 M4MacroSignature {
                     arg_types: vec![
-                        CPP, // key
-                        Lit, // description
+                        CPPSymbol, // key
+                        Lit,       // description
                     ],
                     ret_type: Some(Cmds),
                     ..Default::default()
@@ -1215,11 +1305,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        "ac_includes_default".into(),
-                        "ac_cv_header_stdlib_h".into(),
-                        "ac_cv_header_string_h".into(),
+                        Var::define_internal("ac_includes_default").yes(),
+                        Var::define_internal("ac_cv_header_stdlib_h").yes(),
+                        Var::define_internal("ac_cv_header_string_h").yes(),
                     ]),
-                    cpp_symbols: Some(vec!["STDC_HEADERS".into()]),
+                    cpp_symbols: Some(vec![CPP::set("STDC_HEADERS")]),
                     paths: Some(vec![
                         "stdio.h".into(),
                         "stdlib.h".into(),
@@ -1240,7 +1330,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_AR",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("AR"), "ac_cv_prog_ar".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("AR").with_value("ar"),
+                        Var::define_internal("ac_cv_prog_ar").with_value("ar"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1249,7 +1342,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_AWK",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("AWK"), "ac_cv_prog_AWK".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("AWK").with_value("awk"),
+                        Var::define_internal("ac_cv_prog_AWK").with_value("awk"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1258,7 +1354,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_GREP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("GREP"), "ac_cv_path_GREP".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("GREP").with_value("grep"),
+                        Var::define_internal("ac_cv_path_GREP").with_value("grep"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1267,7 +1366,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_EGREP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("EGREP"), "ac_cv_path_EGREP".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("EGREP").with_value("egrep"),
+                        Var::define_internal("ac_cv_path_EGREP").with_value("egrep"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1276,7 +1378,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_FGREP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("FGREP"), "ac_cv_path_FGREP".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("FGREP").with_value("fgrep"),
+                        Var::define_internal("ac_cv_path_FGREP").with_value("fgrep"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1286,11 +1391,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("INSTALL"),
-                        Var::define_output("INSTALL_PROGRAM"),
-                        Var::define_output("INSTALL_SCRIPT"),
-                        Var::define_output("INSTALL_DATA"),
-                        "ac_cv_path_install".into(),
+                        Var::define_output("INSTALL").with_value("install"),
+                        Var::define_output("INSTALL_PROGRAM").with_value("install"),
+                        Var::define_output("INSTALL_SCRIPT").with_value("install"),
+                        Var::define_output("INSTALL_DATA").with_value("install -m 644"),
+                        Var::define_internal("ac_cv_path_install").with_value("install"),
                     ]),
                     require: Some(vec![
                         // _AC_INIT_AUX_DIR is an internal macro required by
@@ -1307,8 +1412,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("MKDIR_P"),
-                        "ac_cv_path_mkdir".into(),
+                        Var::define_output("MKDIR_P").with_value("mkdir -p"),
+                        Var::define_internal("ac_cv_path_mkdir").with_value("mkdir -p"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1320,13 +1425,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![Arr(Blank)],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("LEX"),
-                        Var::define_output("LEX_OUTPUT_ROOT"),
-                        Var::define_output("LEXLIB"),
-                        "ac_cv_prog_LEX".into(),
+                        Var::define_output("LEX").with_value("flex"),
+                        Var::define_output("LEX_OUTPUT_ROOT").with_value("lex.yy"),
+                        Var::define_output("LEXLIB").with_value(""),
+                        Var::define_internal("ac_cv_prog_LEX").with_value("flex"),
                     ]),
                     is_oneshot: true,
-                    cpp_symbols: Some(vec!["YYTEXT_POINTER".into()]),
+                    cpp_symbols: Some(vec![CPP::set("YYTEXT_POINTER")]),
                     ..Default::default()
                 },
             ),
@@ -1334,7 +1439,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_LN_S",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("LN_S")]),
+                    shell_vars: Some(vec![Var::define_output("LN_S").with_value("ln -s")]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1344,8 +1449,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("RANLIB"),
-                        "ac_cv_prog_ranlib".into(),
+                        Var::define_output("RANLIB").with_value("ranlib"),
+                        Var::define_internal("ac_cv_prog_ranlib").with_value("ranlib"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1355,7 +1460,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_SED",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("SED"), "ac_cv_path_SED".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("SED").with_value("sed"),
+                        Var::define_internal("ac_cv_path_SED").with_value("sed"),
+                    ]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1365,9 +1473,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_precious("YACC"),
-                        Var::define_precious("YFLAGS"),
-                        "ac_cv_prog_YACC".into(),
+                        Var::define_precious("YACC").with_value("yacc"),
+                        Var::define_precious("YFLAGS").with_value(""),
+                        Var::define_internal("ac_cv_prog_YACC").with_value("yacc"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1406,7 +1514,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [act-if-fail]
                     ],
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("AR")]),
+                    shell_vars: Some(vec![Var::define_output("AR").with_value("ar")]),
                     paths: Some(vec!["ar-lib".into()]), // prefix is $ac_aux_dir
                     is_oneshot: true,
                     ..Default::default()
@@ -1417,8 +1525,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_precious("CCAS"),
-                        Var::define_precious("CCASFLAGS"),
+                        Var::define_precious("CCAS").with_value("gcc -c"),
+                        Var::define_precious("CCASFLAGS").with_value(""),
                     ]),
                     require: Some(vec!["AC_PROG_CC".into()]),
                     is_oneshot: true,
@@ -1441,7 +1549,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AM_PROG_MKDIR_P",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("mkdir_p")]),
+                    shell_vars: Some(vec![Var::define_output("mkdir_p").with_value("mkdir -p")]),
                     require: Some(vec!["AC_PROG_MKDIR_P".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1455,12 +1563,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     shell_vars: Some(vec![
                         // the differece from AC_PROG_LEX is the LEX's value when lex is not found.
                         // missing script will be triggered instead.
-                        Var::define_output("LEX"),
-                        Var::define_output("LEX_OUTPUT_ROOT"),
-                        Var::define_output("LEXLIB"),
-                        "ac_cv_prog_LEX".into(),
+                        Var::define_output("LEX").with_value("flex"),
+                        Var::define_output("LEX_OUTPUT_ROOT").with_value("lex.yy"),
+                        Var::define_output("LEXLIB").with_value(""),
+                        Var::define_internal("ac_cv_prog_LEX").with_value("flex"),
                     ]),
-                    cpp_symbols: Some(vec!["YYTEXT_POINTER".into()]),
+                    cpp_symbols: Some(vec![CPP::set("YYTEXT_POINTER")]),
                     paths: Some(vec![
                         // by AC_REQUIRE_AUX_FILE([missing])
                         "missing".into(), // prefix is $ac_aux_dir
@@ -1474,11 +1582,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        // the differece from AC_PROG_LEX is the LEX's value when lex is not found.
-                        // missing script will be triggered instead.
                         Var::define_output("GCJ"),
                         Var::define_output("GCJFLAGS"),
-                        "ac_cv_prog_GCJ".into(),
+                        Var::define_internal("ac_cv_prog_GCJ"),
                         // by _AM_DEPENDENCIES([GCJ])
                         Var::define_output("GCJDEPMODE"),
                         Var::define_conditional("am__fastdepGCJ"),
@@ -1532,10 +1638,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     shell_vars: Some(vec![
                         // by _AM_SILENT_RULES
                         Var::define_input("enable_silent_rules"),
-                        Var::define_output("AM_V"),
-                        Var::define_output("AM_DEFAULT_V"),
-                        Var::define_output("AM_DEFAULT_VERBOSITY"),
-                        Var::define_output("AM_BACKSLASH"),
+                        Var::define_output("AM_V").with_value("0"),
+                        Var::define_output("AM_DEFAULT_V").with_value("0"),
+                        Var::define_output("AM_DEFAULT_VERBOSITY").with_value("0"),
+                        Var::define_output("AM_BACKSLASH").with_value("\\"),
+                        Var::define_output("AM_V_at").with_value(""),
+                        Var::define_output("AM_V_GEN").with_value(""),
                     ]),
                     ..Default::default()
                 },
@@ -1546,13 +1654,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // by _AM_SILENT_RULES
-                        Var::define_input("with_dmalloc"),
+                        Var::define_input("with_dmalloc").yes(),
                         // '-ldmalloc' is added to LIBS
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output).with_value("-ldmalloc"),
                         // '-g' is added to LDFLAGS
-                        Var::add("LDFLAGS", Output),
+                        Var::append("LDFLAGS", Output).with_value("-g"),
                     ]),
-                    cpp_symbols: Some(vec!["WITH_DMALLOC".into()]),
+                    cpp_symbols: Some(vec![CPP::set("WITH_DMALLOC")]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1613,7 +1721,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Word,       // prog-to-check-for
@@ -1635,7 +1747,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Arr(Blank), // progs-to-check-for
@@ -1656,10 +1772,14 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable
                                 vec![
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s)),
+                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s), None),
                                     // _AC_CHECK_PROG([ac_ct_$1], ...)
-                                    ExVar(VarAttrs::output(), format!("ac_ct_{}", s)),
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_ac_ct_{}", s)),
+                                    ExVar(VarAttrs::output(), format!("ac_ct_{}", s), None),
+                                    ExVar(
+                                        VarAttrs::internal(),
+                                        format!("ac_cv_prog_ac_ct_{}", s),
+                                        None,
+                                    ),
                                 ]
                             }),
                         ),
@@ -1685,10 +1805,14 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable
                                 vec![
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s)),
+                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s), None),
                                     // _AC_CHECK_PROG([ac_ct_$1], ...)
-                                    ExVar(VarAttrs::output(), format!("ac_ct_{}", s)),
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_prog_ac_ct_{}", s)),
+                                    ExVar(VarAttrs::output(), format!("ac_ct_{}", s), None),
+                                    ExVar(
+                                        VarAttrs::internal(),
+                                        format!("ac_cv_prog_ac_ct_{}", s),
+                                        None,
+                                    ),
                                 ]
                             }),
                         ),
@@ -1713,7 +1837,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Word,       // prog-to-check-for
@@ -1738,7 +1866,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Arr(Blank), // progs-to-check-for
@@ -1763,7 +1895,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_path_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Arr(Blank), // prog-to-check-for
@@ -1784,8 +1920,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable
                                 vec![
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s)),
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s)),
+                                    ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s), None),
+                                    ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s), None),
                                 ]
                             }),
                         ),
@@ -1807,7 +1943,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_path_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_path_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Arr(Blank), // progs-to-check-for
@@ -1828,7 +1968,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 // variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Word,
@@ -1853,7 +1997,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(VarAttrs::output()),
                             Some(&|s| {
                                 //variable
-                                vec![ExVar(VarAttrs::internal(), format!("ac_cv_prog_{}", s))]
+                                vec![ExVar(
+                                    VarAttrs::internal(),
+                                    format!("ac_cv_prog_{}", s),
+                                    None,
+                                )]
                             }),
                         ),
                         Word,       // prog-to-check-for
@@ -1880,6 +2028,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             vec![ExVar(
                                 VarAttrs::new(Internal, Defined),
                                 format!("ac_cv_file_{}", sanitize_shell_name(s)),
+                                None,
                             )]
                         })),
                         Cmds, // [action-if-found]
@@ -1901,8 +2050,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     ExVar(
                                         VarAttrs::internal(),
                                         format!("ac_cv_file_{}", sanitize_shell_name(s)),
+                                        None,
                                     ),
-                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -1922,8 +2072,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             // library
                             vec![
                                 // FIXME: actually this macro exports ac_cv_lib_{LIBRARY}_{FUNCTION}.
-                                // but to define it needs the two values which is not supported here.
-                                ExCPP(format!("HAVE_LIB{}", sanitize_c_name(s))),
+                                // but to define it needs to captre two arguments, which is not supported now.
+                                ExCPP(format!("HAVE_LIB{}", sanitize_c_name(s)), None),
                             ]
                         })),
                         Symbol(None), // function
@@ -1934,7 +2084,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // '-l<library>' is added
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output),
                     ]),
                     ..Default::default()
                 },
@@ -1945,7 +2095,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Library(Some(&|s| {
                             // library
-                            vec![ExCPP(format!("HAVE_LIB{}", sanitize_c_name(s)))]
+                            vec![ExCPP(format!("HAVE_LIB{}", sanitize_c_name(s)), None)]
                         })),
                         Cmds,       // [action-if-found]
                         Cmds,       // [action-if-not-found]
@@ -1954,7 +2104,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // '-l<library>' is added
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output),
                     ]),
                     ..Default::default()
                 },
@@ -1965,7 +2115,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Symbol(Some(&|s| {
                             // function
-                            vec![ExVar(VarAttrs::internal(), format!("ac_cv_search_{}", s))]
+                            vec![ExVar(
+                                VarAttrs::internal(),
+                                format!("ac_cv_search_{}", s),
+                                None,
+                            )]
                         })),
                         Arr(Blank), // search-libs
                         Cmds,       // [action-if-found]
@@ -1975,21 +2129,23 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // '-l<library>' is added
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output),
                     ]),
                     ..Default::default()
                 },
             ),
             // Paticular function checks
             (
+                // FIXME: we intentionally fixed this macro pretending like there is no support for 'alloca'.
+                // Actually modern C ecosystem must have it, but sorry i did this just for my personal project for now.
                 "AC_FUNC_ALLOCA",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("ALLOCA")]),
+                    shell_vars: Some(vec![Var::define_output("ALLOCA").with_value("")]),
                     cpp_symbols: Some(vec![
-                        "HAVE_ALLOC_H".into(),
-                        "HAVE_ALLOCA".into(),
-                        "C_ALLOCA".into(),
+                        CPP::unset("HAVE_ALLOC_H"),
+                        CPP::unset("HAVE_ALLOCA"),
+                        CPP::unset("C_ALLOCA"),
                     ]),
                     ..Default::default()
                 },
@@ -2005,8 +2161,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_CHOWN",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_chown_works".into()]),
-                    cpp_symbols: Some(vec!["HAVE_CHOWN".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_chown_works").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_CHOWN")]),
                     ..Default::default()
                 },
             ),
@@ -2014,8 +2170,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_CLOSEDIR_VOID",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_closedir_void".into()]),
-                    cpp_symbols: Some(vec!["CLOSEDIR_VOID".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_closedir_void").no()]),
+                    cpp_symbols: Some(vec![CPP::unset("CLOSEDIR_VOID")]),
                     ..Default::default()
                 },
             ),
@@ -2025,24 +2181,24 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // AC_HEADER_DIRENT
-                        "ac_header_dirent".into(),
-                        "ac_cv_search_opendir".into(),
+                        Var::define_internal("ac_header_dirent"),
+                        Var::define_internal("ac_cv_search_opendir").with_value("none required"),
                         // AC_FUNC_CLOSEDIR_VOID
-                        "ac_cv_func_closedir_void".into(),
+                        Var::define_internal("ac_cv_func_closedir_void").no(),
                     ]),
                     cpp_symbols: Some(vec![
                         // AC_HEADER_DIRENT
-                        "HAVE_DIRENT_H".into(),
-                        "HAVE_SYS_NDIR_H".into(),
-                        "HAVE_SYS_DIR_H".into(),
-                        "HAVE_NDIR_H".into(),
+                        CPP::set("HAVE_DIRENT_H"),
+                        CPP::unset("HAVE_SYS_NDIR_H"),
+                        CPP::unset("HAVE_SYS_DIR_H"),
+                        CPP::unset("HAVE_NDIR_H"),
                         // AC_FUNC_CLOSEDIR_VOID
-                        "CLOSEDIR_VOID".into(),
+                        CPP::unset("CLOSEDIR_VOID"),
                         // old symbols
-                        "DIRENT".into(),
-                        "SYSNDIR".into(),
-                        "SYSDIR".into(),
-                        "NDIR".into(),
+                        CPP::set("DIRENT"),
+                        CPP::unset("SYSNDIR"),
+                        CPP::unset("SYSDIR"),
+                        CPP::unset("NDIR"),
                     ]),
                     paths: Some(vec![
                         // AC_HEADER_DIRENT
@@ -2059,7 +2215,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_ERROR_AT_LINE",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_lib_error_at_line".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_lib_error_at_line").yes()]),
                     paths: Some(vec!["path.c".into()]),
                     ..Default::default()
                 },
@@ -2068,8 +2224,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_FNMATCH",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_fnmatch_works".into()]),
-                    cpp_symbols: Some(vec!["HAVE_FNMATCH".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_fnmatch_works").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_FNMATCH")]),
                     ..Default::default()
                 },
             ),
@@ -2077,8 +2233,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_FNMATCH_GNU",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_fnmatch_gnu".into()]),
-                    cpp_symbols: Some(vec!["HAVE_FNMATCH".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_fnmatch_gnu").no()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_FNMATCH")]),
                     ..Default::default()
                 },
             ),
@@ -2087,12 +2243,15 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        "ac_cv_func_fork_works".into(),
-                        "ac_cv_func_vfork_works".into(),
-                        "ac_cv_func_fork".into(),
-                        "ac_cv_func_vfork".into(),
+                        Var::define_internal("ac_cv_func_fork_works").yes(),
+                        Var::define_internal("ac_cv_func_vfork_works").yes(),
+                        Var::define_internal("ac_cv_func_fork").yes(),
+                        Var::define_internal("ac_cv_func_vfork").yes(),
                     ]),
-                    cpp_symbols: Some(vec!["HAVE_WORKING_FORK".into(), "HAVE_VFORK".into()]),
+                    cpp_symbols: Some(vec![
+                        CPP::unset("HAVE_WORKING_FORK"),
+                        CPP::set("HAVE_VFORK"),
+                    ]),
                     ..Default::default()
                 },
             ),
@@ -2100,7 +2259,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_FSEEKO",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    cpp_symbols: Some(vec!["HAVE_FSEEKO".into(), "_LARGEFILE_SOURCE".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_FSEEKO"), CPP::set("_LARGEFILE_SOURCE")]),
                     ..Default::default()
                 },
             ),
@@ -2109,7 +2268,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![Var::define_output("GETGROUPS_LIB")]),
-                    cpp_symbols: Some(vec!["HAVE_GETGROUPS".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_GETGROUPS")]),
                     ..Default::default()
                 },
             ),
@@ -2118,24 +2277,24 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("GETLOADAVG_LIBS"),
+                        Var::define_output("GETLOADAVG_LIBS").with_value(""),
                         // '-l<lib>' for lib in GETLOADAVG_LIBS
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output).with_value(""),
                         // if the system does not have the 'getloadavg' function.
-                        Var::define_output("NEED_SETGID"),
-                        Var::define_output("KMEM_GROUP"),
+                        Var::define_output("NEED_SETGID").with_value("false"),
+                        Var::define_output("KMEM_GROUP").with_value(""),
                     ]),
                     cpp_symbols: Some(vec![
-                        "HAVE_GETLOADAVG".into(),
+                        CPP::set("HAVE_GETLOADAVG"),
                         // if the system does not have the 'getloadavg' function.
-                        "C_GETLOADAVG".into(),
-                        "SVR4".into(),
-                        "DGUX".into(),
-                        "UMAX".into(),
-                        "UMAX4_3".into(),
-                        "HAVE_NLIST_H".into(),
-                        "HAVE_STRUCT_NLIST_N_UN_N_NAME".into(),
-                        "GETLOADAVG_PREVILEGED".into(),
+                        CPP::unset("C_GETLOADAVG"),
+                        CPP::unset("SVR4"),
+                        CPP::unset("DGUX"),
+                        CPP::unset("UMAX"),
+                        CPP::unset("UMAX4_3"),
+                        CPP::set("HAVE_NLIST_H"),
+                        CPP::set("HAVE_STRUCT_NLIST_N_UN_N_NAME"),
+                        CPP::unset("GETLOADAVG_PREVILEGED"),
                     ]),
                     paths: Some(vec!["getloadavg.c".into()]),
                     ..Default::default()
@@ -2153,10 +2312,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        "ac_cv_func_getmntent".into(),
-                        "ac_cv_search_getmntent".into(),
+                        Var::define_internal("ac_cv_func_getmntent").yes(),
+                        Var::define_internal("ac_cv_search_getmntent").yes(),
                     ]),
-                    cpp_symbols: Some(vec!["HAVE_SETMNTENT".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_SETMNTENT")]),
                     ..Default::default()
                 },
             ),
@@ -2168,10 +2327,18 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 },
             ),
             (
+                "AC_OBJEXT", // obsolete. now done automaticallly.
+                M4MacroSignature {
+                    ret_type: Some(Cmds),
+                    shell_vars: Some(vec![Var::define_output("OBJEXT").with_value("o")]),
+                    ..Default::default()
+                },
+            ),
+            (
                 "AC_EXEEXT", // obsolete. now done automaticallly.
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec![Var::define_output("EXEEXT")]),
+                    shell_vars: Some(vec![Var::define_output("EXEEXT").with_value("")]),
                     ..Default::default()
                 },
             ),
@@ -2179,8 +2346,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_GETPGRP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_getpgrp_void".into()]),
-                    cpp_symbols: Some(vec!["GETPGRP_VOID".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_getpgrp_void").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("GETPGRP_VOID")]),
                     ..Default::default()
                 },
             ),
@@ -2188,8 +2355,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_lstat_dereferences_slashed_symlink".into()]),
-                    cpp_symbols: Some(vec!["LSTAT_FOLLOWS_SYMLINK".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_func_lstat_dereferences_slashed_symlink",
+                    )
+                    .yes()]),
+                    cpp_symbols: Some(vec![CPP::set("LSTAT_FOLLOWS_SYMLINK")]),
                     paths: Some(vec!["lstat.c".into()]),
                     ..Default::default()
                 },
@@ -2198,11 +2368,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_MALLOC",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_func_malloc_0_nonnull".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_func_malloc_0_nonnull").yes()
+                    ]),
                     cpp_symbols: Some(vec![
-                        "HAVE_MALLOC".into(),
+                        CPP::set("HAVE_MALLOC"),
                         // if the 'macro' function is not compatible to GNU C
-                        "malloc".into(), // overridden by 'rpl_malloc'
+                        CPP::unset("malloc"), // overridden by 'rpl_malloc'
                     ]),
                     paths: Some(vec!["malloc.c".into()]),
                     ..Default::default()
@@ -2212,8 +2384,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_MBRTOWC",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_mbrtowc".into()]),
-                    cpp_symbols: Some(vec!["HAVE_MBRTOWC".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_mbrtowc").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_MBRTOWC")]),
                     ..Default::default()
                 },
             ),
@@ -2221,7 +2393,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_MEMCMP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_memcmp_working".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_memcmp_working").yes()]),
                     paths: Some(vec!["memcmp.c".into()]),
                     ..Default::default()
                 },
@@ -2230,7 +2402,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_MKTIME",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_working_mktime".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_working_mktime").yes()]),
                     paths: Some(vec!["mktime.c".into()]),
                     ..Default::default()
                 },
@@ -2239,8 +2411,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_MMAP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_mmap_fixed_mapped".into()]),
-                    cpp_symbols: Some(vec!["HAVE_MMAP".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_func_mmap_fixed_mapped").yes()
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_MMAP")]),
                     ..Default::default()
                 },
             ),
@@ -2248,8 +2422,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_OBSTACK",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_obstack".into()]),
-                    cpp_symbols: Some(vec!["HAVE_OBSTACK".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_obstack").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_OBSTACK")]),
                     paths: Some(vec!["obstack.c".into()]),
                     ..Default::default()
                 },
@@ -2258,8 +2432,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_REALLOC",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_realloc_0_nonnull".into()]),
-                    cpp_symbols: Some(vec!["HAVE_REALLOC".into(), "realloc".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_func_realloc_0_nonnull").yes()
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_REALLOC"), CPP::unset("realloc")]),
                     paths: Some(vec!["realloc.c".into()]),
                     ..Default::default()
                 },
@@ -2269,9 +2445,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
-                        "SELECT_TYPE_ARG1".into(),
-                        "SELECT_TYPE_ARG234".into(),
-                        "SELECT_TYPE_ARG5".into(),
+                        CPP::with_value("SELECT_TYPE_ARG1", "int"),
+                        CPP::with_value("SELECT_TYPE_ARG234", "(fd_set *)"),
+                        CPP::with_value("SELECT_TYPE_ARG5", "(struct timeval *)"),
                     ]),
                     ..Default::default()
                 },
@@ -2280,8 +2456,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_SETPGRP",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_setpgrp_void".into()]),
-                    cpp_symbols: Some(vec!["SETPGRP_VOID".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_setpgrp_void").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("SETPGRP_VOID")]),
                     ..Default::default()
                 },
             ),
@@ -2289,8 +2465,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STAT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_stat_empty_string_bug".into()]),
-                    cpp_symbols: Some(vec!["HAVE_STAT_EMPTY_STRING_BUG".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_func_stat_empty_string_bug",
+                    )
+                    .no()]),
+                    cpp_symbols: Some(vec![CPP::unset("HAVE_STAT_EMPTY_STRING_BUG")]),
                     paths: Some(vec!["stat.c".into()]),
                     ..Default::default()
                 },
@@ -2299,8 +2478,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_LSTAT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_lstat_empty_string_bug".into()]),
-                    cpp_symbols: Some(vec!["HAVE_LSTAT_EMPTY_STRING_BUG".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_func_lstat_empty_string_bug",
+                    )
+                    .no()]),
+                    cpp_symbols: Some(vec![CPP::unset("HAVE_LSTAT_EMPTY_STRING_BUG")]),
                     paths: Some(vec!["lstat.c".into()]),
                     ..Default::default()
                 },
@@ -2309,8 +2491,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STRCOLL",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_lstat_empty_string_bug".into()]),
-                    cpp_symbols: Some(vec!["HAVE_LSTAT_EMPTY_STRING_BUG".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_func_lstat_empty_string_bug",
+                    )
+                    .no()]),
+                    cpp_symbols: Some(vec![CPP::unset("HAVE_LSTAT_EMPTY_STRING_BUG")]),
                     ..Default::default()
                 },
             ),
@@ -2318,8 +2503,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STRERROR_R",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_stderror_r_char_p".into()]),
-                    cpp_symbols: Some(vec!["HAVE_DECL_STDERROR_R".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_func_stderror_r_char_p").yes()
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_DECL_STDERROR_R")]),
                     ..Default::default()
                 },
             ),
@@ -2327,7 +2514,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STRFTIME",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    cpp_symbols: Some(vec!["HAVE_STRFTIME".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_STRFTIME")]),
                     ..Default::default()
                 },
             ),
@@ -2336,9 +2523,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("POW_LIB"),
-                        "ac_cv_func_strtod".into(),
-                        "ac_cv_func_pow".into(),
+                        Var::define_output("POW_LIB").with_value(""),
+                        Var::define_internal("ac_cv_func_strtod").yes(),
+                        Var::define_internal("ac_cv_func_pow").yes(),
                     ]),
                     paths: Some(vec!["strtod.c".into()]),
                     ..Default::default()
@@ -2348,8 +2535,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STRTOLD",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_strtold".into()]),
-                    cpp_symbols: Some(vec!["HAVE_STRTOLD".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_strtold").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_STRTOLD")]),
                     ..Default::default()
                 },
             ),
@@ -2357,8 +2544,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_STRNLEN",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_strnlen_working".into()]),
-                    cpp_symbols: Some(vec!["HAVE_STRTOLD".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_func_strnlen_working").yes()
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_STRTOLD")]),
                     paths: Some(vec!["strnlen.c".into()]),
                     ..Default::default()
                 },
@@ -2367,8 +2556,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_FUNC_UTIME_NULL",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_utime_null".into()]),
-                    cpp_symbols: Some(vec!["HAVE_UTIME_NULL".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_utime_null").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_UTIME_NULL")]),
                     ..Default::default()
                 },
             ),
@@ -2377,9 +2566,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
-                        "HAVE_VPRINTF".into(),
+                        CPP::set("HAVE_VPRINTF"),
                         // otherwise if '_doprnt' if found
-                        "HAVE_DOPRNT".into(),
+                        CPP::unset("HAVE_DOPRNT"),
                     ]),
                     ..Default::default()
                 },
@@ -2388,7 +2577,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_REPLACE_FNMATCH",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_func_fnmatch_works".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_func_fnmatch_works").yes()]),
                     paths: Some(vec![
                         "fnmatch.c".into(),
                         "fnmatch_loop.c".into(),
@@ -2404,7 +2593,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Symbol(Some(&|s| {
                             // function
-                            vec![ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s))]
+                            vec![ExVar(
+                                VarAttrs::internal(),
+                                format!("ac_cv_func_{}", s),
+                                None,
+                            )]
                         })),
                         Cmds, // [action-if-found]
                         Cmds, // [action-if-not-found]
@@ -2434,8 +2627,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // function
                                 vec![
-                                    ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s)),
-                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                    ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s), None),
+                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -2466,8 +2659,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Some(&|s| {
                             // function...
                             vec![
-                                ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s)),
-                                ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s), None),
+                                ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                             ]
                         }),
                     )],
@@ -2525,8 +2718,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Some(&|s| {
                             // function...
                             vec![
-                                ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s)),
-                                ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                ExVar(VarAttrs::internal(), format!("ac_cv_func_{}", s), None),
+                                ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ExPath(format!("{}.c", s)),
                             ]
                         }),
@@ -2540,8 +2733,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_CHECK_HEADER_STDBOOL",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_stdbool_h".into()]),
-                    cpp_symbols: Some(vec!["HAVE__BOOL".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_stdbool_h").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE__BOOL")]),
                     paths: Some(vec!["stdbool.h".into()]),
                     ..Default::default()
                 },
@@ -2552,9 +2745,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // internally `AC_ARG_ENABLE(assert,..)` is called
-                        Var::define_input("ac_enable_assert"),
+                        Var::define_input("ac_enable_assert").yes(),
                     ]),
-                    cpp_symbols: Some(vec!["NDEBUG".into()]),
+                    cpp_symbols: Some(vec![CPP::set("NDEBUG")]),
                     ..Default::default()
                 },
             ),
@@ -2563,14 +2756,14 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        "ac_header_dirent".into(),
-                        "ac_cv_search_opendir".into(),
+                        Var::define_internal("ac_header_dirent").with_value("dirent.h"),
+                        Var::define_internal("ac_cv_search_opendir").yes(),
                     ]),
                     cpp_symbols: Some(vec![
-                        "HAVE_DIRENT_H".into(),
-                        "HAVE_SYS_NDIR_H".into(),
-                        "HAVE_SYS_DIR_H".into(),
-                        "HAVE_NDIR_H".into(),
+                        CPP::set("HAVE_DIRENT_H"),
+                        CPP::set("HAVE_SYS_NDIR_H"),
+                        CPP::set("HAVE_SYS_DIR_H"),
+                        CPP::set("HAVE_NDIR_H"),
                     ]),
                     paths: Some(vec![
                         "dirent.h".into(),
@@ -2585,8 +2778,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_HEADER_MAJOR",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_sys_mkdev_h".into()]),
-                    cpp_symbols: Some(vec!["MAJOR_IN_MKDEV".into(), "MAJOR_IN_SYSMACROS".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_sys_mkdev_h").no()]),
+                    cpp_symbols: Some(vec![
+                        CPP::unset("MAJOR_IN_MKDEV"),
+                        CPP::set("MAJOR_IN_SYSMACROS"),
+                    ]),
                     paths: Some(vec![
                         "sys/mkdev.h".into(),
                         "sys/sysmacros.h".into(),
@@ -2599,8 +2795,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_HEADER_RESOLV",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_sys_mkdev_h".into()]),
-                    cpp_symbols: Some(vec!["MAJOR_IN_MKDEV".into(), "MAJOR_IN_SYSMACROS".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_sys_mkdev_h").no()]),
+                    cpp_symbols: Some(vec![
+                        CPP::unset("MAJOR_IN_MKDEV"),
+                        CPP::set("MAJOR_IN_SYSMACROS"),
+                    ]),
                     paths: Some(vec![
                         "sys/types.h".into(),
                         "netinet/in.h".into(),
@@ -2615,8 +2814,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_HEADER_STAT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_stat_broken".into()]),
-                    cpp_symbols: Some(vec!["STAT_MACROS_BROKEN".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_stat_broken").no()]),
+                    cpp_symbols: Some(vec![CPP::unset("STAT_MACROS_BROKEN")]),
                     paths: Some(vec!["sys/stat.h".into()]),
                     ..Default::default()
                 },
@@ -2625,8 +2824,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_HEADER_STDBOOL",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_stdbool_h".into()]),
-                    cpp_symbols: Some(vec!["HAVE_STDBOOL_H".into(), "HAVE__BOOL".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_stdbool_h").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_STDBOOL_H"), CPP::set("HAVE__BOOL")]),
                     paths: Some(vec!["stdbool.h".into()]),
                     ..Default::default()
                 },
@@ -2653,11 +2852,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_HEADER_SYS_WAIT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_header_sys_wait_h".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_header_sys_wait_h").yes()]),
                     cpp_symbols: Some(vec![
-                        "HAVE_SYS_WAIT_H".into(),
+                        CPP::set("HAVE_SYS_WAIT_H"),
                         // if 'unistd.h' is included on Posix systems
-                        "_POSIX_VERSION".into(),
+                        CPP::with_value("_POSIX_VERSION", "200809L"),
                     ]),
                     paths: Some(vec!["sys/wait.h".into(), "unistd.h".into()]),
                     ..Default::default()
@@ -2668,10 +2867,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        "ac_cv_sys_tiocgwinsz_in_termios_h".into(),
-                        "ac_cv_sys_tiocgwinsz_in_sys_ioctl_h".into(),
+                        Var::define_internal("ac_cv_sys_tiocgwinsz_in_termios_h").no(),
+                        Var::define_internal("ac_cv_sys_tiocgwinsz_in_sys_ioctl_h").yes(),
                     ]),
-                    cpp_symbols: Some(vec!["GWINSZ_IN_SYS_IOCTL".into()]),
+                    cpp_symbols: Some(vec![CPP::set("GWINSZ_IN_SYS_IOCTL")]),
                     paths: Some(vec!["termios.h".into(), "sys/ioctl.h".into()]),
                     ..Default::default()
                 },
@@ -2686,6 +2885,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             vec![ExVar(
                                 VarAttrs::internal(),
                                 format!("ac_cv_header_{}", sanitize_shell_name(s)),
+                                None,
                             )]
                         })),
                         Cmds, // [action-if-found]
@@ -2708,8 +2908,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     ExVar(
                                         VarAttrs::internal(),
                                         format!("ac_cv_header_{}", sanitize_shell_name(s)),
+                                        None,
                                     ),
-                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -2732,8 +2933,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                 ExVar(
                                     VarAttrs::internal(),
                                     format!("ac_cv_header_{}", sanitize_shell_name(s),),
+                                    None,
                                 ),
-                                ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                             ]
                         }),
                     )],
@@ -2752,6 +2954,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             vec![ExVar(
                                 VarAttrs::internal(),
                                 format!("ac_cv_have_decl_{}", sanitize_shell_name(s)),
+                                None,
                             )]
                         })),
                         Cmds, // [action-if-found]
@@ -2774,8 +2977,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     ExVar(
                                         VarAttrs::internal(),
                                         format!("ac_cv_have_decl_{}", sanitize_shell_name(s)),
+                                        None,
                                     ),
-                                    ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s))),
+                                    ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s)), None),
                                 ]
                             }),
                         ),
@@ -2798,8 +3002,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                 ExVar(
                                     VarAttrs::internal(),
                                     format!("ac_cv_have_decl_{}", sanitize_shell_name(s)),
+                                    None,
                                 ),
-                                ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s))),
+                                ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s)), None),
                             ]
                         }),
                     )],
@@ -2814,7 +3019,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // if `struct dirent.d_ino` exists
-                        "HAVE_STRUCT_DIRENT_D_INO".into(),
+                        CPP::set("HAVE_STRUCT_DIRENT_D_INO"),
                     ]),
                     require: Some(vec!["AC_HEADER_DIRENT".into()]),
                     ..Default::default()
@@ -2826,7 +3031,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // if `struct dirent.d_type` exists
-                        "HAVE_STRUCT_DIRENT_D_TYPE".into(),
+                        CPP::set("HAVE_STRUCT_DIRENT_D_TYPE"),
                     ]),
                     require: Some(vec!["AC_HEADER_DIRENT".into()]),
                     ..Default::default()
@@ -2836,10 +3041,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_STRUCT_ST_BLOCKS",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_member_struct_stat_st_blocks".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_member_struct_stat_st_blocks",
+                    )
+                    .yes()]),
                     cpp_symbols: Some(vec![
-                        "HAVE_STRUT_ST_BLOCKS".into(),
-                        "HAVE_ST_BLOCKS".into(), // deprecated
+                        CPP::set("HAVE_STRUT_ST_BLOCKS"),
+                        CPP::set("HAVE_ST_BLOCKS"), // deprecated
                     ]),
                     paths: Some(vec![
                         // if `struct stat.st_blocks` does not exists
@@ -2852,7 +3060,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_STRUCT_TM",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    cpp_symbols: Some(vec!["TM_IN_SYS_TIME".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("TM_IN_SYS_TIME")]),
                     paths: Some(vec!["sys/time.h".into()]),
                     ..Default::default()
                 },
@@ -2862,12 +3070,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
-                        "HAVE_STRUCT_TM_TM_ZONE".into(),
-                        "HAVE_TM_ZONE".into(), // deprecated
+                        CPP::set("HAVE_STRUCT_TM_TM_ZONE"),
+                        CPP::set("HAVE_TM_ZONE"), // deprecated
                         // `struct tm.tm_zone` is not found
                         // and if the external array 'tzname' is found
-                        "HAVE_TZNAME".into(),      // if defined
-                        "HAVE_DECL_TZNAME".into(), // if declared
+                        CPP::unset("HAVE_TZNAME"),      // if defined
+                        CPP::unset("HAVE_DECL_TZNAME"), // if declared
                     ]),
                     paths: Some(vec!["sys/time.h".into()]),
                     ..Default::default()
@@ -2883,6 +3091,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             vec![ExVar(
                                 VarAttrs::internal(),
                                 format!("ac_cv_member_{}", sanitize_shell_name(s)),
+                                None,
                             )]
                         })),
                         Cmds, // [action-if-found]
@@ -2905,8 +3114,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     ExVar(
                                         VarAttrs::internal(),
                                         format!("ac_cv_member_{}", sanitize_shell_name(s)),
+                                        None,
                                     ),
-                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -2923,8 +3133,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_GETGROUPS",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_getgroups".into()]),
-                    cpp_symbols: Some(vec!["GETGROUPS_T".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_type_getgroups").with_value("gid_t")
+                    ]),
+                    cpp_symbols: Some(vec![CPP::with_value("GETGROUPS_T", "gid_t")]),
                     paths: Some(vec!["unistd.h".into()]),
                     ..Default::default()
                 },
@@ -2933,8 +3145,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INT8_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_int8_t".into()]),
-                    cpp_symbols: Some(vec!["int8_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_int8_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("int8_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2943,8 +3155,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INT16_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_int16_t".into()]),
-                    cpp_symbols: Some(vec!["int16_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_int16_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("int16_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2953,8 +3165,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INT32_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_int32_t".into()]),
-                    cpp_symbols: Some(vec!["int32_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_int32_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("int32_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2963,8 +3175,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INT64_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_int64_t".into()]),
-                    cpp_symbols: Some(vec!["int64_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_int64_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("int64_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2973,8 +3185,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INTMAX_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_intmax_t".into()]),
-                    cpp_symbols: Some(vec!["HAVE_INTMAX_T".into(), "intmax_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_intmax_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_INTMAX_T"), CPP::unset("intmax_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2983,8 +3195,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_INTPTR_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_intptr_t".into()]),
-                    cpp_symbols: Some(vec!["HAVE_INTPTR_T".into(), "intptr_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_intptr_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_INTPTR_T"), CPP::unset("intptr_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -2993,8 +3205,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_LONG_DOUBLE",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_long_double".into()]),
-                    cpp_symbols: Some(vec!["HAVE_LONG_DOUBLE".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_long_double").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_LONG_DOUBLE")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3003,8 +3215,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_LONG_DOUBLE_WIDER",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_long_double_wider".into()]),
-                    cpp_symbols: Some(vec!["HAVE_LONG_DOUBLE_WIDER".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_internal("ac_cv_type_long_double_wider").yes()
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_LONG_DOUBLE_WIDER")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3013,8 +3227,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_LONG_LONG_INT",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_long_long_int".into()]),
-                    cpp_symbols: Some(vec!["HAVE_LONG_LONG_INT".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_long_long_int").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_LONG_LONG_INT")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3023,8 +3237,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_MBSTATE_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_mbstate_t".into()]),
-                    cpp_symbols: Some(vec!["HAVE_MBSTATE_T".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_mbstate_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_MBSTATE_T"), CPP::set("mbstate_t")]),
                     paths: Some(vec!["wchar.h".into()]),
                     ..Default::default()
                 },
@@ -3033,8 +3247,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_MODE_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_mode_t".into()]),
-                    cpp_symbols: Some(vec!["mode_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_mode_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("mode_t")]),
                     ..Default::default()
                 },
             ),
@@ -3042,8 +3256,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_OFF_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_off_t".into()]),
-                    cpp_symbols: Some(vec!["off_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_off_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("off_t")]),
                     ..Default::default()
                 },
             ),
@@ -3051,8 +3265,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_PID_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_pid_t".into()]),
-                    cpp_symbols: Some(vec!["pid_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_pid_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("pid_t")]),
                     ..Default::default()
                 },
             ),
@@ -3060,8 +3274,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_SIZE_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_size_t".into()]),
-                    cpp_symbols: Some(vec!["size_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_size_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("size_t")]),
                     ..Default::default()
                 },
             ),
@@ -3069,8 +3283,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_SSIZE_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_ssize_t".into()]),
-                    cpp_symbols: Some(vec!["ssize_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_ssize_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("ssize_t")]),
                     ..Default::default()
                 },
             ),
@@ -3078,8 +3292,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UID_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_uid_t".into()]),
-                    cpp_symbols: Some(vec!["uid_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_uid_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("uid_t")]),
                     ..Default::default()
                 },
             ),
@@ -3087,8 +3301,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINT8_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_uint8_t".into()]),
-                    cpp_symbols: Some(vec!["uint8_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_uint8_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("uint8_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3097,8 +3311,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINT16_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_uint16_t".into()]),
-                    cpp_symbols: Some(vec!["uint16_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_uint16_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("uint16_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3107,8 +3321,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINT32_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_uint32_t".into()]),
-                    cpp_symbols: Some(vec!["uint32_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_uint32_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("uint32_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3117,8 +3331,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINT64_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_uint64_t".into()]),
-                    cpp_symbols: Some(vec!["uint64_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_uint64_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::unset("uint64_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3127,8 +3341,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINTMAX_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_uintmax_t".into()]),
-                    cpp_symbols: Some(vec!["HAVE_UINTMAX_T".into(), "uintmax_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_uintmax_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_UINTMAX_T"), CPP::unset("uintmax_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3137,8 +3351,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UINTPTR_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_uintptr_t".into()]),
-                    cpp_symbols: Some(vec!["HAVE_UINTPTR_T".into(), "uintptr_t".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_type_uintptr_t").yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_UINTPTR_T"), CPP::unset("uintptr_t")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3147,8 +3361,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_TYPE_UNSIGNED_LONG_LONG_T",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_type_unsigned_long_long_int".into()]),
-                    cpp_symbols: Some(vec!["HAVE_UNSIGNED_LONG_LONG_INT".into()]),
+                    shell_vars: Some(vec![Var::define_internal(
+                        "ac_cv_type_unsigned_long_long_int",
+                    )
+                    .yes()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_UNSIGNED_LONG_LONG_INT")]),
                     paths: Some(vec!["stdint.h".into(), "inttypes.h".into()]),
                     ..Default::default()
                 },
@@ -3158,7 +3375,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: None,
-                    cpp_symbols: Some(vec!["RETSIGTYPE".into()]),
+                    cpp_symbols: Some(vec![CPP::with_value("RETSIGTYPE", "void")]),
                     paths: Some(vec!["signal.h".into()]),
                     ..Default::default()
                 },
@@ -3179,6 +3396,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     "ac_cv_type_{}",
                                     sanitize_shell_name(s.replace("*", "p").as_ref())
                                 ),
+                                None,
                             )]
                         })),
                         Cmds, // [action-if-found]
@@ -3204,8 +3422,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                             "ac_cv_type_{}",
                                             sanitize_shell_name(s.replace("*", "p").as_ref())
                                         ),
+                                        None,
                                     ),
-                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                    ExCPP(format!("HAVE_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -3230,8 +3449,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                         "ac_cv_sizeof_{}",
                                         sanitize_shell_name(s.replace("*", "p").as_ref())
                                     ),
+                                    None,
                                 ),
-                                ExCPP(format!("SIZE_OF_{}", sanitize_c_name(s))),
+                                ExCPP(format!("SIZE_OF_{}", sanitize_c_name(s)), None),
                             ]
                         })),
                         Lit,  // [unused]
@@ -3254,8 +3474,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                         "ac_cv_align_of_{}",
                                         sanitize_shell_name(s.replace("*", "p").as_ref())
                                     ),
+                                    None,
                                 ),
-                                ExCPP(format!("ALIGN_OF_{}", sanitize_c_name(s))),
+                                ExCPP(format!("ALIGN_OF_{}", sanitize_c_name(s)), None),
                             ]
                         })),
                         Prog, // [includes=AC_INCLUDES_DEFAULT]
@@ -3311,14 +3532,14 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_env("CC"),
-                        Var::define_precious("CFLAGS"), // -g -O2
-                        Var::define_precious("LDFLAGS"),
-                        Var::define_precious("LIBS"),
+                        Var::define_env("CC").with_value("gcc"),
+                        Var::define_precious("CFLAGS").with_value("-g -O2"), // -g -O2
+                        Var::define_precious("LDFLAGS").with_value(""),
+                        Var::define_precious("LIBS").with_value(""),
                         Var::define_precious("OBJC"),
-                        Var::define_output("OBJEXT"),
-                        Var::define_output("ac_prog_cc_stdc"), // c11/c99/c89/no
-                        "GCC".into(), // set to 'yes' if the selected compiler is GNU C
+                        Var::define_output("OBJEXT").with_value("o"),
+                        Var::define_output("ac_prog_cc_stdc").with_value("c11"), // c11/c99/c89/no
+                        Var::define_internal("GCC").yes(), // set to 'yes' if the selected compiler is GNU C
                         Var::reference("ac_tool_prefix"),
                     ]),
                     is_oneshot: true,
@@ -3359,7 +3580,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     // FIXME: shell variable `ac_cv_prog_cc_COMPILER_c_o` is actually defined,
                     // where COMPILER is the compiler name found by AC_PROG_CC.
-                    cpp_symbols: Some(vec!["NO_MINUS_C_MINUS_O".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("NO_MINUS_C_MINUS_O")]),
                     require: Some(vec!["AC_PROG_CC".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -3370,12 +3591,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_env("CPP"),
-                        Var::define_precious("CPPFLAGS"),
+                        Var::define_env("CPP").with_value("gcc -E"),
+                        Var::define_precious("CPPFLAGS").with_value(""),
                         Var::reference("CC"),
-                        "ac_cv_prog_CPP".into(),
+                        Var::define_internal("ac_cv_prog_CPP").with_value("gcc -E"),
                     ]),
-                    cpp_symbols: Some(vec!["NO_MINUS_C_MINUS_O".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("NO_MINUS_C_MINUS_O")]),
                     require: Some(vec!["AC_PROG_CC".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -3387,7 +3608,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // turning it on will make CPP treats warnings as errors
-                        "ac_c_preproc_warn_flag".into(),
+                        Var::define_internal("ac_c_preproc_warn_flag").yes(),
                     ]),
                     require: Some(vec!["AC_PROG_CPP".into()]),
                     is_oneshot: true,
@@ -3398,7 +3619,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_C_BACKSLASH_A",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    cpp_symbols: Some(vec!["HAVE_C_BACKSLASH_A".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_C_BACKSLASH_A")]),
                     ..Default::default()
                 },
             ),
@@ -3423,10 +3644,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_C_CONST",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_const").yes()]),
                     cpp_symbols: Some(vec![
                         // Define to empty if 'const' does not conform to ANSI C.
-                        "const".into(),
-                        "ac_cv_c_const".into(),
+                        CPP::unset("const"),
                     ]),
                     ..Default::default()
                 },
@@ -3435,10 +3656,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_C__GENERIC",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c__Generic").yes()]),
                     cpp_symbols: Some(vec![
                         // Define to 1 if C11-style _Generic works.
-                        "HAVE_C__GENERIC".into(),
-                        "ac_cv_c__Generic".into(),
+                        CPP::set("HAVE_C__GENERIC"),
                     ]),
                     ..Default::default()
                 },
@@ -3449,7 +3670,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to the alternate spelling of 'restrict' keyword.
-                        "restrict".into(),
+                        CPP::unset("restrict"),
                     ]),
                     ..Default::default()
                 },
@@ -3460,7 +3681,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to empty if keyword 'volatile' does not work.
-                        "volatile".into(),
+                        CPP::unset("volatile"),
                     ]),
                     ..Default::default()
                 },
@@ -3469,10 +3690,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_C_INLINE",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    shell_vars: Some(vec!["ac_cv_c_inline".into()]),
+                    shell_vars: Some(vec![Var::define_internal("ac_cv_c_inline").yes()]),
                     cpp_symbols: Some(vec![
                         // Define to '__inline__', '__inline', or empty.
-                        "inline".into(),
+                        CPP::unset("inline"),
                     ]),
                     ..Default::default()
                 },
@@ -3501,7 +3722,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to 1 if the preprocessor supports the ANSI's '#' operator.
-                        "HAVE_STRINGSIZE".into(),
+                        CPP::set("HAVE_STRINGSIZE"),
                     ]),
                     ..Default::default()
                 },
@@ -3513,7 +3734,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     cpp_symbols: Some(vec![
                         // Define to nothing if C SUPPORTS flexible array members,
                         // and to 1 if it does NOT.
-                        "FLEXIBLE_ARRAY_MEMBER".into(),
+                        CPP::with_value("FLEXIBLE_ARRAY_MEMBER", ""),
                     ]),
                     ..Default::default()
                 },
@@ -3523,8 +3744,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
-                        "HAVE_C_VARARRAYS".into(), // if supported
-                        "__STDC_NO_VLA__".into(),  // if not supported
+                        CPP::set("HAVE_C_VARARRAYS"),  // if supported
+                        CPP::unset("__STDC_NO_VLA__"), // if not supported
                     ]),
                     ..Default::default()
                 },
@@ -3535,9 +3756,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to 1 if typeof works with the compiler.
-                        "HAVE_TYPEOF".into(),
+                        CPP::set("HAVE_TYPEOF"),
                         // Define to __typeof__ if the compiler spells it that way.
-                        "typeof".into(),
+                        CPP::unset("typeof"),
                     ]),
                     ..Default::default()
                 },
@@ -3548,9 +3769,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define to 1 if the C compiler supports function prototypes.
-                        "PROTOTYPES".into(),
+                        CPP::set("PROTOTYPES"),
                         // Define like PROTOTYPES; this can be used by system headers.
-                        "__PROTOTYPES".into(),
+                        CPP::set("__PROTOTYPES"),
                     ]),
                     ..Default::default()
                 },
@@ -3564,12 +3785,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_env("CXX"),
-                        Var::define_env("CCC"),
-                        Var::define_precious("CXXFLAGS"),
-                        Var::define_precious("LDFLAGS"),
-                        Var::define_precious("LIBS"),
-                        "GXX".into(),
+                        Var::define_env("CXX").with_value("c++"),
+                        Var::define_env("CCC").with_value("c++"),
+                        Var::define_precious("CXXFLAGS").with_value("-g -O2"),
+                        Var::define_precious("LDFLAGS").with_value(""),
+                        Var::define_precious("LIBS").with_value(""),
+                        Var::define_internal("GXX").yes(), // set to yes if gnu compiler is found
                         // cxx11/cxx98/no
                         Var::define_output("ac_prog_cxx_stdcxx"),
                     ]),
@@ -3582,8 +3803,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_precious("CXXPP"),
-                        Var::define_precious("CXXFLAGS"),
+                        Var::define_precious("CXXPP").with_value("c++ -E"),
+                        Var::define_precious("CXXFLAGS").with_value(""),
                         Var::reference("CXX"),
                         "ac_cv_prog_CXXPP".into(),
                     ]),
@@ -3596,7 +3817,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_PROG_CXX_C_O",
                 M4MacroSignature {
                     ret_type: Some(Cmds),
-                    cpp_symbols: Some(vec!["CXX_NO_MINUS_C_MINUS_O".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("CXX_NO_MINUS_C_MINUS_O")]),
                     require: Some(vec!["AC_PROG_CXX".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -3954,7 +4175,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // Define to 'yes' if system supports `#!` in the script.
-                        "interpval".into(),
+                        Var::define_internal("interpval").yes(),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -3965,23 +4186,23 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_input("enable_largefile"),
-                        Var::define_input("enable_year2038"),
+                        Var::define_input("enable_largefile").yes(),
+                        Var::define_input("enable_year2038").yes(),
                         // set to 'yes' if a wide `off_t` is available.
-                        "ac_have_largefile".into(),
+                        Var::define_internal("ac_have_largefile").yes(),
                         // set to 'yes' if a wide `time_t` is available.
-                        "ac_have_year2038".into(),
+                        Var::define_internal("ac_have_year2038").yes(),
                     ]),
                     cpp_symbols: Some(vec![
                         // Define to 64 on hosts where this is settable
-                        "_FILE_OFFSET_BITS".into(),
+                        CPP::with_value("_FILE_OFFSET_BITS", "64"),
                         // Define to 1 on platforms where this makes off_t a 64-bit type
-                        "_LARGE_FILES".into(),
+                        CPP::set("_LARGE_FILES"),
                         // by _AC_SYS_YEAR2038_PROBE
                         // Define to 64 on on hosts where this is settable.
-                        "_TIME_BITS".into(),
+                        CPP::with_value("_TIME_BITS", "64"),
                         // Define to 1 on platforms where this makes time_t a 64-bit type.
-                        "__MINGW_USE_VC2005_COMPAT".into(),
+                        CPP::set("__MINGW_USE_VC2005_COMPAT"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -3993,7 +4214,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Define if the system supports file names longer than 14 chars.
-                        "HAVE_LONG_FILE_NAMES".into(),
+                        CPP::set("HAVE_LONG_FILE_NAMES"),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -4005,7 +4226,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         // Set to 'yes' if 'termios.h' and 'tcgetattr' are supported.
-                        "ac_cv_sys_posix_termios".into(),
+                        Var::define_internal("ac_cv_sys_posix_termios").yes(),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -4036,32 +4257,32 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     cpp_symbols: Some(vec![
                         // Defined unconditionally
-                        "_ALL_SOURCE".into(),
-                        "_DARWIN_C_SOURCCE".into(),
-                        "_GNU_SOURCER".into(),
-                        "_NETBSD_SOURCE".into(),
-                        "_OPENBSD_SOURCE".into(),
-                        "_POSIX_PTHREAD_SEMANTICS".into(),
-                        "__STDC_WANT_IEC_60559_ATTRIBS_EXT__".into(),
-                        "__STDC_WANT_IEC_60559_BEP_EXT__".into(),
-                        "__STDC_WANT_IEC_60559_DEP_EXT__".into(),
-                        "__STDC_WANT_IEC_60559_EXT__".into(),
-                        "__STDC_WANT_IEC_60559_FUNCS_EXT__".into(),
-                        "__STDC_WANT_IEC_60559_TYPES_EXT__".into(),
-                        "__STDC_WANT_LIB_EXT2__".into(),
-                        "__STDC_WANT_MATH_SPEC_FUNCS__".into(),
-                        "__TANDEM_SOURCE".into(),
+                        CPP::set("_ALL_SOURCE"),
+                        CPP::set("_DARWIN_C_SOURCCE"),
+                        CPP::set("_GNU_SOURCER"),
+                        CPP::set("_NETBSD_SOURCE"),
+                        CPP::set("_OPENBSD_SOURCE"),
+                        CPP::set("_POSIX_PTHREAD_SEMANTICS"),
+                        CPP::set("__STDC_WANT_IEC_60559_ATTRIBS_EXT__"),
+                        CPP::set("__STDC_WANT_IEC_60559_BEP_EXT__"),
+                        CPP::set("__STDC_WANT_IEC_60559_DEP_EXT__"),
+                        CPP::set("__STDC_WANT_IEC_60559_EXT__"),
+                        CPP::set("__STDC_WANT_IEC_60559_FUNCS_EXT__"),
+                        CPP::set("__STDC_WANT_IEC_60559_TYPES_EXT__"),
+                        CPP::set("__STDC_WANT_LIB_EXT2__"),
+                        CPP::set("__STDC_WANT_MATH_SPEC_FUNCS__"),
+                        CPP::set("__TANDEM_SOURCE"),
                         // Defined occasionally
-                        "__EXTENSIONS__".into(),
-                        "__MINIX".into(),
-                        "__POSIX_SOURCE".into(),
-                        "__POISIX_1_SOURCE".into(),
+                        CPP::unset("__EXTENSIONS__"),
+                        CPP::unset("__MINIX"),
+                        CPP::unset("__POSIX_SOURCE"),
+                        CPP::unset("__POISIX_1_SOURCE"),
                         // Define to 500 only if needed to make 'wchar.h' declare 'mbstate_t'.
                         // This is known to be needed on some versions of HP/UX.
-                        "__XOPEN_SOURCE".into(),
+                        CPP::unset("__XOPEN_SOURCE"),
                         // by _AC_CHECK_HEADER_ONCE
-                        "HAVE_WCHAR_H".into(),
-                        "HAVE_MINIX_CONFIG_H".into(),
+                        CPP::set("HAVE_WCHAR_H"),
+                        CPP::unset("HAVE_MINIX_CONFIG_H"),
                     ]),
                     paths: Some(vec!["wchar.h".into(), "minix/config.h".into()]),
                     require: Some(vec!["AC_CHECK_INCLUDES_DEFAULT".into()]),
@@ -4394,11 +4615,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_DEFINE",
                 M4MacroSignature {
                     arg_types: vec![
-                        CPP,  // Note that this argument could not contain any shell vars.
-                        Word, // If it contains whiespace, things would be a tragedy.
-                        Lit,  // description
+                        CPPSymbol, // Note that this argument could not contain any shell vars.
+                        Word,      // If it contains whiespace, things would be a tragedy.
+                        Lit,       // description
                     ],
-                    ret_type: Some(CPP),
+                    ret_type: Some(CPPSymbol),
                     ..Default::default()
                 },
             ),
@@ -4406,11 +4627,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "AC_DEFINE_UNQUOTED",
                 M4MacroSignature {
                     arg_types: vec![
-                        CPP,  // if not contains shell vars, this is just a Symbol.
-                        Word, // this also can be a shell var
-                        Lit,  // description
+                        CPPSymbol, // if not contains shell vars, this is just a Symbol.
+                        Word,      // this also can be a shell var
+                        Lit,       // description
                     ],
-                    ret_type: Some(CPP),
+                    ret_type: Some(CPPSymbol),
                     ..Default::default()
                 },
             ),
@@ -4439,7 +4660,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // will be substituted to @filename@
                         Path(Some(&|s| {
                             // filename
-                            vec![ExVar(VarAttrs::new(Output, Referenced), s.into())]
+                            vec![ExVar(VarAttrs::new(Output, Referenced), s.into(), None)]
                         })),
                     ],
                     ret_type: Some(Cmds),
@@ -6472,7 +6693,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Lit, // expression
                     ],
-                    ret_type: Some(CPP),
+                    ret_type: Some(CPPSymbol),
                     ..Default::default()
                 },
             ),
@@ -6891,6 +7112,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     ExVar(
                                         VarAttrs::input(),
                                         format!("with_{}", sanitize_shell_name(s)),
+                                        None,
                                     ),
                                 ]
                             }),
@@ -6914,6 +7136,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                 vec![ExVar(
                                     VarAttrs::input(),
                                     format!("enable_{}", sanitize_shell_name(s)),
+                                    None,
                                 )]
                             }),
                         ), // feature
@@ -7223,6 +7446,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Word, // min-version
                     ],
+                    shell_vars: Some(vec![
+                        Var::define_precious("PKG_CONFIG").with_value("pkg-config"),
+                        Var::define_precious("PKG_CONFIG_PATH").with_value(""),
+                        Var::define_precious("PKG_CONFIG_LIBDIR").with_value(""),
+                    ]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
                     ..Default::default()
@@ -7237,8 +7465,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable-prefix
                                 vec![
-                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s)),
-                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s)),
+                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s), None),
+                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s), None),
                                 ]
                             }),
                         ),
@@ -7259,8 +7487,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable-prefix
                                 vec![
-                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s)),
-                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s)),
+                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s), None),
+                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s), None),
                                 ]
                             }),
                         ),
@@ -7326,10 +7554,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable-prefix
                                 vec![
-                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s)),
-                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s)),
+                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s), None),
+                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s), None),
                                     // argument
-                                    ExVar(VarAttrs::input(), format!("with_{}", s)),
+                                    ExVar(VarAttrs::input(), format!("with_{}", s), None),
                                 ]
                             }),
                         ),
@@ -7353,10 +7581,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable-prefix
                                 vec![
-                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s)),
-                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s)),
+                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s), None),
+                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s), None),
                                     // argument & conditional
-                                    ExVar(VarAttrs::input(), format!("with_{}", s)),
+                                    ExVar(VarAttrs::input(), format!("with_{}", s), None),
                                     ExCond(s.into()),
                                 ]
                             }),
@@ -7382,12 +7610,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             Some(&|s| {
                                 // variable-prefix
                                 vec![
-                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s)),
-                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s)),
+                                    ExVar(VarAttrs::output(), format!("{}_CFLAGS", s), None),
+                                    ExVar(VarAttrs::output(), format!("{}_LIBS", s), None),
                                     // argument & conditional & cpp symbol
-                                    ExVar(VarAttrs::input(), format!("with_{}", s)),
+                                    ExVar(VarAttrs::input(), format!("with_{}", s), None),
                                     ExCond(s.into()),
-                                    ExCPP(s.into()),
+                                    ExCPP(s.into(), None),
                                 ]
                             }),
                         ),
@@ -7420,27 +7648,27 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Arr(Blank), // options
                     ],
                     shell_vars: Some(vec![
-                        Var::define_precious("LT_SYS_LIBRARY_PATH"),
-                        Var::define_input("with_gnu_ld"),
-                        Var::define_input("with_tags"),
-                        Var::define_input("with_pic"),
-                        Var::define_input("enable_libtool_lock"),
-                        Var::define_input("enable_static"),
-                        Var::define_input("enable_shared"),
-                        Var::define_precious("sysroot"),
+                        Var::define_precious("LT_SYS_LIBRARY_PATH").with_value(""),
+                        Var::define_input("with_gnu_ld").yes(),
+                        Var::define_input("with_tags").with_value(""),
+                        Var::define_input("with_pic").yes(),
+                        Var::define_input("enable_libtool_lock").no(),
+                        Var::define_input("enable_static").yes(),
+                        Var::define_input("enable_shared").yes(),
+                        Var::define_precious("sysroot").with_value(""),
                         "library_names_spec".into(),
                         // by _LT_COMPILER_PIC
-                        "lt_prog_compiler_wl".into(),
-                        "lt_prog_compiler_pic".into(),
-                        "lt_prog_compiler_static".into(),
-                        "lt_prog_compiler_can_build_shared".into(),
-                        "lt_prog_compiler_no_builtin_flag".into(),
+                        Var::define_internal("lt_prog_compiler_wl").with_value("-Wl,"),
+                        Var::define_internal("lt_prog_compiler_pic").with_value("-fPIC"),
+                        Var::define_internal("lt_prog_compiler_static").with_value(""),
+                        Var::define_internal("lt_prog_compiler_can_build_shared").yes(),
+                        Var::define_internal("lt_prog_compiler_no_builtin_flag").with_value(""),
                         // by _LT_LANG_C_CONFIG
-                        "objext".into(),
-                        "ac_ext".into(),
-                        "allow_undefined_flag".into(),
+                        Var::define_internal("objext").with_value("o"),
+                        Var::define_internal("ac_ext").with_value("c"),
+                        Var::define_internal("allow_undefined_flag").with_value(""),
                         // by _LT_TAGVAR
-                        "always_export_symbols".into(),
+                        Var::define_internal("always_export_symbols").no(),
                         "archive_cmds".into(),
                         "archive_cmds_need_lc".into(),
                         "archive_expsym_cmds".into(),
@@ -7453,18 +7681,18 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "export_dynamic_flag_spec".into(),
                         "export_symbols_cmds".into(),
                         "file_list_spec".into(),
-                        "hardcode_action".into(),
-                        "hardcode_automatic".into(),
+                        Var::define_internal("hardcode_action").with_value("immediate"),
+                        Var::define_internal("hardcode_automatic").yes(),
                         "hardcode_direct_absolute".into(),
                         "hardcode_direct".into(),
                         "hardcode_libdir_flag_spec".into(),
                         "hardcode_libdir_separator".into(),
-                        "hardcode_minus_L".into(),
+                        Var::define_internal("hardcode_minus_L").no(),
                         "hardcode_shlibpath_var".into(),
                         "include_expsyms".into(),
-                        "inherit_rpath".into(),
-                        "ld_shlibs".into(),
-                        "link_all_deplibs".into(),
+                        Var::define_internal("inherit_rpath").yes(),
+                        Var::define_internal("ld_shlibs").yes(),
+                        Var::define_internal("link_all_deplibs").yes(),
                         "lt_cv_prog_compiler__b".into(),
                         "lt_cv_prog_compiler_c_o".into(),
                         "lt_cv_prog_compiler_pic".into(),
@@ -7486,8 +7714,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "prelink_cmds".into(),
                         "reload_cmds".into(),
                         "reload_flag".into(),
-                        "runpath_var".into(),
-                        "thread_safe_flag_spec".into(),
+                        Var::define_internal("runpath_var").with_value("LD_RUN_PATH"),
+                        Var::define_internal("thread_safe_flag_spec").with_value("-pthread"),
                         "whole_archive_flag_spec".into(),
                     ]),
                     ret_type: Some(Cmds),
@@ -7636,7 +7864,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "LT_FUNC_DLSYM_USCORE",
                 M4MacroSignature {
-                    cpp_symbols: Some(vec!["DLSYM_USCORE".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("DLSYM_USCORE")]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -7644,8 +7872,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "LT_LIB_M",
                 M4MacroSignature {
-                    shell_vars: Some(vec![Var::define_output("LIBM"), Var::add("LIBS", Output)]),
-                    cpp_symbols: Some(vec!["HAVE_LIBM".into(), "HAVE_LIBMW".into()]),
+                    shell_vars: Some(vec![
+                        Var::define_output("LIBM"),
+                        Var::append("LIBS", Output),
+                    ]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_LIBM"), CPP::unset("HAVE_LIBMW")]),
                     require: Some(vec!["AC_CANONICAL_HOST".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -7665,13 +7896,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     shell_vars: Some(vec![
                         Var::define_output("LT_DLLOADERS"),
                         Var::define_output("LIBADD_SHL_LOAD"),
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output),
                     ]),
                     cpp_symbols: Some(vec![
-                        "HAVE_LIBDL".into(),
-                        "HAVE_SHL_LOAD".into(),
-                        "HAVE_DYLD".into(),
-                        "HAVE_DLD".into(),
+                        "HAVE_LIBDL".into(),    // linux
+                        "HAVE_SHL_LOAD".into(), // hp-ux
+                        "HAVE_DYLD".into(),     // mac
+                        CPP::unset("HAVE_DLD"), // obsolete
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -7733,9 +7964,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "enable_dlopen_self_static".into(),
                         "lt_cv_dlopen_self".into(),
                         "lt_cv_dlopen_self_static".into(),
-                        Var::add("LIBS", Output),
+                        Var::append("LIBS", Output),
                     ]),
-                    cpp_symbols: Some(vec!["HAVE_DLFCN_H".into()]),
+                    cpp_symbols: Some(vec![
+                        CPP::set("HAVE_DLOPEN"),
+                        CPP::set("HAVE_DLOPEN_SELF"),
+                        CPP::set("HAVE_DLFCN_H"),
+                    ]),
                     paths: Some(vec!["dlfcn.h".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -7751,8 +7986,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "LT_SYS_DLOPEN_DEPLIBS",
                 M4MacroSignature {
-                    shell_vars: Some(vec!["lt_cv_sys_dlopen_deplibs".into()]),
-                    cpp_symbols: Some(vec!["LTDL_DLOPEN_DEPLIBS".into()]),
+                    shell_vars: Some(vec![Var::define_internal("lt_cv_sys_dlopen_deplibs").no()]),
+                    cpp_symbols: Some(vec![CPP::unset("LTDL_DLOPEN_DEPLIBS")]),
                     require: Some(vec!["AC_CANONICAL_HOST".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -7769,10 +8004,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 "LT_SYS_DLSEARCH_PATH",
                 M4MacroSignature {
                     shell_vars: Some(vec![
-                        "lt_cv_sys_dlsearch_path".into(),
-                        "sys_dlsearch_path".into(),
+                        Var::define_internal("lt_cv_sys_dlsearch_path").yes(),
+                        Var::define_internal("sys_dlsearch_path").with_value("/lib:/usr/lib"),
                     ]),
-                    cpp_symbols: Some(vec!["LTDL_DLSERCH_PATH".into()]),
+                    cpp_symbols: Some(vec![CPP::with_value("LTDL_DLSERCH_PATH", "/lib:/usr/lib")]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -7863,7 +8098,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     arg_types: vec![
                         Type(Some(&|s| {
                             // type
-                            vec![ExCPP(format!("SIZE_OF_{}", sanitize_c_name(s)))]
+                            vec![ExCPP(format!("SIZE_OF_{}", sanitize_c_name(s)), None)]
                         })),
                         Prog, // headers
                     ],
@@ -7935,11 +8170,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     shell_vars: Some(vec![Var::reference("CXX"), Var::reference("CXXCPP")]),
                     cpp_symbols: Some(vec![
-                        "HAVE_CXX23".into(),
-                        "HAVE_CXX20".into(),
-                        "HAVE_CXX17".into(),
-                        "HAVE_CXX14".into(),
-                        "HAVE_CXX11".into(),
+                        CPP::set("HAVE_CXX23"),
+                        CPP::set("HAVE_CXX20"),
+                        CPP::set("HAVE_CXX17"),
+                        CPP::set("HAVE_CXX14"),
+                        CPP::set("HAVE_CXX11"),
                     ]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
@@ -7970,8 +8205,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                 ExVar(
                                     VarAttrs::default(),
                                     format!("ax_cv_have_{}", sanitize_shell_name(s)),
+                                    Some("yes".into()),
                                 ),
-                                ExCPP(format!("HAVE_{}", sanitize_c_name(s))),
+                                ExCPP(
+                                    format!("HAVE_{}", sanitize_c_name(s)),
+                                    Some(Some("1".into())),
+                                ),
                             ]
                         }),
                     )],
@@ -7997,8 +8236,12 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                 ExVar(
                                     VarAttrs::default(),
                                     format!("ax_cv_have_func_attribute_{}", sanitize_shell_name(s)),
+                                    Some("yes".into()),
                                 ),
-                                ExCPP(format!("HAVE_FUNC_ATTRIBUTE_{}", sanitize_c_name(s))),
+                                ExCPP(
+                                    format!("HAVE_FUNC_ATTRIBUTE_{}", sanitize_c_name(s)),
+                                    Some(Some("1".into())),
+                                ),
                             ]
                         }),
                     )],
@@ -8109,7 +8352,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AX_INCLUDE_STRCASECMP",
                 M4MacroSignature {
-                    cpp_symbols: Some(vec!["AX_STRCASECMP_HEADER".into()]),
+                    cpp_symbols: Some(vec![CPP::with_value("AX_STRCASECMP_HEADER", "<strings.h>")]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
                     ..Default::default()
@@ -8125,7 +8368,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AX_C_LONG_LONG",
                 M4MacroSignature {
-                    cpp_symbols: Some(vec!["HAVE_LONG_LONG".into()]),
+                    cpp_symbols: Some(vec![CPP::set("HAVE_LONG_LONG")]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
                     ..Default::default()
@@ -8134,7 +8377,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AX_C_RESTRICT",
                 M4MacroSignature {
-                    cpp_symbols: Some(vec!["restrict".into()]),
+                    cpp_symbols: Some(vec![CPP::unset("restrict")]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
                     ..Default::default()
@@ -8143,7 +8386,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
             (
                 "AX_PRINTF_SIZE_T",
                 M4MacroSignature {
-                    cpp_symbols: Some(vec!["PRI_SIZE_T_MODIFIER".into()]),
+                    cpp_symbols: Some(vec![CPP::with_value("PRI_SIZE_T_MODIFIER", "z")]),
                     ret_type: Some(Cmds),
                     is_oneshot: true,
                     ..Default::default()
@@ -8203,16 +8446,88 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                     ],
                     shell_vars: Some(vec![
-                        Var::define_output("PTHREAD_LIBS"),
-                        Var::define_output("PTHREAD_CFLAGS"),
-                        Var::define_output("PTHREAD_CC"),
-                        Var::define_output("PTHREAD_CXX"),
+                        Var::reference("GCC"),
+                        Var::define_output("PTHREAD_LIBS").with_value("-lpthread"),
+                        Var::define_output("PTHREAD_CFLAGS").with_value("-pthread"),
+                        Var::define_output("PTHREAD_CC").with_value("gcc"),
+                        Var::define_output("PTHREAD_CXX").with_value("c++"),
+                        Var::define_internal("ax_pthread_ok").yes(),
+                        Var::define_internal("ax_pthread_clang").yes(),
                     ]),
                     cpp_symbols: Some(vec![
-                        "PTHREAD_CREATE_JOINABLE".into(),
-                        "HAVE_PTHREAD_PRIO_INHERIT".into(),
+                        CPP::set("HAVE_PTHREAD"),
+                        CPP::set("HAVE_PTHREAD_PRIO_INHERIT"),
+                        CPP::unset("PTHREAD_CREATE_JOINABLE"),
                     ]),
                     ret_type: Some(Cmds),
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_C___ATTRIBUTE__",
+                M4MacroSignature {
+                    cpp_symbols: Some(vec![CPP::set("HAVE___ATTRIBUTE__")]),
+                    ret_type: Some(Cmds),
+                    is_oneshot: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_COMPILER_VENDOR",
+                M4MacroSignature {
+                    shell_vars: Some(vec![
+                        Var::define_internal("ax_cv_c_compiler_vendor").with_value("gnu"),
+                        Var::define_internal("ax_cv_cxx_compiler_vendor").with_value("gnu"),
+                        Var::define_internal("ax_cv_fc_compiler_vendor").with_value("gnu"),
+                    ]),
+                    ret_type: Some(Cmds),
+                    is_oneshot: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_CHECK_FRAMEWORK",
+                // FIXME: actually this just works when host_os = "xdarwin*" (on mac x).
+                // in the future we will take platform branching into account to correctly fix values.
+                M4MacroSignature {
+                    arg_types: vec![
+                        VarName(
+                            None,
+                            Some(&|s| {
+                                // framework
+                                vec![
+                                    ExVar(
+                                        VarAttrs::append(Some(Output)),
+                                        "LIBS".into(),
+                                        Some(format!("-framework {}", s)),
+                                    ),
+                                ]
+                            }),
+                        ),
+                        Cmds, // [action-if-found]
+                        Cmds, // [action-if-not-found]
+                    ],
+                    shell_vars: Some(vec![]),
+                    ret_type: Some(Cmds),
+                    is_oneshot: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "AX_HAVE_OPENCL",
+                M4MacroSignature {
+                    arg_types: vec![Lit],
+                    shell_vars: Some(vec![
+                        Var::define_input("enable_opencl"),
+                        Var::define_internal("CL_ENABLED"),
+                        Var::define_internal("CL_CPPFLAGS"),
+                        Var::define_internal("CL_VERSION"),
+                        Var::define_internal("CL_LIBS"),
+                        Var::define_internal("no_cl"),
+                    ]),
+                    cpp_symbols: Some(vec!["HAVE_CL_CL_H".into()]),
+                    ret_type: Some(Cmds),
+                    is_oneshot: true,
                     ..Default::default()
                 },
             ),

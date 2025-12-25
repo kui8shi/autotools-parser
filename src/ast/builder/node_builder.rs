@@ -190,11 +190,13 @@ impl<U: Default> MakeBuilder for NodeBuilder<AmLine, AmWord, AmWordFragment, U> 
 
     fn conditional(
         &mut self,
+        negated: bool,
         guard_var: String,
         then: Vec<Self::Statement>,
         otherwise: Vec<Self::Statement>,
     ) -> Result<Self::Statement, Self::Error> {
         Ok(self.new_node(AmLine::Conditional(AmConditional {
+            negated,
             guard_var,
             then,
             otherwise,

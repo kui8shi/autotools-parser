@@ -12,7 +12,7 @@ use super::{
     CommandGroupDelimiters, ParseError, ParseErrorKind, ParseResult, Parser, ParserIterator,
     SourcePos, CASE, DO, DONE, ELIF, ELSE, ESAC, FI, FOR, FUNCTION, IF, IN, THEN, UNTIL, WHILE,
 };
-use crate::ast::am::{AmAssignOp, AmLine, AmVar, AmWord, MakeDF, MakeParameter};
+use crate::ast::am::{AmAssignOp, AmIdent, AmLine, AmVar, AmWord, MakeDF, MakeParameter};
 use crate::ast::builder::ConcatWordKind::{self, Concat, Single};
 use crate::ast::builder::QuoteWordKind::{DoubleQuoted, Simple, SingleQuoted};
 use crate::ast::builder::{self, AutomakeNodeBuilder, MakeBuilder, ShellBuilder, WordKind};
@@ -228,6 +228,13 @@ where
     pub fn automake_conditional(&mut self, in_recipe: bool) -> ParseResult<B::Statement, B::Error> {
         const ENDIF: &str = "endif";
         self.skip_whitespace();
+        let negated = match self.iter.peek() {
+            Some(Bang) => {
+                self.iter.next();
+                true
+            }
+            _ => false,
+        };
         let guard_var = if let Some(Name(name)) = self.iter.next() {
             name.to_owned()
         } else {
@@ -282,7 +289,9 @@ where
                 otherwise.push(next);
             }
         }
-        Ok(self.builder.conditional(guard_var, then, otherwise)?)
+        Ok(self
+            .builder
+            .conditional(negated, guard_var, then, otherwise)?)
     }
 
     /// Parses a single automake rule statement.
@@ -290,8 +299,8 @@ where
         let target = self.words_with_delim(&[Colon])?;
         eat!(self, { Colon => {} });
         self.skip_whitespace();
-        let dependency = self.words_with_delim(&[Newline])?;
-        eat!(self, { Newline => {} });
+        let dependency = self.words_with_delim(&[Newline, Pound])?;
+        self.linebreak_preserve_line_head_whitespace();
         let mut recipes = Vec::new();
         while let Some(recipe) = self.automake_recipe()? {
             recipes.push(recipe);
@@ -1456,6 +1465,14 @@ where
                 eat!(self, { ParenClose => {} });
                 self.builder.variable(AmVar::Param(p))?
             }
+            Some(&CurlyOpen) => {
+                // curly parentheses are also a valid way to reference automake variables
+                // ref: https://www.gnu.org/software/make/manual/html_node/Reference.html
+                eat!(self, { CurlyOpen => {} });
+                let p = self.automake_parameter()?;
+                eat!(self, { CurlyClose => {} });
+                self.builder.variable(AmVar::Param(p))?
+            }
             Some(_) => {
                 let p = self.automake_parameter()?;
                 self.builder.variable(AmVar::Param(p))?
@@ -1797,20 +1814,62 @@ where
     fn automake_parameter(&mut self) -> ParseResult<MakeParameter, B::Error> {
         use MakeParameter::*;
         let start_pos = self.iter.pos();
-
-        let param = match self.iter.next() {
-            Some(At) => Target(self.make_parameter_extension()),
-            Some(Star) => Match(self.make_parameter_extension()),
-            Some(Less) => FirstDependency(self.make_parameter_extension()),
-            Some(Caret) => AllDependency(self.make_parameter_extension()),
-            Some(Plus) => AllDependencyAllowingDuplicate(self.make_parameter_extension()),
-            Some(Question) => NewerDependency(self.make_parameter_extension()),
-            Some(Name(n)) => Var(n),
-            Some(t) => return Err(ParseError::new(BadSubst(t, start_pos))),
-            None => return Err(ParseError::new(UnexpectedEOF)),
+        let is_template_first = {
+            let mut peeked = self.iter.multipeek();
+            if !matches!(peeked.peek_next(), Some(At)) {
+                false
+            } else if !matches!(peeked.peek_next(), Some(Name(_) | Literal(_))) {
+                false
+            } else if !matches!(peeked.peek_next(), Some(At)) {
+                false
+            } else {
+                true
+            }
+        };
+        let param = if is_template_first {
+            self.eat_automake_identifier(None)?
+        } else {
+            match self.iter.next() {
+                Some(Star) => Match(self.make_parameter_extension()),
+                Some(Less) => FirstDependency(self.make_parameter_extension()),
+                Some(Caret) => AllDependency(self.make_parameter_extension()),
+                Some(Plus) => AllDependencyAllowingDuplicate(self.make_parameter_extension()),
+                Some(Question) => NewerDependency(self.make_parameter_extension()),
+                Some(At) => Target(self.make_parameter_extension()),
+                Some(Name(n)) => self.eat_automake_identifier(Some(n))?,
+                Some(t) => return Err(ParseError::new(BadSubst(t, start_pos))),
+                None => return Err(ParseError::new(UnexpectedEOF)),
+            }
         };
 
         Ok(param)
+    }
+
+    fn eat_automake_identifier(
+        &mut self,
+        n: Option<String>,
+    ) -> ParseResult<MakeParameter, B::Error> {
+        let mut v = n.map(|n| vec![AmIdent::Raw(n)]).unwrap_or_default();
+        loop {
+            match self.iter.peek() {
+                Some(Name(n)) => {
+                    v.push(AmIdent::Raw(n.to_owned()));
+                    self.iter.next();
+                }
+                Some(At) => {
+                    eat!(self, { At => {}});
+                    let template = match self.iter.next() {
+                        Some(Name(s)) => s.to_owned(),
+                        Some(Literal(s)) => s.to_owned(),
+                        _ => unreachable!(),
+                    };
+                    eat!(self, { At => {}});
+                    v.push(AmIdent::Template(template));
+                }
+                _ => break,
+            }
+        }
+        Ok(MakeParameter::Var(v))
     }
 
     fn automake_template(&mut self) -> ParseResult<B::WordFragment, B::Error> {
@@ -2670,6 +2729,14 @@ where
 
         match peeked.peek_next() {
             Some(delim) if delim.is_word_delimiter() => found_tok,
+            Some(Backslash) => {
+                // FIXME: temporary fix to parse `for ... ; do\` (no space b/w 'do' and '\')
+                if peeked.peek_next() == Some(&Newline) {
+                    found_tok
+                } else {
+                    None
+                }
+            }
             None => found_tok, // EOF is a valid delimeter
             _ => None,
         }

@@ -122,6 +122,8 @@ pub struct AmRule {
 #[derive(Debug, PartialEq, Eq, Clone)]
 /// Represents a conditional statement in automake (if/else).
 pub struct AmConditional {
+    /// Whether the condition is negated
+    pub negated: bool,
     /// The variable to test in the conditional.
     pub guard_var: String,
     /// The statements to execute if the condition is true.
@@ -189,33 +191,37 @@ impl Display for MakeDF {
 /// Used to indicate what kind of makefile parameter could be parsed next.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MakeParameter {
-    /// $@ or $(@)
+    /// $@
     Target(Option<MakeDF>),
-    /// $* or $(*)
+    /// $*
     Match(Option<MakeDF>),
-    /// $< or $(<)
+    /// $<
     FirstDependency(Option<MakeDF>),
-    /// $^ or $(^)
+    /// $^
     AllDependency(Option<MakeDF>),
-    /// $+ or $(+)
+    /// $+
     AllDependencyAllowingDuplicate(Option<MakeDF>),
-    /// $? or $(?)
+    /// $?
     NewerDependency(Option<MakeDF>),
-    /// $(foo)
-    Var(String),
+    /// $foo
+    Var(Vec<AmIdent>),
 }
 
 impl Display for MakeParameter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use MakeParameter::*;
         let (inner, should_enclose, df) = match self {
-            Target(df) => ("@", df.is_some(), df),
-            Match(df) => ("*", df.is_some(), df),
-            FirstDependency(df) => ("<", df.is_some(), df),
-            AllDependency(df) => ("^", df.is_some(), df),
-            AllDependencyAllowingDuplicate(df) => ("+", df.is_some(), df),
-            NewerDependency(df) => ("?", df.is_some(), df),
-            Var(s) => (s.as_str(), true, &None),
+            Target(df) => ("@".into(), df.is_some(), df),
+            Match(df) => ("*".into(), df.is_some(), df),
+            FirstDependency(df) => ("<".into(), df.is_some(), df),
+            AllDependency(df) => ("^".into(), df.is_some(), df),
+            AllDependencyAllowingDuplicate(df) => ("+".into(), df.is_some(), df),
+            NewerDependency(df) => ("?".into(), df.is_some(), df),
+            Var(v) => (
+                v.iter().map(|s| s.to_string()).collect::<Vec<_>>().concat(),
+                true,
+                &None,
+            ),
         };
         if should_enclose {
             if let Some(df) = df {
@@ -228,6 +234,25 @@ impl Display for MakeParameter {
         } else {
             // df is none
             write!(f, "${}", inner)
+        }
+    }
+}
+
+/// Used to compose an identifier of a make parameter
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum AmIdent {
+    /// normal case
+    Raw(String),
+    /// will be substituted via automake
+    Template(String),
+}
+
+impl Display for AmIdent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use AmIdent::*;
+        match self {
+            Raw(s) => write!(f, "{}", s),
+            Template(s) => write!(f, "@{}@", s),
         }
     }
 }
