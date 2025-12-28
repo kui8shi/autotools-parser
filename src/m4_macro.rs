@@ -351,6 +351,8 @@ pub struct M4MacroSignature {
     pub shell_vars: Option<Vec<Var>>,
     /// c preprocessor symbols defined by the macro.
     pub cpp_symbols: Option<Vec<CPP>>,
+    /// automake conditionals defined by the macro.
+    pub am_conds: Option<Vec<AmCond>>,
     /// When the macro is obsolete and completely replaced by another macro.
     /// If this field is some, other fields should be empty or none.
     pub replaced_by: Option<String>,
@@ -425,14 +427,6 @@ impl Var {
         }
     }
 
-    /// return if it has conditional attribute
-    pub fn is_am_cond(&self) -> bool {
-        match self.attrs.kind {
-            VarKind::Conditional => true,
-            _ => false,
-        }
-    }
-
     /// return if it is referenced
     pub fn is_used(&self) -> bool {
         match self.attrs.usage {
@@ -498,11 +492,6 @@ impl Var {
     /// Create a new environmental variable
     pub fn define_env(name: &str) -> Self {
         Self::new(name, VarKind::Environment, VarUsage::Defined, None)
-    }
-
-    /// Create a new automake conditional variable
-    pub fn define_conditional(name: &str) -> Self {
-        Self::new(name, VarKind::Conditional, VarUsage::Defined, None)
     }
 
     /// Create a shell variable adding operation
@@ -587,6 +576,52 @@ impl From<&str> for CPP {
     }
 }
 
+/// Represents an automake conditoinals
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AmCond {
+    /// name of conditional
+    pub name: String,
+    /// the boolean value if fixed.
+    pub value: Option<bool>,
+}
+
+impl AmCond {
+    /// return if it has fixed value
+    pub fn has_fixed_value(&self) -> bool {
+        self.value.is_some()
+    }
+}
+
+impl AmCond {
+    /// Create a new cpp symbol
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            value: None,
+        }
+    }
+
+    /// Create a new shell variable with "1" value
+    pub fn set(mut self) -> Self {
+        self.value.replace(true);
+        self
+    }
+
+    /// Create a new shell variable with unset
+    pub fn unset(mut self) -> Self {
+        self.value.replace(false);
+        self
+    }
+}
+
+impl From<&str> for AmCond {
+    fn from(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            value: None,
+        }
+    }
+}
 /// Represents a type of a shell variable
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarKind {
@@ -600,8 +635,6 @@ pub enum VarKind {
     Precious,
     /// exported to an environmental variable
     Environment,
-    /// exported to a automake conditional variable
-    Conditional,
 }
 
 impl Default for VarKind {
@@ -675,11 +708,6 @@ impl VarAttrs {
     /// Create a new environmental variable attributes
     pub fn env() -> Self {
         Self::new(VarKind::Environment, VarUsage::Defined)
-    }
-
-    /// Create a new automake conditional variable attributes
-    pub fn coditional() -> Self {
-        Self::new(VarKind::Conditional, VarUsage::Defined)
     }
 }
 
@@ -873,17 +901,17 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("am__isrc"),  // -I$(srcdir)
-                        Var::define_output("CYGPATH_W"), // cygpath -w, or echo
+                        Var::define_output("am__isrc").with_value("-I"), // -I$(srcdir)
+                        Var::define_output("CYGPATH_W"),                 // cygpath -w, or echo
                         Var::define_output("PACKAGE"),
                         Var::define_output("VERSION"),
-                        Var::define_output("mkdir_p"),
+                        Var::define_output("mkdir_p").with_value("mkdir -p"),
                         Var::define_output("AMTAR"),
                         Var::define_output("am__tar"),
-                        Var::define_output("am__untar"),
-                        Var::define_output("CTAGS"),
-                        Var::define_output("ETAGS"),
-                        Var::define_output("CSCOPE"),
+                        Var::define_output("am__untar").with_value("tar -xf -"),
+                        Var::define_output("CTAGS").with_value("ctags"),
+                        Var::define_output("ETAGS").with_value("etags"),
+                        Var::define_output("CSCOPE").with_value("cscope"),
                         // by _AM_PROG_RM_F
                         Var::define_output("am__rm_f_notfound"),
                         // by _AM_PROG_XARGS_N
@@ -899,32 +927,34 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // by AM_PROG_INSTALL_STRIP
                         // INSTALL_STRIP_PROGRAM is used when `make install-strip`,
                         // overwriting INSTALL_PROGRAM.
-                        Var::define_output("INSTALL_STRIP_PROGRAM"),
+                        Var::define_output("INSTALL_STRIP_PROGRAM").with_value(" -c -s"),
                         // by AM_SET_LEADING_DOT
-                        Var::define_output("am__leading_dot"),
+                        Var::define_output("am__leading_dot").with_value("."),
                         // by AM_SET_DEPDIR
-                        Var::define_output("DEPDIR"),
+                        Var::define_output("DEPDIR").with_value(".deps"),
                         // by AM_MAKE_INCLUDE
-                        Var::define_output("am__include"),
-                        Var::define_output("am__quote"),
+                        Var::define_output("am__include").with_value("include"),
+                        Var::define_output("am__quote").with_value(""),
                         // by AM_DEP_TRACK
                         Var::define_input("enable_dependency_tracking"),
-                        Var::define_output("AMDEPBACKSLASH"),
-                        Var::define_output("am__nodep"),
-                        Var::define_conditional("AMDEP"),
+                        Var::define_output("AMDEPBACKSLASH").with_value("\\"),
+                        Var::define_output("am__nodep").with_value("_no"),
                         // by _AM_DEPENDENCIES
-                        Var::define_output("CCDEPMODE"),
-                        Var::define_conditional("am__fastdepCC"),
-                        Var::define_output("CXXDEPMODE"),
-                        Var::define_conditional("am__fastdepCXX"),
-                        Var::define_output("OBJCDEPMODE"),
-                        Var::define_conditional("am__fastdepOBJC"),
-                        Var::define_output("OBJCXXDEPMODE"),
-                        Var::define_conditional("am__fastdepOBJCXX"),
-                        // if _AM_COMPILER_EXEEXT is provided
-                        Var::define_conditional("am__EXEEXT"), // from $EXEEXT
+                        Var::define_output("CCDEPMODE").with_value("depmode=gcc3"),
+                        Var::define_output("CXXDEPMODE").with_value("depmode=gcc3"),
+                        Var::define_output("OBJCDEPMODE").with_value("depmode=gcc3"),
+                        Var::define_output("OBJCXXDEPMODE").with_value("depmode=gcc3"),
                     ]),
                     cpp_symbols: Some(vec!["PACKAGE".into(), "VERSION".into()]),
+                    am_conds: Some(vec![
+                        AmCond::new("AMDEP").set(),
+                        AmCond::new("am__fastdepCC").set(),
+                        AmCond::new("am__fastdepCXX").set(),
+                        AmCond::new("am__fastdepOBJC").set(),
+                        AmCond::new("am__fastdepOBJCXX").set(),
+                        // if _AM_COMPILER_EXEEXT is provided
+                        AmCond::new("am__EXEEXT").unset(), // set if windows?
+                    ]),
                     require: Some(vec![
                         "AC_PROG_INSTALL".into(),
                         "AC_PROG_MKDIR_P".into(),
@@ -1587,7 +1617,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_internal("ac_cv_prog_GCJ"),
                         // by _AM_DEPENDENCIES([GCJ])
                         Var::define_output("GCJDEPMODE"),
-                        Var::define_conditional("am__fastdepGCJ"),
+                    ]),
+                    am_conds: Some(vec![
+                        AmCond::new("am__fastdepGCJ").set(),
                     ]),
                     is_oneshot: true,
                     ..Default::default()
@@ -1605,7 +1637,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         "ac_cv_prog_UPC".into(),
                         // by _AM_DEPENDENCIES([UPC])
                         Var::define_output("UPCDEPMODE"),
-                        Var::define_conditional("am__fastdepUPC"),
+                    ]),
+                    am_conds: Some(vec![
+                        AmCond::new("am__fastdepUPC").set(),
                     ]),
                     require: Some(vec!["AC_PROG_CC".into()]),
                     is_oneshot: true,
@@ -8495,13 +8529,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                             None,
                             Some(&|s| {
                                 // framework
-                                vec![
-                                    ExVar(
-                                        VarAttrs::append(Some(Output)),
-                                        "LIBS".into(),
-                                        Some(format!("-framework {}", s)),
-                                    ),
-                                ]
+                                vec![ExVar(
+                                    VarAttrs::append(Some(Output)),
+                                    "LIBS".into(),
+                                    Some(format!("-framework {}", s)),
+                                )]
                             }),
                         ),
                         Cmds, // [action-if-found]

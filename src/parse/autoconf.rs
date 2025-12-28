@@ -4040,21 +4040,4 @@ test "$program_prefix$program_suffix$program_transform_name" = NONENONEs,x,x,
             assert!(res.is_ok());
         }
     }
-
-    #[test]
-    fn some_test() {
-        let input = r#"
-AC_DEFINE(_FILE_OFFSET_BITS,64)
-AC_MSG_RESULT([yes])
-"#;
-        let p = make_parser(input);
-        for res in p {
-            if let Err(e) = &res {
-                println!("Error: {}", e);
-            } else {
-                println!("{:?}", &res);
-            }
-            assert!(res.is_ok());
-        }
-    }
 }

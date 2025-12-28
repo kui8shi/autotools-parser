@@ -684,7 +684,7 @@ where
 
 impl<C, W, F, U> ConditionBuilder for NodeBuilder<C, W, F, U>
 where
-    C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone,
+    C: From<ShellCommand<W>> + Into<Option<ShellCommand<W>>> + Clone + Debug,
     W: From<Word<F>> + Into<Word<F>> + Into<Option<String>> + From<String> + Clone + Debug,
     F: From<WordFragment<String, NodeId, W>>
         + Into<Option<WordFragment<String, NodeId, W>>>
@@ -730,6 +730,9 @@ where
             Some(Pipe(true, cmds)) if cmds.len() == 1 => {
                 let cmd = cmds.first().unwrap().clone();
                 self.make_condition(cmd).ok().map(|cond| cond.flip())
+            }
+            Some(Redirect(cmd, _)) => {
+                self.make_condition(cmd).ok()
             }
             _ => None,
         } {
