@@ -901,7 +901,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_output("am__isrc").with_value("-I"), // -I$(srcdir)
+                        Var::define_output("am__isrc").with_value("-I."), // -I$(srcdir)
                         Var::define_output("CYGPATH_W"),                 // cygpath -w, or echo
                         Var::define_output("PACKAGE"),
                         Var::define_output("VERSION"),
@@ -1555,7 +1555,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_precious("CCAS").with_value("gcc -c"),
+                        Var::define_precious("CCAS").with_value("cc -c"),
                         Var::define_precious("CCASFLAGS").with_value(""),
                     ]),
                     require: Some(vec!["AC_PROG_CC".into()]),
@@ -2117,6 +2117,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
+                        Var::reference("LDFLAGS"),
                         // '-l<library>' is added
                         Var::append("LIBS", Output),
                     ]),
@@ -2926,6 +2927,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes]
                     ],
+                    shell_vars: Some(vec![
+                        Var::reference("CPPFLAGS"),
+                    ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -2952,6 +2956,9 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes]
                     ],
+                    shell_vars: Some(vec![
+                        Var::reference("CPPFLAGS"),
+                    ]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -3566,7 +3573,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_env("CC").with_value("gcc"),
+                        Var::define_env("CC").with_value("cc"),
                         Var::define_precious("CFLAGS").with_value("-g -O2"), // -g -O2
                         Var::define_precious("LDFLAGS").with_value(""),
                         Var::define_precious("LIBS").with_value(""),
@@ -3625,10 +3632,10 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_env("CPP").with_value("gcc -E"),
+                        Var::define_env("CPP").with_value("cc -E"),
                         Var::define_precious("CPPFLAGS").with_value(""),
                         Var::reference("CC"),
-                        Var::define_internal("ac_cv_prog_CPP").with_value("gcc -E"),
+                        Var::define_internal("ac_cv_prog_CPP").with_value("cc -E"),
                     ]),
                     cpp_symbols: Some(vec![CPP::unset("NO_MINUS_C_MINUS_O")]),
                     require: Some(vec!["AC_PROG_CC".into()]),
@@ -8483,7 +8490,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::reference("GCC"),
                         Var::define_output("PTHREAD_LIBS").with_value("-lpthread"),
                         Var::define_output("PTHREAD_CFLAGS").with_value("-pthread"),
-                        Var::define_output("PTHREAD_CC").with_value("gcc"),
+                        Var::define_output("PTHREAD_CC").with_value("cc"),
                         Var::define_output("PTHREAD_CXX").with_value("c++"),
                         Var::define_internal("ax_pthread_ok").yes(),
                         Var::define_internal("ax_pthread_clang").yes(),
