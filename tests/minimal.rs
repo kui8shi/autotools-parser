@@ -1,6 +1,4 @@
 #![deny(rust_2018_idioms)]
-use autotools_parser::ast::condition::Condition;
-use autotools_parser::ast::condition::Operator;
 use autotools_parser::ast::minimal::AcCommand;
 use autotools_parser::ast::minimal::Command;
 use autotools_parser::ast::minimal::Command::*;
@@ -532,6 +530,42 @@ fn test_backticked_command_in_macro_argument() {
             println!("{}", e);
             panic!();
         }
+    }
+}
+
+#[test]
+fn test_simple_parentheses() {
+    let input = r#"if test \( "x" = "y" \); then echo ok; fi"#;
+    let mut p = make_parser(input);
+
+    match p.complete_command() {
+        Ok(Some(cmd)) => {
+            // Should parse successfully
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+            panic!("Test failed with error");
+        }
+        _ => panic!("Expected command"),
+    }
+}
+
+#[test]
+fn test_parentheses_with_and() {
+    let input = r#"test \( "$a" = "yes" -o "$b" = "no" \) -a "$c" != "true" && echo ok"#;
+    let mut p = make_parser(input);
+
+    match p.complete_command() {
+        Ok(Some(cmd)) => {
+            // Should parse successfully
+            dbg!(&cmd);
+        }
+        Err(e) => {
+            println!("{}", e);
+            panic!("Test failed with error");
+        }
+        _ => panic!("Expected command"),
     }
 }
 

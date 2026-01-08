@@ -2645,7 +2645,9 @@ where
                     M4Type::VarName(itself, f) => {
                         let arg = peeked_arg.clone();
                         if let Some(attr) = itself {
-                            effects.get_or_insert_default().add_shell_var(&arg, attr, &None);
+                            effects
+                                .get_or_insert_default()
+                                .add_shell_var(&arg, attr, &None);
                         }
                         if let Some(f) = f {
                             for export_type in f(&arg) {

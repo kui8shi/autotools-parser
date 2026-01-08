@@ -902,7 +902,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
                         Var::define_output("am__isrc").with_value("-I."), // -I$(srcdir)
-                        Var::define_output("CYGPATH_W"),                 // cygpath -w, or echo
+                        Var::define_output("CYGPATH_W"),                  // cygpath -w, or echo
                         Var::define_output("PACKAGE"),
                         Var::define_output("VERSION"),
                         Var::define_output("mkdir_p").with_value("mkdir -p"),
@@ -1618,9 +1618,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // by _AM_DEPENDENCIES([GCJ])
                         Var::define_output("GCJDEPMODE"),
                     ]),
-                    am_conds: Some(vec![
-                        AmCond::new("am__fastdepGCJ").set(),
-                    ]),
+                    am_conds: Some(vec![AmCond::new("am__fastdepGCJ").set()]),
                     is_oneshot: true,
                     ..Default::default()
                 },
@@ -1638,9 +1636,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         // by _AM_DEPENDENCIES([UPC])
                         Var::define_output("UPCDEPMODE"),
                     ]),
-                    am_conds: Some(vec![
-                        AmCond::new("am__fastdepUPC").set(),
-                    ]),
+                    am_conds: Some(vec![AmCond::new("am__fastdepUPC").set()]),
                     require: Some(vec!["AC_PROG_CC".into()]),
                     is_oneshot: true,
                     ..Default::default()
@@ -2927,9 +2923,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes]
                     ],
-                    shell_vars: Some(vec![
-                        Var::reference("CPPFLAGS"),
-                    ]),
+                    shell_vars: Some(vec![Var::reference("CPPFLAGS")]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -2956,9 +2950,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes]
                     ],
-                    shell_vars: Some(vec![
-                        Var::reference("CPPFLAGS"),
-                    ]),
+                    shell_vars: Some(vec![Var::reference("CPPFLAGS")]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },

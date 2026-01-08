@@ -651,58 +651,131 @@ where
 
         let mut conditions: Vec<Condition<_, _>> = Vec::new();
         let mut concat_kinds: Vec<ConcatKind> = Vec::new();
-        for word in words {
+        let mut i = 0;
+        while i < words.len() {
+            let word = &words[i];
+
+            // Handle parentheses for grouping
+            if state.operator.is_none() {
+                if let Some(literal) = word.clone().into() {
+                    if literal.as_str() == "\\(" {
+                        // Find matching closing parenthesis
+                        let mut paren_count = 1;
+                        let mut j = i + 1;
+                        while j < words.len() && paren_count > 0 {
+                            if let Some(lit) = words[j].clone().into() {
+                                match lit.as_str() {
+                                    "\\(" => paren_count += 1,
+                                    "\\)" => paren_count -= 1,
+                                    _ => {}
+                                }
+                            }
+                            j += 1;
+                        }
+
+                        if paren_count > 0 {
+                            panic!("Mismatched parentheses in test command");
+                        }
+
+                        // Parse the content within parentheses and check what comes after
+                        let group_condition = self.parse_test_command(&words[i + 1..j - 1])?;
+
+                        // Check if there's a logical operator after the closing parenthesis
+                        if j < words.len() {
+                            if let Some(next_literal) = words[j].clone().into() {
+                                match next_literal.as_str() {
+                                    "-a" => {
+                                        conditions.push(group_condition);
+                                        concat_kinds.push(And);
+                                        i = j + 1;
+                                        continue;
+                                    }
+                                    "-o" => {
+                                        conditions.push(group_condition);
+                                        concat_kinds.push(Or);
+                                        i = j + 1;
+                                        continue;
+                                    }
+                                    _ => {
+                                        // No logical operator after parentheses, this is the final condition
+                                        return Ok(group_condition);
+                                    }
+                                }
+                            } else {
+                                // No logical operator after parentheses, this is the final condition
+                                return Ok(group_condition);
+                            }
+                        } else {
+                            // End of input, this is the final condition
+                            return Ok(group_condition);
+                        }
+                    }
+                }
+            }
+
             if state.operator.is_none() {
                 if let Some(literal) = word.clone().into() {
                     match literal.as_str() {
                         "!=" | "-ne" => {
                             state.operator.replace(Neq);
+                            i += 1;
                             continue;
                         }
                         "=" | "-eq" => {
                             state.operator.replace(Eq);
+                            i += 1;
                             continue;
                         }
                         "-ge" => {
                             state.operator.replace(Ge);
+                            i += 1;
                             continue;
                         }
                         "-gt" => {
                             state.operator.replace(Gt);
+                            i += 1;
                             continue;
                         }
                         "-le" => {
                             state.operator.replace(Le);
+                            i += 1;
                             continue;
                         }
                         "-lt" => {
                             state.operator.replace(Lt);
+                            i += 1;
                             continue;
                         }
                         "-z" => {
                             state.operator.replace(Empty);
+                            i += 1;
                             continue;
                         }
                         "-n" => {
                             state.operator.replace(NonEmpty);
+                            i += 1;
                             continue;
                         }
                         "-d" | "-f" if state.flipped => {
                             state.operator.replace(NoExists);
+                            i += 1;
                             continue;
                         }
                         "-d" => {
                             state.operator.replace(Dir);
+                            i += 1;
                             continue;
                         }
                         // TODO: More precision for file existance + extra operators
                         "-f" | "-e" | "-g" | "-G" | "-h" | "-k" | "-L" | "-N" | "-O" | "-p"
                         | "-r" | "-s" | "-S" | "-u" | "-w" | "-x" => {
                             state.operator.replace(File);
+                            i += 1;
                             continue;
                         }
                         "!" => {
                             state.flipped = true;
+                            i += 1;
                             continue;
                         }
                         _ => {
@@ -725,6 +798,7 @@ where
                                 lhs: empty.clone(),
                                 rhs: empty.clone(),
                             };
+                            i += 1;
                             continue;
                         }
                         "-o" => {
@@ -736,6 +810,7 @@ where
                                 rhs: empty.clone(),
                                 flipped: false,
                             };
+                            i += 1;
                             continue;
                         }
                         _ => {}
@@ -743,6 +818,7 @@ where
                 }
                 state.rhs = word.clone();
             }
+            i += 1;
         }
         conditions.push(Condition::Cond(make_operator(state)));
         debug_assert!(conditions.len() == concat_kinds.len() + 1);

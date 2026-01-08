@@ -848,7 +848,9 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
             Len(param) => format!("${{#{}}}", self.display_inner_param(param)),
             Arith(arith) => format!(
                 "$(( {} ))",
-                arith.as_ref().map_or("".to_string(), |a| self.display_arithmetic(a))
+                arith
+                    .as_ref()
+                    .map_or("".to_string(), |a| self.display_arithmetic(a))
             ),
             Default(_, param, word) => format!(
                 "${{{}:-{}}}",

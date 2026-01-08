@@ -731,9 +731,7 @@ where
                 let cmd = cmds.first().unwrap().clone();
                 self.make_condition(cmd).ok().map(|cond| cond.flip())
             }
-            Some(Redirect(cmd, _)) => {
-                self.make_condition(cmd).ok()
-            }
+            Some(Redirect(cmd, _)) => self.make_condition(cmd).ok(),
             _ => None,
         } {
             Ok(condition)
