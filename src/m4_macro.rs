@@ -1058,6 +1058,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
+                        "ac_aux_dir".into(),
                         "ac_aux_dir_candidates".into(),
                         Var::reference("srcdir"),
                         Var::reference("PATH_SEPARATOR"),
@@ -2159,6 +2160,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                     ],
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
+                        Var::reference("LDFLAGS"),
                         // '-l<library>' is added
                         Var::append("LIBS", Output),
                     ]),
@@ -2994,6 +2996,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes=AC_INCLUDES_DEFAULT]
                     ],
+                    shell_vars: Some(vec![Var::reference("CPPFLAGS")]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -3012,7 +3015,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                         format!("ac_cv_have_decl_{}", sanitize_shell_name(s)),
                                         None,
                                     ),
-                                    ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s)), None),
+                                    ExCPP(format!("HAVE_DECL_{}", sanitize_c_name(s)), None),
                                 ]
                             }),
                         ),
@@ -3020,6 +3023,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Cmds, // [action-if-not-found]
                         Prog, // [includes=AC_INCLUDES_DEFAULT]
                     ],
+                    shell_vars: Some(vec![Var::reference("CPPFLAGS")]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -3037,10 +3041,11 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                                     format!("ac_cv_have_decl_{}", sanitize_shell_name(s)),
                                     None,
                                 ),
-                                ExCPP(format!("HAVE_DECL_{}", sanitize_shell_name(s)), None),
+                                ExCPP(format!("HAVE_DECL_{}", sanitize_c_name(s)), None),
                             ]
                         }),
                     )],
+                    shell_vars: Some(vec![Var::reference("CPPFLAGS")]),
                     ret_type: Some(Cmds),
                     ..Default::default()
                 },
@@ -7077,11 +7082,13 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     ret_type: Some(Cmds),
                     shell_vars: Some(vec![
-                        Var::define_precious("build"),
+                        // actually "build" is a precious var but the name is too common
+                        Var::define_internal("build"),
                         Var::define_precious("build_cpu"),
                         Var::define_precious("build_vendor"),
                         Var::define_precious("build_os"),
                         Var::define_precious("build_alias"),
+                        Var::reference("ac_aux_dir"),
                     ]),
                     paths: Some(vec!["config.sub".into(), "config.guess".into()]),
                     is_oneshot: true,
@@ -7098,6 +7105,8 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_precious("host_vendor"),
                         Var::define_precious("host_os"),
                         Var::define_precious("host_alias"),
+                        Var::reference("ac_aux_dir"),
+                        Var::reference("build"),
                     ]),
                     paths: Some(vec!["config.sub".into(), "config.guess".into()]),
                     require: Some(vec!["AC_CANONICAL_BUILD".into()]),
@@ -7115,6 +7124,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                         Var::define_precious("target_vendor"),
                         Var::define_precious("target_os"),
                         Var::define_precious("target_alias"),
+                        Var::reference("ac_aux_dir"),
                     ]),
                     paths: Some(vec!["config.sub".into(), "config.guess".into()]),
                     require: Some(vec!["AC_CANONICAL_HOST".into()]),
@@ -7946,7 +7956,7 @@ fn predefined_macros() -> HashMap<String, M4MacroSignature> {
                 M4MacroSignature {
                     shell_vars: Some(vec![
                         Var::define_input("with_gnu_ld"),
-                        Var::define_output("LD"),
+                        Var::define_output("LD").with_value("ld"),
                         "lt_cv_path_LD".into(),
                     ]),
                     require: Some(vec![

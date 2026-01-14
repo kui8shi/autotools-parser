@@ -368,6 +368,7 @@ where
         let _start_pos = self.iter.pos();
         let _pre_stmt_comments = self.linebreak_preserve_line_head_whitespace();
 
+        eat_maybe!(self, { Dash => {} });
         match self.iter.peek().cloned() {
             Some(Name(s)) => {
                 if s == IF {
@@ -1496,7 +1497,7 @@ where
                         Ok(WordKind::Param(self.shell_parameter_inner()?))
                     }
 
-                    Some(&CurlyOpen) => self.parameter_substitution_raw(),
+                    Some(&CurlyOpen|&ParenOpen) => self.parameter_substitution_raw(),
 
                     Some(Literal(s)) if s.len() == 1 && s.chars().last().unwrap().is_numeric() => {
                         // quoted positional parameter (e.g. $[1])
@@ -3212,9 +3213,11 @@ where
     fn arith_var(&mut self) -> ParseResult<String, B::Error> {
         self.skip_whitespace();
         eat_maybe!(self, { Dollar => {} });
+        eat_maybe!(self, { Dollar => {} });
 
         if let Some(&Name(_)) = self.iter.peek() {
             if let Some(Name(n)) = self.iter.next() {
+                eat_maybe!(self, { CurlyClose => {} });
                 Ok(n)
             } else {
                 unreachable!()

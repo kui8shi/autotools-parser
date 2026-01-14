@@ -647,19 +647,62 @@ where
         &mut self,
         kind: ConcatWordKind<Self::WordFragment>,
     ) -> Result<Self::Word, Self::Error> {
+        // FIXME: `maybe_double_quoted` is a temporary workaround for an issue where double-quoted strings
+        // are incorrectly treated as concatenated words when parsing m4 macro arguments.
+        // Example: AC_DEFINE_UNQUOTED([var], ["$var"], [])
+        // Current behavior: The second argument is incorrectly split into Concat([\", $var, \"]).
+        let is_double_quote = |frag: &Self::WordFragment| {
+            Into::<Option<String>>::into(frag.clone()).is_some_and(|lit| lit == "\"")
+        };
+        let maybe_double_quoted = |words: &Vec<QuoteWordKind<Self::WordFragment>>| -> Option<_> {
+            if words.len() >= 2
+                && words
+                    .iter()
+                    .all(|word| matches!(word, QuoteWordKind::Simple(_)))
+            {
+                let frags = words
+                    .iter()
+                    .flat_map(|word| {
+                        if let QuoteWordKind::Simple(frag) = word {
+                            Some(frag.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if frags.first().is_some_and(is_double_quote)
+                    && frags.last().is_some_and(is_double_quote)
+                {
+                    return Self::map_quote_word(QuoteWordKind::DoubleQuoted(
+                        frags[1..words.len() - 1].iter().cloned().collect(),
+                    ))
+                    .ok();
+                }
+            }
+            None
+        };
         let word = match compress(kind) {
             ConcatWordKind::Single(s) => {
                 Self::map_quote_word(s)?.map_or(Word::Empty, |w| Word::Single(w))
             }
-            ConcatWordKind::Concat(words) => Word::Concat(
-                words
-                    .into_iter()
-                    .map(Self::map_quote_word)
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-            ),
+            ConcatWordKind::Concat(words) => {
+                if let Some(double_quoted) = maybe_double_quoted(&words) {
+                    match double_quoted {
+                        Some(frag) => Word::Single(frag),
+                        None => Word::Empty,
+                    }
+                } else {
+                    Word::Concat(
+                        words
+                            .into_iter()
+                            .map(Self::map_quote_word)
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .flatten()
+                            .collect(),
+                    )
+                }
+            }
         };
 
         Ok(word.into())
