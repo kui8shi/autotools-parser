@@ -735,7 +735,7 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
                 self.display_condition(rhs)
             ),
             Or(lhs, rhs) => format!(
-                "{} && {}",
+                "{} || {}",
                 self.display_condition(lhs),
                 self.display_condition(rhs)
             ),
@@ -950,3 +950,45 @@ pub trait NodePool<W>: DisplayNode<Word = W> {
         }
     }
 }
+
+/// A wrapper around `Slab<Node<AcCommand, U>>` that implements `DisplayNode`.
+///
+/// This allows using the display functionality to convert parsed AST nodes
+/// back into their script string representation.
+#[derive(Debug)]
+pub struct AcNodePool<'a, U>(pub &'a slab::Slab<Node<AcCommand, U>>);
+
+impl<'a, U> AcNodePool<'a, U> {
+    /// Create a new `AcNodePool` wrapping the given slab of nodes.
+    pub fn new(nodes: &'a slab::Slab<Node<AcCommand, U>>) -> Self {
+        Self(nodes)
+    }
+}
+
+impl<U> DisplayNode for AcNodePool<'_, U> {
+    type Word = AcWord;
+
+    fn display_node(&self, node_id: NodeId, indent_level: usize) -> String {
+        use super::MayM4;
+        let node = &self.0[node_id];
+        match &node.cmd.0 {
+            MayM4::Shell(cmd) => self.display_command(cmd, node.comment.clone(), indent_level),
+            MayM4::Macro(m4) => self.display_m4_macro(m4, indent_level),
+        }
+    }
+
+    fn display_word(&self, word: &AcWord, _should_quote: bool) -> String {
+        match &word.0 {
+            Word::Empty => String::new(),
+            Word::Single(frag) => self.display_may_m4_word(frag),
+            Word::Concat(frags) => frags
+                .iter()
+                .map(|f| self.display_may_m4_word(f))
+                .collect::<Vec<_>>()
+                .concat(),
+        }
+    }
+}
+
+impl<U> DisplayM4 for AcNodePool<'_, U> {}
+impl<U> NodePool<AcWord> for AcNodePool<'_, U> {}

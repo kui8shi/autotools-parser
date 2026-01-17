@@ -475,3 +475,31 @@ fn test_heredoc_keeps_track_of_correct_position_after_redirect() {
         p.complete_command()
     );
 }
+
+
+#[test]
+fn test_heredoc_display_strips_m4_quotes() {
+    use autotools_parser::ast::node::{AcNodePool, DisplayNode};
+    use autotools_parser::lexer::Lexer;
+    use autotools_parser::parse::autoconf::NodeParser;
+
+let input = r#"cat >conftest.c <<EOF
+[
+char array[2];
+]EOF"#;
+
+    let lex = Lexer::new(input.chars());
+    let (nodes, top_ids) = NodeParser::<_, ()>::new(lex).parse_all();
+
+    let pool = AcNodePool::new(&nodes);
+    let output = pool.display_node(top_ids[0], 0);
+
+    // The full output should be equivalent shell script with M4 quotes stripped
+    let expected = r#"cat > conftest.c <<EOF
+
+char array[2];
+EOF
+"#;
+
+    assert_eq!(output.trim(), expected.trim());
+}

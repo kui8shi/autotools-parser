@@ -387,7 +387,7 @@ fn test_case_command_should_recognize_literals_and_names() {
 fn test_usual_case_command() {
     let input = r#"case $var in yes) echo hi ;; esac"#;
     let mut p = make_parser(input);
-    let res = p.case_command();
+    let _res = p.case_command();
     match p.complete_command() {
         Ok(cmd) => {
             dbg!(&cmd);
@@ -397,4 +397,44 @@ fn test_usual_case_command() {
             panic!();
         }
     }
+}
+
+#[test]
+fn test_case_display_strips_m4_quotes() {
+    use autotools_parser::ast::node::{AcNodePool, DisplayNode};
+    use autotools_parser::lexer::Lexer;
+    use autotools_parser::parse::autoconf::NodeParser;
+
+    let input = r#"case $cc_works_part in
+  yes)
+
+    ;;
+  no)
+    gmp_prog_cc_works="no[][, ][double -> float conversion]"
+    ;;
+  norun)
+    gmp_prog_cc_works="no[][, ][double -> float conversion][[, program does not run]]"
+    ;;
+esac"#;
+
+    let lex = Lexer::new(input.chars());
+    let (nodes, top_ids) = NodeParser::<_, ()>::new(lex).parse_all();
+
+    dbg!(&nodes);
+    let pool = AcNodePool::new(&nodes);
+    let output = pool.display_node(top_ids[0], 0);
+
+    // The full output should be equivalent shell script with M4 quotes stripped
+    let expected = r#"case ${cc_works_part} in
+  yes)
+    ;;
+  no)
+    gmp_prog_cc_works=no, double -> float conversion
+    ;;
+  norun)
+    gmp_prog_cc_works=no, double -> float conversion[, program does not run]
+    ;;
+esac"#;
+
+    assert_eq!(output.trim(), expected.trim());
 }

@@ -1120,6 +1120,8 @@ where
             let mut line_start_pos = self.iter.pos();
             let mut line = Vec::new();
             'line: loop {
+                // Note: Quote handling is done here during token collection.
+                // M4 quotes are stripped, and word_interpolated_raw sees stripped heredoc later.
                 if self.may_open_quote(None, false) || self.may_close_quote(None, false) {
                     continue;
                 }
@@ -1190,6 +1192,8 @@ where
 
             heredoc.push((line, line_start_pos));
         }
+
+        self.pop_quote_context();
         self.iter
             .buffer_tokens_to_yield_first(saved_tokens, saved_pos);
 
@@ -1205,10 +1209,19 @@ where
                 tok_iter.buffer_tokens_to_yield_first(line, pos);
             }
 
+            // in the 'heredoc loop, we've already stripped outer m4 quotes
+            self.stash_quote_context(QuoteContextKind::Other("heredoc_as_word".into()));
+            // we're trying to correct the quote level here.
+            self.quote_level().add_assign(1);
+
             let mut tok_backup = TokenIterWrapper::Buffered(tok_iter);
             mem::swap(&mut self.iter, &mut tok_backup);
             let mut body = self.word_interpolated_raw(None, heredoc_start_pos)?;
             let _ = mem::replace(&mut self.iter, tok_backup);
+
+            // pop the context.
+            self.quote_level().sub_assign(1);
+            self.pop_quote_context();
 
             if body.len() > 1 {
                 Concat(body.into_iter().map(Simple).collect())
@@ -1222,8 +1235,6 @@ where
                 Single(Simple(word))
             }
         };
-
-        self.pop_quote_context();
 
         let word = self.builder.word(body)?;
         Ok(self
